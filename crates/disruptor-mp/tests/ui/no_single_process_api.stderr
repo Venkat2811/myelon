@@ -1,0 +1,13 @@
+error[E0432]: unresolved imports `disruptor_mp::build_multi_producer`, `disruptor_mp::build_single_producer`, `disruptor_mp::BusySpin`
+ --> tests/ui/no_single_process_api.rs:1:20
+  |
+1 | use disruptor_mp::{build_multi_producer, build_single_producer, BusySpin};
+  |                    ^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^ no `BusySpin` in the root
+  |                    |                     |
+  |                    |                     no `build_single_producer` in the root
+  |                    |                     help: a similar name exists in the module: `build_shared_single_producer`
+  |                    no `build_multi_producer` in the root
+  |
+  = help: consider importing one of these items instead:
+          disruptor_core::BusySpin
+          disruptor_mp::AutoWaitStrategy::BusySpin

@@ -1,0 +1,138 @@
+[package]
+name          = "disruptor-mp"
+version       = "3.7.1"
+edition       = "2021"
+description   = "Low latency multiprocess communication via shared-memory ring buffers (LMAX disruptor-inspired)."
+license       = "MIT"
+authors       = ["venkat"]
+repository    = "https://github.com/Venkat2811/myelon"
+categories    = ["data-structures", "concurrency"]
+keywords      = ["disruptor", "ringbuffer", "message", "mpmc"]
+
+[lib]
+name = "disruptor_mp"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+# ============================================================================
+# CORE DEPENDENCIES
+# ============================================================================
+
+[dependencies]
+# Upstream core disruptor (single-process/threaded APIs).
+# This crate adds multiprocess shared-memory support on top.
+disruptor_core = { package = "disruptor", version = "3.7.1" }
+thiserror = "1.0"
+once_cell = "1.19"
+
+# Multi-process support (always enabled)
+shared_memory = { version = "0.12.4" }
+memmap2       = { version = "0.9.5" }
+libc          = { version = "0.2.173" }
+
+# ============================================================================
+# PLATFORM-SPECIFIC DEPENDENCIES
+# ============================================================================
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.30.1" }
+
+[target.'cfg(windows)'.dependencies]
+winapi = { version = "0.3.9", features = ["winnt", "synchapi", "handleapi"] }
+
+# ============================================================================
+# DEVELOPMENT DEPENDENCIES
+# ============================================================================
+
+[dev-dependencies]
+# Benchmarking framework
+criterion = "0.5"
+
+# Testing utilities
+crossbeam = "0.8"
+rand = "0.8"
+trybuild = "1.0"
+
+# IPC benchmark dependencies
+hdrhistogram = "7.5"
+tabled = "0.20.0"
+shared-mem-queue = "0.4.0"
+num-format = "0.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Competitive benchmark dependencies
+clap = { version = "4.0", features = ["derive"] }
+chrono = "0.4"
+ctrlc = "3.4"
+
+# ============================================================================
+# PROFILES
+# ============================================================================
+
+# ============================================================================
+# BENCHMARKS
+# ============================================================================
+
+[[bench]]
+name = "ipc_shm"
+path = "benches/ipc/ipc_shm.rs"
+harness = false
+
+[[bench]]
+name = "ipc_shm_high_load"
+path = "benches/ipc/ipc_shm_high_load.rs"
+harness = false
+
+[[bench]]
+name = "competitor_vs_rust_benchmark"
+path = "benches/competitor/competitor_vs_rust_benchmark.rs"
+harness = false
+
+[[bench]]
+name = "benchmark_all_wait_strategies_auto_rust"
+path = "benches/ipc/benchmark_all_wait_strategies_auto.rs"
+harness = false
+
+# Competitive benchmarks for industry comparison
+[[bench]]
+name = "competitive_pingpong"
+path = "benches/ipc/competitive/benchmark_pingpong.rs"
+harness = false
+
+# ============================================================================
+# EXAMPLES
+# ============================================================================
+
+[[example]]
+name = "counters"
+path = "examples/counters.rs"
+
+[[example]]
+name = "shared_disruptor"
+path = "examples/shared_disruptor.rs"
+
+
+[[example]]
+name = "counters_auto"
+path = "examples/counters_auto.rs"
+
+[[example]]
+name = "performance_runner"
+path = "examples/performance_runner.rs"
+
+# ============================================================================
+# MEASUREMENT BINARIES
+# ============================================================================
+
+# [[bin]]
+# name = "baseline_measurement_framework"
+# path = "bindings/python/benchmarks/baseline_measurement_framework.rs"
+
+# [[bin]]
+# name = "test_rust_baseline"
+# path = "bindings/python/benchmarks/test_rust_baseline.rs"
+
+
+
+

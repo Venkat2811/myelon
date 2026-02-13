@@ -1,0 +1,33 @@
+# Rust
+/target/
+**/target/
+Cargo.lock
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+build/
+dist/
+.eggs/
+*.egg
+
+# Python virtual environments
+venv/
+env/
+
+# IDE/editor
+.idea/
+.vscode/
+*.swp
+*~
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Project-specific
+publishing_notes.txt
+/venkat-ph
+/_temp_repo/**

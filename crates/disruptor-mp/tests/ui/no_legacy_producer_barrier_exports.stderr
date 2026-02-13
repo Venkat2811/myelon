@@ -1,0 +1,24 @@
+error[E0432]: unresolved import `disruptor_mp::producer::ConsumerBarrier`
+ --> tests/ui/no_legacy_producer_barrier_exports.rs:1:30
+  |
+1 | use disruptor_mp::producer::{ConsumerBarrier, DiscoveryMode};
+  |                              ^^^^^^^^^^^^^^^ no `ConsumerBarrier` in `api::producer`
+  |
+  = help: consider importing this type alias instead:
+          disruptor_mp::ConsumerBarrier
+
+error[E0603]: enum `DiscoveryMode` is private
+ --> tests/ui/no_legacy_producer_barrier_exports.rs:1:47
+  |
+1 | use disruptor_mp::producer::{ConsumerBarrier, DiscoveryMode};
+  |                                               ^^^^^^^^^^^^^ private enum
+  |
+note: the enum `DiscoveryMode` is defined here
+ --> src/producer.rs
+  |
+  | use super::consumer_barrier::{DiscoveryMode, SharedConsumerBarrier};
+  |                               ^^^^^^^^^^^^^
+help: import `DiscoveryMode` directly
+  |
+1 | use disruptor_mp::producer::{ConsumerBarrier, disruptor_mp::api::consumer_barrier::DiscoveryMode};
+  |                                               ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

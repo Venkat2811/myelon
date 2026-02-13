@@ -1,0 +1,26 @@
+[workspace]
+members = [
+  "crates/disruptor-mp",
+  "crates/legacy-wip",
+  "python-surface-archive",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+
+[workspace.metadata]
+project = "myelon"
+
+[profile.competitive]
+inherits = "release"
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+overflow-checks = false
+debug-assertions = false
+debug = false
+panic = "abort"
+strip = true
+incremental = false

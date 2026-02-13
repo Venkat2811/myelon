@@ -1,0 +1,17 @@
+error[E0432]: unresolved import `disruptor_mp::cursor`
+ --> tests/ui/no_internal_modules.rs:1:19
+  |
+1 | use disruptor_mp::cursor::SharedCursor;
+  |                   ^^^^^^ could not find `cursor` in `disruptor_mp`
+
+error[E0432]: unresolved import `disruptor_mp::ringbuffer`
+ --> tests/ui/no_internal_modules.rs:2:19
+  |
+2 | use disruptor_mp::ringbuffer::SharedRingBuffer;
+  |                   ^^^^^^^^^^ could not find `ringbuffer` in `disruptor_mp`
+
+error[E0432]: unresolved import `disruptor_mp::wait`
+ --> tests/ui/no_internal_modules.rs:3:19
+  |
+3 | use disruptor_mp::wait::SLEEP_CONFIG;
+  |                   ^^^^ could not find `wait` in `disruptor_mp`
