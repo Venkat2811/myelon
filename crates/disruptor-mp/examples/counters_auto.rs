@@ -424,7 +424,7 @@ fn spmc_producer_process(expected_consumers: i64) -> Result<(), Box<dyn std::err
         });
 
         // Progress reporting for long-running tests
-        if i.is_multiple_of(1_000) && i > 0 {
+        if disruptor_mp::is_multiple_of_u64(i, 1_000) && i > 0 {
             println!("Produced {} events", i);
         }
     }
@@ -533,7 +533,7 @@ fn spmc_consumer_process(consumer_id: &str) -> Result<(), Box<dyn std::error::Er
             total_counter_clone.fetch_add(event.value as i64, Ordering::Relaxed);
 
             // Progress reporting for long-running tests
-            if consumed.is_multiple_of(1_000) && consumed > 0 {
+            if disruptor_mp::is_multiple_of_u64(consumed, 1_000) && consumed > 0 {
                 println!(
                     "Consumer {} consumed {} events, counter: {}",
                     consumer_id_owned,
@@ -721,7 +721,7 @@ fn spsc_discovery_producer_process() -> Result<(), Box<dyn std::error::Error>> {
         });
 
         // Progress reporting for long-running tests
-        if i.is_multiple_of(5_000) && i > 0 {
+        if disruptor_mp::is_multiple_of_u64(i, 5_000) && i > 0 {
             let progress = (i as f64 / NUM_EVENTS as f64) * 100.0;
             println!(" Produced {} events ({:.1}%)", i, progress);
         }
@@ -799,7 +799,7 @@ fn spsc_discovery_consumer_process() -> Result<(), Box<dyn std::error::Error>> {
             total_counter_clone.fetch_add(event.value as i64, Ordering::Relaxed);
 
             // Progress reporting
-            if consumed.is_multiple_of(5_000) && consumed > 0 {
+            if disruptor_mp::is_multiple_of_u64(consumed, 5_000) && consumed > 0 {
                 let progress = (consumed as f64 / NUM_EVENTS as f64) * 100.0;
                 println!(
                     " Discovered consumer processed {} events, counter: {} ({:.1}%)",
@@ -971,7 +971,7 @@ fn spmc_discovery_producer_process(
         });
 
         // Progress reporting for long-running tests
-        if i.is_multiple_of(10_000) && i > 0 {
+        if disruptor_mp::is_multiple_of_u64(i, 10_000) && i > 0 {
             let progress = (i as f64 / NUM_EVENTS as f64) * 100.0;
             println!(" Produced {} events ({:.1}%)", i, progress);
         }
@@ -1236,7 +1236,7 @@ fn producer_process() -> Result<(), Box<dyn std::error::Error>> {
         });
 
         // Progress reporting for long-running tests
-        if i.is_multiple_of(1_000) && i > 0 {
+        if disruptor_mp::is_multiple_of_u64(i, 1_000) && i > 0 {
             let progress = (i as f64 / NUM_EVENTS as f64) * 100.0;
             println!("Published {} events ({:.1}%)", i, progress);
         }
@@ -1348,7 +1348,7 @@ fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
             total_counter_clone.fetch_add(event.value as i64, Ordering::Relaxed);
 
             // Progress reporting for long-running tests
-            if consumed.is_multiple_of(1_000) && consumed > 0 {
+            if disruptor_mp::is_multiple_of_u64(consumed, 1_000) && consumed > 0 {
                 println!(
                     "Automatic processing: {} events, counter: {}",
                     consumed,
@@ -2433,7 +2433,7 @@ fn spsc_prefix_discovery_producer_process() -> Result<(), Box<dyn std::error::Er
         });
 
         // Progress reporting for long-running tests
-        if i.is_multiple_of(5_000) && i > 0 {
+        if disruptor_mp::is_multiple_of_u64(i, 5_000) && i > 0 {
             let progress = (i as f64 / NUM_EVENTS as f64) * 100.0;
             println!(" Produced {} events ({:.1}%)", i, progress);
         }
@@ -2513,7 +2513,7 @@ fn spsc_prefix_discovery_consumer_process() -> Result<(), Box<dyn std::error::Er
             total_counter_clone.fetch_add(event.value as i64, Ordering::Relaxed);
 
             // Progress reporting
-            if consumed.is_multiple_of(5_000) && consumed > 0 {
+            if disruptor_mp::is_multiple_of_u64(consumed, 5_000) && consumed > 0 {
                 let progress = (consumed as f64 / NUM_EVENTS as f64) * 100.0;
                 println!(
                     " Prefix consumer processed {} events, counter: {} ({:.1}%)",
@@ -2691,7 +2691,7 @@ fn spmc_prefix_discovery_producer_process(
         });
 
         // Progress reporting for long-running tests
-        if i.is_multiple_of(10_000) && i > 0 {
+        if disruptor_mp::is_multiple_of_u64(i, 10_000) && i > 0 {
             let progress = (i as f64 / NUM_EVENTS as f64) * 100.0;
             println!(" Produced {} events ({:.1}%)", i, progress);
         }

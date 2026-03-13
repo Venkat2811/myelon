@@ -646,7 +646,7 @@ fn run_child_producer_basic(
             .expect("publish_with_timeout should not time out");
 
         // Force periodic consumer-gating checks in true multiprocess mode.
-        if sequence.is_multiple_of((buffer_size as u64 / 2).max(1)) {
+        if sequence % ((buffer_size as u64 / 2).max(1)) == 0 {
             let _ = producer.wait_until_consumed_with_strategy(
                 sequence as i64,
                 Duration::from_millis(200),
@@ -774,7 +774,7 @@ fn run_child_consumer() {
             consumed += 1;
             sum = sum.wrapping_add(event.checksum);
 
-            if slow_every > 0 && consumed.is_multiple_of(slow_every as u64) {
+            if slow_every > 0 && disruptor_mp::is_multiple_of_u64(consumed, slow_every as u64) {
                 thread::sleep(Duration::from_micros(slow_micros));
             }
         });

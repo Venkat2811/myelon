@@ -371,7 +371,7 @@ mod tests {
 
     #[test]
     fn test_shared_ring_buffer_creation_and_attachment() {
-        let name = "test_ring_basic".to_string();
+        let name = unique_test_segment("test_ring_basic");
         let buffer_size = 8;
 
         // Producer creates the ring buffer
@@ -401,7 +401,7 @@ mod tests {
 
     #[test]
     fn test_basic_producer_consumer_coordination() {
-        let name = "test_basic_coord".to_string();
+        let name = unique_test_segment("test_basic_coord");
         let buffer_size = 8;
 
         // Create producer
@@ -444,9 +444,8 @@ mod tests {
     // ============================================================================
 
     #[test]
-    #[ignore] // Passes individually, fails in suite due to timing/resource conflicts
     fn test_spsc_ring_buffer_full_behavior() {
-        let name = "spsc_full".to_string();
+        let name = unique_test_segment("spsc_full");
         let buffer_size = 4;
 
         // Create consumer first in a thread
@@ -524,7 +523,7 @@ mod tests {
 
     #[test]
     fn test_spsc_ordered_event_processing() {
-        let name = "spsc_ordered".to_string();
+        let name = unique_test_segment("spsc_ordered");
         let buffer_size = 16; // Large enough to hold all test events
         let num_events = 10;
 
@@ -578,7 +577,7 @@ mod tests {
 
     #[test]
     fn test_per_consumer_sequences_prevent_race_conditions() {
-        let name = "per_consumer_test".to_string();
+        let name = unique_test_segment("per_consumer_test");
         let buffer_size = 64;
         let num_events = 10; // Start with fewer events for debugging
 
@@ -694,7 +693,7 @@ mod tests {
 
     #[test]
     fn test_broadcast_consumer_basic() {
-        let name = "broadcast_basic".to_string();
+        let name = unique_test_segment("broadcast_basic");
         let buffer_size = 64;
         let num_events = 5;
 
@@ -780,7 +779,7 @@ mod tests {
 
     #[test]
     fn test_shared_cursor_operations() {
-        let name = "atomic_ops".to_string();
+        let name = unique_test_segment("atomic_ops");
         let cursor = SharedCursor::new(&name, 0).unwrap();
 
         // Basic operations
@@ -1012,7 +1011,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Passes individually, fails in suite due to timing/resource conflicts (20s timeout)
     fn test_fast_slow_consumer_race_condition_fix() {
         let name = unique_test_segment("race_condition_fix");
         let buffer_size = 8; // Small buffer to force backpressure
@@ -1149,7 +1147,7 @@ mod tests {
             NUM_EVENTS
         );
 
-        let segment_name = format!("wrap_no_disc_{}", std::process::id());
+        let segment_name = unique_test_segment("wrap_no_disc");
 
         // Create producer WITHOUT discovery
         let mut producer = build_shared_single_producer::<TestEvent>(&segment_name, BUFFER_SIZE)
@@ -1194,7 +1192,7 @@ mod tests {
             NUM_EVENTS
         );
 
-        let segment_name = format!("boundary_{}", std::process::id());
+        let segment_name = unique_test_segment("boundary");
 
         // Create producer without discovery
         let mut producer = build_shared_single_producer::<TestEvent>(&segment_name, BUFFER_SIZE)
@@ -1231,7 +1229,7 @@ mod tests {
                 buffer_size, num_events
             );
 
-            let segment_name = format!("size_{}_{}", buffer_size, std::process::id());
+            let segment_name = unique_test_segment(&format!("size_{}", buffer_size));
 
             let mut producer =
                 build_shared_single_producer::<TestEvent>(&segment_name, buffer_size)

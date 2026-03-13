@@ -97,7 +97,7 @@ impl SharedConsumerBarrier {
 
     /// Create a barrier with explicit discovery mode.
     pub fn new_with_discovery(base_name: String, discovery_mode: DiscoveryMode) -> Self {
-        Self {
+        let mut barrier = Self {
             consumer_cursors: HashMap::new(),
             base_name,
             last_scan: Instant::now(),
@@ -105,7 +105,11 @@ impl SharedConsumerBarrier {
             discovery_mode,
             discovery_completed: false,
             producer_sequence: None,
+        };
+        if !matches!(barrier.discovery_mode, DiscoveryMode::Disabled) {
+            barrier.discover_consumers();
         }
+        barrier
     }
 
     /// Create a barrier with internal readiness coordination.
@@ -121,7 +125,7 @@ impl SharedConsumerBarrier {
         let consumers_ready_name = format!("{}_cr", base_name);
         let consumers_ready = Some(SharedCursor::new(&consumers_ready_name, 0)?);
 
-        Ok(Self {
+        let mut barrier = Self {
             consumer_cursors: HashMap::new(),
             base_name,
             last_scan: Instant::now(),
@@ -129,7 +133,9 @@ impl SharedConsumerBarrier {
             discovery_mode,
             discovery_completed: false,
             producer_sequence: None,
-        })
+        };
+        barrier.discover_consumers();
+        Ok(barrier)
     }
 
     /// Set producer sequence reference for no-consumer fallback.
@@ -202,7 +208,9 @@ impl SharedConsumerBarrier {
                 max_consumers,
                 consumer_prefix,
             } => {
-                if now.duration_since(self.last_scan) < *scan_interval {
+                if now.duration_since(self.last_scan) < *scan_interval
+                    && !self.consumer_cursors.is_empty()
+                {
                     return;
                 }
 
@@ -262,7 +270,7 @@ impl SharedConsumerBarrier {
         let current_pid = std::process::id();
 
         let max_consumers = match &self.discovery_mode {
-            DiscoveryMode::Enabled { max_consumers, .. } => (*max_consumers).min(8),
+            DiscoveryMode::Enabled { max_consumers, .. } => (*max_consumers).clamp(32, 128),
             _ => 8,
         };
 
@@ -308,10 +316,18 @@ impl SharedConsumerBarrier {
         }
 
         if min_sequence == i64::MAX {
-            if let Some(ref producer_seq) = self.producer_sequence {
-                producer_seq.load(Ordering::Acquire)
-            } else {
-                -1
+            match &self.discovery_mode {
+                // In discovery mode, if no consumers are discovered yet, return conservative
+                // floor to preserve backpressure rather than pretending producer is the sole
+                // consumer, which would allow overwriting unread data before discovery.
+                DiscoveryMode::Enabled { .. } => -1,
+                _ => {
+                    if let Some(ref producer_seq) = self.producer_sequence {
+                        producer_seq.load(Ordering::Acquire)
+                    } else {
+                        -1
+                    }
+                }
             }
         } else {
             min_sequence

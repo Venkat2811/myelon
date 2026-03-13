@@ -432,6 +432,7 @@ version = "3.7.1"
 dependencies = [
  "chrono",
  "clap",
+ "core_affinity",
  "criterion",
  "crossbeam",
  "ctrlc",

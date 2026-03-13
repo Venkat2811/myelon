@@ -172,7 +172,7 @@ fn run_rust_native_test() -> PerformanceResults {
                     event.payload[0] = (i & 0xFF) as u8;
                 });
 
-                if i.is_multiple_of(10_000) && i > 0 {
+                if disruptor_mp::is_multiple_of_u64(i, 10_000) && i > 0 {
                     println!("Rust Producer: Published {} events", i);
                 }
             }
@@ -218,7 +218,7 @@ fn run_rust_native_test() -> PerformanceResults {
                     Ordering::Relaxed,
                 );
 
-                if consumed.is_multiple_of(10_000) {
+                if disruptor_mp::is_multiple_of_u64(consumed, 10_000) {
                     println!("Rust Consumer: Consumed {} events", consumed);
                 }
             })?;

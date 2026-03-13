@@ -71,6 +71,7 @@ use super::consumer_barrier::DiscoveryMode;
 use super::producer::{CoordinationMode, SharedProducer};
 use crate::{MultiProcessResult, SharedCursor, SharedMemoryConfig, SharedRingBuffer};
 use disruptor_core::Sequence;
+use std::env;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -312,6 +313,7 @@ pub struct SharedDisruptorBuilder<E> {
     coordination_mode: Option<CoordinationMode>,
     discovery_mode: Option<DiscoveryMode>,
     consumer_id: Option<String>,
+    consumer_core: Option<usize>,
     coordination_timeout: Option<Duration>,
     _phantom: std::marker::PhantomData<E>,
 }
@@ -327,6 +329,7 @@ where
             coordination_mode: None,
             discovery_mode: None,
             consumer_id: None,
+            consumer_core: None,
             coordination_timeout: None,
             _phantom: std::marker::PhantomData,
         }
@@ -489,6 +492,19 @@ where
         self
     }
 
+    /// Bind automatic consumer thread to a specific CPU core.
+    ///
+    /// Uses Linux core affinity on Linux builds. On unsupported platforms this
+    /// configuration is accepted but logged as unsupported at runtime.
+    ///
+    /// The builder resolves the effective affinity order:
+    /// 1. Explicit builder value.
+    /// 2. `DISRUPTOR_MP_AUTO_CONSUMER_CORE` environment variable (if set).
+    pub fn with_consumer_core(mut self, core_id: usize) -> Self {
+        self.consumer_core = Some(core_id);
+        self
+    }
+
     /// Build a consumer with automatic batch event handling
     ///
     /// This provides automatic event delivery with configurable wait strategies.
@@ -560,11 +576,17 @@ where
         // Create shutdown signal
         let shutdown_signal = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let shutdown_signal_clone = std::sync::Arc::clone(&shutdown_signal);
+        let consumer_core = resolve_auto_consumer_core(self.consumer_core);
+        let thread_name = format!("multiprocess-consumer-{}", std::process::id());
 
         // Spawn background thread for automatic event processing
         let join_handle = thread::Builder::new()
-            .name(format!("multiprocess-consumer-{}", std::process::id()))
+            .name(thread_name.clone())
             .spawn(move || {
+                if let Some(core_id) = consumer_core {
+                    pin_thread_to_core(core_id, &thread_name);
+                }
+
                 loop {
                     let processed = match wait_strategy {
                         AutoWaitStrategy::BusySpin => {
@@ -781,6 +803,56 @@ where
             Some(self.config.name.clone()),
         ))
     }
+}
+
+fn resolve_auto_consumer_core(consumer_core: Option<usize>) -> Option<usize> {
+    if let Some(core_id) = consumer_core {
+        return Some(core_id);
+    }
+
+    match env::var("DISRUPTOR_MP_AUTO_CONSUMER_CORE") {
+        Ok(raw) => match raw.parse::<usize>() {
+            Ok(core_id) => Some(core_id),
+            Err(_) => {
+                eprintln!(
+                    "Invalid DISRUPTOR_MP_AUTO_CONSUMER_CORE='{}'. Expected a non-negative integer.",
+                    raw
+                );
+                None
+            }
+        },
+        Err(_) => None,
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn pin_thread_to_core(core_id: usize, thread_name: &str) {
+    let available_cores = core_affinity::get_core_ids().unwrap_or_default();
+    let core = core_affinity::CoreId { id: core_id };
+
+    if !available_cores
+        .iter()
+        .any(|candidate| candidate.id == core_id)
+    {
+        eprintln!(
+            "Could not pin {} to core {}: core not available.",
+            thread_name, core_id
+        );
+        return;
+    }
+
+    if !core_affinity::set_for_current(core) {
+        eprintln!("Could not pin {} to core {}.", thread_name, core_id);
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn pin_thread_to_core(core_id: usize, thread_name: &str) {
+    eprintln!(
+        "Affinity support for automatic consumer core pinning is not implemented on this platform. \
+         Requested pinning {} -> core {} ignored.",
+        thread_name, core_id
+    );
 }
 
 /// Create a shared single producer for multi-process communication
@@ -1178,6 +1250,53 @@ mod tests {
 
             // Shutdown consumer
             drop(consumer);
+        }
+    }
+
+    #[test]
+    fn test_consumer_core_override_is_preserved() {
+        let segment_name = format!("test_cpu_{}", std::process::id() % 10000);
+        let buffer_size = 128;
+        let builder =
+            attach_shared_consumer::<TestEvent>(&segment_name, buffer_size).with_consumer_core(3);
+
+        assert_eq!(builder.consumer_core, Some(3));
+    }
+
+    #[test]
+    fn test_consumer_core_resolve_from_builder_overrides_env() {
+        let override_core = 7usize;
+        let resolved = resolve_auto_consumer_core(Some(override_core));
+        assert_eq!(resolved, Some(override_core));
+    }
+
+    #[test]
+    fn test_consumer_core_resolve_from_env_var() {
+        const ENV_VAR: &str = "DISRUPTOR_MP_AUTO_CONSUMER_CORE";
+        let previous = std::env::var_os(ENV_VAR);
+        std::env::set_var(ENV_VAR, "9");
+
+        let resolved = resolve_auto_consumer_core(None);
+        assert_eq!(resolved, Some(9));
+
+        match previous {
+            Some(value) => std::env::set_var(ENV_VAR, value),
+            None => std::env::remove_var(ENV_VAR),
+        }
+    }
+
+    #[test]
+    fn test_consumer_core_resolve_from_invalid_env_var() {
+        const ENV_VAR: &str = "DISRUPTOR_MP_AUTO_CONSUMER_CORE";
+        let previous = std::env::var_os(ENV_VAR);
+        std::env::set_var(ENV_VAR, "invalid");
+
+        let resolved = resolve_auto_consumer_core(None);
+        assert_eq!(resolved, None);
+
+        match previous {
+            Some(value) => std::env::set_var(ENV_VAR, value),
+            None => std::env::remove_var(ENV_VAR),
         }
     }
 }

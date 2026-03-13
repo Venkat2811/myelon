@@ -829,7 +829,7 @@ fn producer_process() -> Result<(), Box<dyn std::error::Error>> {
         });
 
         // Progress reporting for long-running tests
-        if i.is_multiple_of(1_000) && i > 0 {
+        if disruptor_mp::is_multiple_of_u64(i, 1_000) && i > 0 {
             println!("Produced {} events", i);
         }
     }
@@ -970,7 +970,7 @@ fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
             total_counter += event.value as i64; // Running counter for verification
 
             // Progress reporting for long-running tests
-            if events_consumed.is_multiple_of(1_000) && events_consumed > 0 {
+            if disruptor_mp::is_multiple_of_u64(events_consumed, 1_000) && events_consumed > 0 {
                 println!(
                     "Consumed {} events, counter: {}",
                     events_consumed, total_counter
@@ -1141,7 +1141,7 @@ fn spmc_consumer_process(consumer_id: &str) -> Result<(), Box<dyn std::error::Er
             events_consumed += 1;
             total_counter += event.value as i64;
 
-            if events_consumed.is_multiple_of(1_000) && events_consumed > 0 {
+            if disruptor_mp::is_multiple_of_u64(events_consumed, 1_000) && events_consumed > 0 {
                 println!(
                     "Consumer {} consumed {} events, counter: {}",
                     consumer_id, events_consumed, total_counter
@@ -1298,7 +1298,7 @@ fn spsc_discovery_producer_process() -> Result<(), Box<dyn std::error::Error>> {
         });
 
         // Progress reporting for long-running tests
-        if i.is_multiple_of(1_000) && i > 0 {
+        if disruptor_mp::is_multiple_of_u64(i, 1_000) && i > 0 {
             println!("Produced {} events", i);
         }
     }
@@ -1408,7 +1408,7 @@ fn spsc_discovery_consumer_process() -> Result<(), Box<dyn std::error::Error>> {
             total_counter += event.value as i64; // Running counter for verification
 
             // Progress reporting for long-running tests
-            if events_consumed.is_multiple_of(1_000) && events_consumed > 0 {
+            if disruptor_mp::is_multiple_of_u64(events_consumed, 1_000) && events_consumed > 0 {
                 println!(
                     "Consumer consumed {} events, counter: {}",
                     events_consumed, total_counter
@@ -2013,7 +2013,7 @@ fn spmc_producer_process(expected_consumers: i64) -> Result<(), Box<dyn std::err
             event.timestamp_ns = publish_time; // Record when event was produced
         });
 
-        if i.is_multiple_of(1_000) && i > 0 {
+        if disruptor_mp::is_multiple_of_u64(i, 1_000) && i > 0 {
             println!("Produced {} events", i);
         }
     }
@@ -2128,7 +2128,7 @@ fn spmc_discovery_producer_process(
         });
 
         // Progress reporting for long-running tests
-        if i.is_multiple_of(1_000) && i > 0 {
+        if disruptor_mp::is_multiple_of_u64(i, 1_000) && i > 0 {
             println!("Produced {} events", i);
         }
     }
@@ -2243,7 +2243,7 @@ fn spmc_discovery_consumer_process(consumer_id: &str) -> Result<(), Box<dyn std:
             total_counter += event.value as i64; // Running counter for verification
 
             // Progress reporting for long-running tests
-            if events_consumed.is_multiple_of(1_000) && events_consumed > 0 {
+            if disruptor_mp::is_multiple_of_u64(events_consumed, 1_000) && events_consumed > 0 {
                 println!(
                     "Consumer {} consumed {} events, counter: {}",
                     consumer_id, events_consumed, total_counter
@@ -2628,7 +2628,7 @@ fn spsc_prefix_discovery_producer_process() -> Result<(), Box<dyn std::error::Er
         });
 
         // Progress reporting for long-running tests
-        if i.is_multiple_of(1_000) && i > 0 {
+        if disruptor_mp::is_multiple_of_u64(i, 1_000) && i > 0 {
             println!("Produced {} events", i);
         }
     }
@@ -2742,7 +2742,7 @@ fn spsc_prefix_discovery_consumer_process() -> Result<(), Box<dyn std::error::Er
             total_counter += event.value as i64; // Running counter for verification
 
             // Progress reporting for long-running tests
-            if events_consumed.is_multiple_of(1_000) && events_consumed > 0 {
+            if disruptor_mp::is_multiple_of_u64(events_consumed, 1_000) && events_consumed > 0 {
                 println!(
                     "Consumed {} events, counter: {}",
                     events_consumed, total_counter
@@ -2883,7 +2883,7 @@ fn spmc_prefix_discovery_producer_process(
         });
 
         // Progress reporting for long-running tests
-        if i.is_multiple_of(1_000) && i > 0 {
+        if disruptor_mp::is_multiple_of_u64(i, 1_000) && i > 0 {
             println!("Produced {} events", i);
         }
     }
@@ -3011,7 +3011,7 @@ fn spmc_prefix_discovery_consumer_process(
             total_counter += event.value as i64; // Running counter for verification
 
             // Progress reporting for long-running tests
-            if events_consumed.is_multiple_of(1_000) && events_consumed > 0 {
+            if disruptor_mp::is_multiple_of_u64(events_consumed, 1_000) && events_consumed > 0 {
                 println!(
                     "Consumer {} consumed {} events, counter: {}",
                     consumer_id, events_consumed, total_counter
