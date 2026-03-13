@@ -201,7 +201,7 @@ fn producer_process() -> Result<(), Box<dyn std::error::Error>> {
             event.value = (i * 42) as i64;
         });
 
-        if i % 10_000 == 0 {
+        if i.is_multiple_of(10_000) {
             println!("Produced {} events", i);
         }
     }
@@ -284,7 +284,7 @@ fn consumer_process(consumer_id: &str) -> Result<(), Box<dyn std::error::Error>>
             last_event_id = Some(event.id);
 
             // Verify event data and show progress
-            if events_consumed % 10_000 == 0 {
+            if events_consumed.is_multiple_of(10_000) {
                 println!(
                     "Consumer {} consumed event {}: id={}, timestamp={}, value={}, seq={}",
                     consumer_id, events_consumed, event.id, event.timestamp, event.value, sequence

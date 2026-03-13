@@ -3,7 +3,8 @@ CARGO ?= cargo
 .PHONY: \
 	help fmt check build test bench bench-mp \
 	py-check py-test \
-	smoke orchestrate-rust orchestrate-python orchestrate-all
+	smoke orchestrate-rust orchestrate-python orchestrate-all \
+	validate-ci-workflows
 
 help:
 	@echo "myelon workspace commands"
@@ -11,6 +12,7 @@ help:
 	@echo "  make orchestrate-rust    - rust-tier CI-style workflow"
 	@echo "  make orchestrate-python  - python-tier workflow"
 	@echo "  make orchestrate-all     - rust + python workflows"
+	@echo "  make validate-ci-workflows - verify copied workflow path/platform expectations"
 	@echo "  make fmt                 - cargo fmt for workspace"
 	@echo "  make check               - cargo check --workspace --all-targets"
 	@echo "  make build               - cargo build --workspace"
@@ -46,8 +48,12 @@ py-check:
 py-test:
 	@cd python-surface-archive && python3 -m pytest
 
+validate-ci-workflows:
+	@bash scripts/validate_ci_workflows.sh
+
 smoke:
 	@$(MAKE) drift-check
+	@$(MAKE) drift-check-shell-matrix
 	@$(CARGO) check -p disruptor-mp --lib
 	@$(CARGO) check -p myelon
 	@$(CARGO) check -p python-surface-archive
@@ -55,13 +61,17 @@ smoke:
 orchestrate-rust:
 	@$(CARGO) fmt --all
 	@$(MAKE) drift-check
+	@$(MAKE) drift-check-shell-matrix
 	@$(CARGO) clippy -p disruptor-mp -- -D warnings
+	@$(CARGO) clippy -p myelon -- -D warnings
 	@$(CARGO) test -p disruptor-mp --lib
 	@$(CARGO) test -p disruptor-mp --test multiprocess_cleanup
+	@$(CARGO) test -p myelon --tests
 	@$(CARGO) test -p disruptor-mp --test compile_api
+	@$(CARGO) test -p myelon --test compile_api
 	@$(CARGO) test -p disruptor-mp --benches --no-run
 	@$(CARGO) test -p disruptor-mp --examples --no-run
 
-orchestrate-python: py-check py-test
+orchestrate-python: validate-ci-workflows py-check py-test
 
 orchestrate-all: orchestrate-rust orchestrate-python

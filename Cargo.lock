@@ -710,6 +710,7 @@ name = "myelon"
 version = "0.1.0"
 dependencies = [
  "disruptor-mp",
+ "trybuild",
 ]
 
 [[package]]

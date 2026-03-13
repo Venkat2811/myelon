@@ -1,10 +1,8 @@
 use disruptor_mp::{
     backend,
-    consumer::SharedConsumer,
-    lock_free::{ConsumerBarrier, DiscoveryMode, ProducerBarrier, SharedCursor},
-    producer::CoordinationMode,
+    lock_free::{ConsumerBarrier, ProducerBarrier, SharedCursor},
     shared_memory::{SharedMemoryConfig, SharedRingBuffer, ShmRingBuffer},
-    SharedProducer,
+    CoordinationMode, DiscoveryMode, SharedConsumer, SharedProducer,
 };
 
 #[test]

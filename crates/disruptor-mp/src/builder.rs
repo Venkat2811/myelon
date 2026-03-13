@@ -66,9 +66,9 @@
 //! # }
 //! ```
 
+use super::consumer::SharedConsumer;
 use super::consumer_barrier::DiscoveryMode;
-use crate::consumer::SharedConsumer;
-use crate::producer::{CoordinationMode, SharedProducer};
+use super::producer::{CoordinationMode, SharedProducer};
 use crate::{MultiProcessResult, SharedCursor, SharedMemoryConfig, SharedRingBuffer};
 use disruptor_core::Sequence;
 use std::sync::atomic::{AtomicUsize, Ordering};

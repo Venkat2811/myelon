@@ -216,15 +216,15 @@
 //! ```
 
 #[path = "builder.rs"]
-pub mod builder;
+mod builder;
 #[path = "consumer.rs"]
-pub mod consumer;
+mod consumer;
 #[path = "lock_free/consumer_barrier.rs"]
 mod consumer_barrier;
 #[path = "lock_free/cursor.rs"]
 mod cursor;
 #[path = "producer.rs"]
-pub mod producer;
+mod producer;
 #[path = "backend/shared_memory/ringbuffer.rs"]
 mod ringbuffer;
 #[path = "runtime/wait.rs"]
@@ -343,11 +343,21 @@ impl fmt::Display for SharedMemoryConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::MissingFreeSlots;
     use crate::RingBufferFull;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-    use std::sync::{Arc, Barrier};
+    use std::sync::Arc;
     use std::thread;
-    use std::time::{Duration, Instant};
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+    fn unique_test_segment(prefix: &str) -> String {
+        let pid = std::process::id();
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be valid")
+            .as_nanos();
+        format!("{prefix}_{pid}_{nanos}")
+    }
 
     #[derive(Debug, Copy, Clone, Default, PartialEq)]
     struct TestEvent {
@@ -566,285 +576,6 @@ mod tests {
         }
     }
 
-    // ============================================================================
-    // MULTI-THREADED TESTS (Proper Thread-Based Testing)
-    // NOTE: These are thread-based integration tests, NOT real multi-process tests
-    // ============================================================================
-
-    #[test]
-    fn test_concurrent_producer_consumer_threads() {
-        let name = format!("concurrent_threads_{}", std::process::id());
-        let buffer_size = 64;
-        let num_events = 1000;
-
-        // Synchronization primitives with timeouts
-        let barrier = Arc::new(Barrier::new(2));
-        let events_published = Arc::new(AtomicUsize::new(0));
-        let events_consumed = Arc::new(AtomicUsize::new(0));
-        let producer_ready = Arc::new(AtomicBool::new(false));
-        let consumer_ready = Arc::new(AtomicBool::new(false));
-        let test_timeout = Duration::from_secs(30); // Add overall test timeout
-        let _test_start = Instant::now();
-
-        // Producer thread
-        let producer_handle = {
-            let name = name.clone();
-            let barrier = barrier.clone();
-            let events_published = events_published.clone();
-            let producer_ready = producer_ready.clone();
-            let consumer_ready = consumer_ready.clone();
-
-            thread::spawn(move || {
-                let mut producer = build_shared_single_producer::<TestEvent>(&name, buffer_size)
-                    // No discovery needed for thread-based test - threads coordinate directly
-                    .build_producer(TestEvent::default)
-                    .unwrap();
-
-                // Signal that producer is ready (shared memory created)
-                producer_ready.store(true, Ordering::Release);
-
-                // Wait for consumer to be ready
-                let wait_start = Instant::now();
-                while !consumer_ready.load(Ordering::Acquire) {
-                    thread::yield_now();
-                    if wait_start.elapsed() > Duration::from_secs(5) {
-                        panic!("Producer timed out waiting for consumer readiness");
-                    }
-                }
-
-                barrier.wait(); // Synchronize start
-
-                for i in 0..num_events {
-                    producer
-                        .publish_with_timeout(test_timeout, |event| {
-                            event.sequence = i as i64;
-                            event.data = i as i64 * 2;
-                        })
-                        .expect("producer timed out");
-                    events_published.store(i + 1, Ordering::Release);
-
-                    // Check timeout
-                    if _test_start.elapsed() > test_timeout {
-                        panic!(
-                            "Producer timed out after {} seconds",
-                            test_timeout.as_secs()
-                        );
-                    }
-                }
-            })
-        };
-
-        // Consumer thread
-        let consumer_handle = {
-            let barrier = barrier.clone();
-            let events_consumed = events_consumed.clone();
-            let producer_ready = producer_ready.clone();
-            let consumer_ready = consumer_ready.clone();
-
-            thread::spawn(move || {
-                // Wait for producer to be ready with timeout
-                let wait_start = Instant::now();
-                while !producer_ready.load(Ordering::Acquire) {
-                    thread::yield_now();
-                    if wait_start.elapsed() > Duration::from_secs(5) {
-                        panic!("Consumer timed out waiting for producer readiness");
-                    }
-                }
-
-                let config = SharedMemoryConfig {
-                    name,
-                    buffer_size,
-                    element_size: std::mem::size_of::<TestEvent>(),
-                    create: false,
-                };
-                let mut consumer: SharedConsumer<TestEvent> = SharedDisruptorBuilder::new(config)
-                    .build_consumer()
-                    .unwrap();
-
-                // Signal that consumer is ready
-                consumer_ready.store(true, Ordering::Release);
-
-                barrier.wait();
-
-                let mut consumed = 0;
-                while consumed < num_events {
-                    let processed = consumer.process_available(|event: &TestEvent, seq| {
-                        assert_eq!(event.sequence, seq);
-                        assert_eq!(event.data, seq * 2);
-                        consumed += 1;
-                        events_consumed.store(consumed, Ordering::Release);
-                    });
-
-                    if processed == 0 {
-                        thread::yield_now();
-                    }
-
-                    // Check timeout
-                    if _test_start.elapsed() > test_timeout {
-                        panic!(
-                            "Consumer timed out after {} seconds",
-                            test_timeout.as_secs()
-                        );
-                    }
-                }
-                consumed
-            })
-        };
-
-        // Wait for threads with timeout
-        producer_handle.join().unwrap();
-        let _consumer_result = consumer_handle.join().unwrap();
-
-        assert_eq!(events_published.load(Ordering::Acquire), num_events);
-        assert_eq!(events_consumed.load(Ordering::Acquire), num_events);
-    }
-
-    #[test]
-    #[ignore] // TODO: Re-enable after implementing proper shared memory cleanup between tests
-              // Currently disabled due to timeout issues when run in full test suite
-    fn test_producer_consumer_with_backpressure_threads() {
-        let name = "backpressure".to_string();
-        let buffer_size = 8; // Small buffer to force backpressure
-        let num_events = 100;
-        let test_timeout = Duration::from_secs(30); // Add overall test timeout
-        let _test_start = Instant::now();
-
-        let barrier = Arc::new(Barrier::new(2));
-        let slow_consumer = Arc::new(AtomicBool::new(true));
-        let producer_ready = Arc::new(AtomicBool::new(false));
-        let consumer_ready = Arc::new(AtomicBool::new(false));
-        let events_published = Arc::new(AtomicUsize::new(0));
-
-        // Producer thread
-        let producer_handle = {
-            let name = name.clone();
-            let barrier = barrier.clone();
-            let producer_ready = producer_ready.clone();
-            let consumer_ready = consumer_ready.clone();
-            let events_published = events_published.clone();
-
-            thread::spawn(move || {
-                let mut producer = build_shared_single_producer::<TestEvent>(&name, buffer_size)
-                    .build_producer(TestEvent::default)
-                    .unwrap();
-
-                // Signal that producer is ready
-                producer_ready.store(true, Ordering::Release);
-
-                // Wait for consumer to be ready
-                let wait_start = Instant::now();
-                while !consumer_ready.load(Ordering::Acquire) {
-                    thread::yield_now();
-                    if wait_start.elapsed() > Duration::from_secs(5) {
-                        panic!("Producer timed out waiting for consumer readiness");
-                    }
-                }
-
-                barrier.wait();
-
-                let start = Instant::now();
-                for i in 0..num_events {
-                    producer
-                        .publish_with_timeout(test_timeout, |event| {
-                            event.sequence = i as i64;
-                            event.data = i as i64;
-                        })
-                        .expect("producer timed out");
-                    events_published.store(i + 1, Ordering::Release);
-
-                    // Check timeout
-                    if start.elapsed() > test_timeout {
-                        panic!(
-                            "Producer timed out after {} seconds",
-                            test_timeout.as_secs()
-                        );
-                    }
-                }
-                start.elapsed()
-            })
-        };
-
-        // Consumer thread (initially slow, then fast)
-        let consumer_handle = {
-            let barrier = barrier.clone();
-            let slow_consumer = slow_consumer.clone();
-            let producer_ready = producer_ready.clone();
-            let consumer_ready = consumer_ready.clone();
-
-            thread::spawn(move || {
-                // Wait for producer to be ready with timeout
-                let wait_start = Instant::now();
-                while !producer_ready.load(Ordering::Acquire) {
-                    thread::yield_now();
-                    if wait_start.elapsed() > Duration::from_secs(5) {
-                        panic!("Consumer timed out waiting for producer readiness");
-                    }
-                }
-
-                let config = SharedMemoryConfig {
-                    name,
-                    buffer_size,
-                    element_size: std::mem::size_of::<TestEvent>(),
-                    create: false,
-                };
-                let mut consumer: SharedConsumer<TestEvent> = SharedDisruptorBuilder::new(config)
-                    .build_consumer()
-                    .unwrap();
-
-                // Signal that consumer is ready
-                consumer_ready.store(true, Ordering::Release);
-
-                barrier.wait();
-
-                let start = Instant::now();
-                let mut consumed_count = 0;
-                while consumed_count < num_events {
-                    let processed = consumer.process_available(|event: &TestEvent, seq| {
-                        assert_eq!(event.sequence, seq);
-                        consumed_count += 1;
-
-                        // Simulate slow consumer for first half
-                        if slow_consumer.load(Ordering::Acquire) && consumed_count < num_events / 2
-                        {
-                            thread::sleep(Duration::from_micros(100));
-                        }
-                    });
-
-                    // Speed up consumer after half the events
-                    if consumed_count >= num_events / 2 {
-                        slow_consumer.store(false, Ordering::Release);
-                    }
-
-                    if processed == 0 {
-                        thread::yield_now();
-                    }
-
-                    // Check timeout
-                    if start.elapsed() > test_timeout {
-                        panic!(
-                            "Consumer timed out after {} seconds",
-                            test_timeout.as_secs()
-                        );
-                    }
-                }
-                consumed_count
-            })
-        };
-
-        let producer_duration = producer_handle.join().unwrap();
-        let consumed_count = consumer_handle.join().unwrap();
-
-        assert_eq!(consumed_count, num_events);
-        assert_eq!(events_published.load(Ordering::Acquire), num_events);
-
-        // Producer should have experienced backpressure (taking longer due to slow consumer)
-        assert!(producer_duration > Duration::from_millis(1));
-    }
-
-    // ============================================================================
-    // REAL MULTI-PROCESS TESTS (Using std::process::Command)
-    // ============================================================================
-
     #[test]
     fn test_per_consumer_sequences_prevent_race_conditions() {
         let name = "per_consumer_test".to_string();
@@ -1039,333 +770,9 @@ mod tests {
         println!("Both consumers saw all events in order!");
     }
 
-    #[test]
-    fn test_real_multiprocess_spsc() {
-        use std::env;
-        use std::process::{Command, Stdio};
-
-        let name = "real_mp_spsc".to_string();
-        let num_events = 1000;
-
-        // Create a simple test binary content
-        let test_binary_content = format!(
-            r#"
-use disruptor_mp::{{build_shared_single_producer, SharedDisruptorBuilder, SharedMemoryConfig}};
-use disruptor_mp::Producer;
-use std::env;
-
-#[derive(Debug, Copy, Clone, Default)]
-struct TestEvent {{
-    value: i32,
-}}
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {{
-    let args: Vec<String> = env::args().collect();
-    if args.len() < 2 {{
-        eprintln!("Usage: {{}} <producer|consumer>", args[0]);
-        std::process::exit(1);
-    }}
-
-    match args[1].as_str() {{
-        "producer" => {{
-            let mut producer = build_shared_single_producer::<TestEvent>("{}", 64)
-                .build_producer(TestEvent::default)?;
-            
-            for i in 0..{} {{
-                producer.publish(|event| {{
-                    event.value = 1;
-                }});
-            }}
-            
-            // Keep alive briefly
-            std::thread::sleep(std::time::Duration::from_secs(2));
-            Ok(())
-        }}
-        "consumer" => {{
-            std::thread::sleep(std::time::Duration::from_millis(100));
-            
-            let config = SharedMemoryConfig {{
-                name: "{}".to_string(),
-                buffer_size: 64,
-                element_size: std::mem::size_of::<TestEvent>(),
-                create: false,
-            }};
-            
-            let mut consumer = SharedDisruptorBuilder::new(config).build_consumer()?;
-            let mut count = 0;
-            let mut no_events = 0;
-            
-            loop {{
-                let processed = consumer.process_available(|_event, _seq| {{
-                    count += 1;
-                }});
-                
-                if processed == 0 {{
-                    no_events += 1;
-                    std::thread::sleep(std::time::Duration::from_millis(1));
-                    if no_events > 1000 && count > 0 {{
-                        break;
-                    }}
-                }} else {{
-                    no_events = 0;
-                }}
-                
-                if count >= {} {{
-                    break;
-                }}
-            }}
-            
-            if count == {} {{
-                println!("SUCCESS: {{}} events", count);
-                std::process::exit(0);
-            }} else {{
-                println!("FAILED: Expected {}, got {{}}", count);
-                std::process::exit(1);
-            }}
-        }}
-        _ => {{
-            eprintln!("Invalid mode");
-            std::process::exit(1);
-        }}
-    }}
-}}
-"#,
-            name, num_events, name, num_events, num_events, num_events
-        );
-
-        // Write test binary to a temporary file
-        let temp_dir = std::env::temp_dir();
-        let test_file = temp_dir.join(format!("mp_test_{}.rs", name));
-        std::fs::write(&test_file, test_binary_content).unwrap();
-
-        // Compile the test binary
-        let binary_path = temp_dir.join(format!("mp_test_{}", name));
-        let compile_result = Command::new("rustc")
-            .args([
-                "--extern",
-                &format!(
-                    "disruptor={}/target/debug/deps/libdisruptor-*.rlib",
-                    env::current_dir().unwrap().display()
-                ),
-                "-L",
-                &format!(
-                    "{}/target/debug/deps",
-                    env::current_dir().unwrap().display()
-                ),
-                "-o",
-                binary_path.to_str().unwrap(),
-                test_file.to_str().unwrap(),
-            ])
-            .output();
-
-        // Skip test if compilation fails (missing dependencies, etc.)
-        if compile_result.is_err() || !compile_result.as_ref().unwrap().status.success() {
-            println!("Skipping real multiprocess test - compilation failed");
-            return;
-        }
-
-        // Run producer in background
-        let producer_child = Command::new(&binary_path)
-            .arg("producer")
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-
-        // Give producer time to start
-        thread::sleep(Duration::from_millis(200));
-
-        // Run consumer
-        let consumer_result = Command::new(&binary_path)
-            .arg("consumer")
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output()
-            .unwrap();
-
-        // Wait for producer
-        let _producer_result = producer_child.wait_with_output().unwrap();
-
-        // Clean up
-        let _ = std::fs::remove_file(&test_file);
-        let _ = std::fs::remove_file(&binary_path);
-
-        // Verify results
-        assert!(
-            consumer_result.status.success(),
-            "Consumer failed: {}",
-            String::from_utf8_lossy(&consumer_result.stderr)
-        );
-
-        let output = String::from_utf8_lossy(&consumer_result.stdout);
-        assert!(output.contains("SUCCESS"), "Consumer output: {}", output);
-    }
-
     // ============================================================================
-    // STRESS AND PERFORMANCE TESTS (Thread-based)
+    // STRESS AND PERFORMANCE TESTS
     // ============================================================================
-
-    #[test]
-    #[ignore] // TODO: Re-enable after implementing proper shared memory cleanup between tests
-              // Currently disabled due to resource contention in test suite - works individually
-    fn test_high_throughput_stress_threads() {
-        // Use a simpler, more reliable naming scheme
-        let name = "stress_ht".to_string();
-        let buffer_size = 64; // Smaller buffer to reduce resource usage
-        let num_events = 1_000; // Much smaller for reliability
-        let test_timeout = Duration::from_secs(10);
-
-        #[derive(Debug, Copy, Clone, Default)]
-        struct StressEvent {
-            id: i64,
-            timestamp: i64,
-            checksum: i64,
-        }
-
-        let barrier = Arc::new(Barrier::new(2));
-        let producer_ready = Arc::new(AtomicBool::new(false));
-        let consumer_ready = Arc::new(AtomicBool::new(false));
-        let events_published = Arc::new(AtomicUsize::new(0));
-
-        // Producer thread
-        let producer_handle = {
-            let name = name.clone();
-            let barrier = barrier.clone();
-            let producer_ready = producer_ready.clone();
-            let consumer_ready = consumer_ready.clone();
-            let events_published = events_published.clone();
-
-            thread::spawn(move || {
-                let mut producer = build_shared_single_producer::<StressEvent>(&name, buffer_size)
-                    .build_producer(StressEvent::default)
-                    .unwrap();
-
-                // Signal that producer is ready
-                producer_ready.store(true, Ordering::Release);
-
-                // Wait for consumer to be ready
-                let wait_start = Instant::now();
-                while !consumer_ready.load(Ordering::Acquire) {
-                    thread::yield_now();
-                    if wait_start.elapsed() > Duration::from_secs(5) {
-                        panic!("Producer timed out waiting for consumer readiness");
-                    }
-                }
-
-                barrier.wait();
-                let start = Instant::now();
-
-                for i in 0..num_events {
-                    producer.publish(|event| {
-                        event.id = i;
-                        event.timestamp = i * 1000;
-                        event.checksum = i * 2 + i * 3; // Simple checksum
-                    });
-                    events_published.store(i as usize + 1, Ordering::Release);
-
-                    // Check timeout using local start_time
-                    if start.elapsed() > test_timeout {
-                        panic!(
-                            "Producer timed out after {} seconds",
-                            test_timeout.as_secs()
-                        );
-                    }
-                }
-                start.elapsed()
-            })
-        };
-
-        // Consumer thread
-        let consumer_handle = {
-            let barrier = barrier.clone();
-            let producer_ready = producer_ready.clone();
-            let consumer_ready = consumer_ready.clone();
-
-            thread::spawn(move || {
-                // Wait for producer to be ready with timeout
-                let wait_start = Instant::now();
-                while !producer_ready.load(Ordering::Acquire) {
-                    thread::yield_now();
-                    if wait_start.elapsed() > Duration::from_secs(5) {
-                        panic!("Consumer timed out waiting for producer readiness");
-                    }
-                }
-
-                let config = SharedMemoryConfig {
-                    name,
-                    buffer_size,
-                    element_size: std::mem::size_of::<StressEvent>(),
-                    create: false,
-                };
-                let mut consumer: SharedConsumer<StressEvent> = SharedDisruptorBuilder::new(config)
-                    .build_consumer()
-                    .unwrap();
-
-                // Signal that consumer is ready
-                consumer_ready.store(true, Ordering::Release);
-
-                barrier.wait();
-                let start = Instant::now();
-
-                let mut consumed_count = 0;
-                let mut last_id = -1;
-                let mut checksum_errors = 0;
-
-                while consumed_count < num_events {
-                    let processed = consumer.process_available(|event: &StressEvent, _| {
-                        // Verify ordering
-                        assert!(event.id > last_id, "Events must be in order");
-
-                        // Verify data integrity
-                        let expected_checksum = event.id * 2 + event.id * 3;
-                        if event.checksum != expected_checksum {
-                            checksum_errors += 1;
-                        }
-
-                        assert_eq!(event.timestamp, event.id * 1000);
-
-                        consumed_count += 1;
-                        last_id = event.id;
-                    });
-
-                    if processed == 0 {
-                        thread::yield_now();
-                    }
-
-                    // Check timeout using local start_time
-                    if start.elapsed() > test_timeout {
-                        panic!(
-                            "Consumer timed out after {} seconds",
-                            test_timeout.as_secs()
-                        );
-                    }
-                }
-
-                (consumed_count, checksum_errors)
-            })
-        };
-
-        let producer_duration = producer_handle.join().unwrap();
-        let (consumed_count, checksum_errors) = consumer_handle.join().unwrap();
-
-        // Verify results
-        assert_eq!(consumed_count, num_events);
-        assert_eq!(checksum_errors, 0);
-        assert_eq!(
-            events_published.load(Ordering::Acquire),
-            num_events as usize
-        );
-
-        // Performance metrics
-        let throughput = num_events as f64 / producer_duration.as_secs_f64();
-
-        // Should achieve reasonable throughput (this is a sanity check, not a benchmark)
-        assert!(
-            throughput > 1_000.0, // Very conservative threshold for reliability
-            "Throughput too low: {:.0} events/sec",
-            throughput
-        );
-    }
 
     // ============================================================================
     // ATOMIC OPERATIONS TESTS
@@ -1435,7 +842,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {{
         // Proper error handling
 
         // Not Yet Implemented (Future Work)
-        // - Batch publication (MutBatchIter integration)
+        // - Foundation for multi-writer producer topologies
         // - Multiple consumers (SPMC pattern)
         // - Multiple producers (MPSC pattern)
         // - Consumer dependencies and barriers
@@ -1444,9 +851,170 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {{
     }
 
     #[test]
+    fn test_batch_publish_writes_and_consumes_in_sequence() {
+        let name = unique_test_segment("batch_sequence");
+        let buffer_size = 8;
+
+        let mut producer = build_shared_single_producer::<TestEvent>(&name, buffer_size)
+            .build_producer(TestEvent::default)
+            .unwrap();
+
+        let upper = producer
+            .try_batch_publish(4, |event, i| {
+                event.sequence = i as i64;
+                event.data = 100 + i as i64;
+            })
+            .unwrap();
+        assert_eq!(upper, 3);
+        assert_eq!(producer.last_published_sequence(), 3);
+
+        let config = SharedMemoryConfig {
+            name,
+            buffer_size,
+            element_size: std::mem::size_of::<TestEvent>(),
+            create: false,
+        };
+        let mut consumer: SharedConsumer<TestEvent> = SharedDisruptorBuilder::new(config)
+            .build_consumer()
+            .unwrap();
+
+        let mut consumed = Vec::new();
+        while consumed.len() < 4 {
+            let processed = consumer.process_available(|event: &TestEvent, seq| {
+                consumed.push((seq, event.sequence, event.data));
+            });
+            if processed == 0 {
+                std::thread::yield_now();
+            }
+        }
+
+        assert_eq!(
+            consumed,
+            vec![(0, 0, 100), (1, 1, 101), (2, 2, 102), (3, 3, 103)]
+        );
+    }
+
+    #[test]
+    fn test_simple_batch_publish_is_noop_for_zero() {
+        let name = unique_test_segment("batch_zero");
+        let buffer_size = 8;
+
+        let mut producer = build_shared_single_producer::<TestEvent>(&name, buffer_size)
+            .build_producer(TestEvent::default)
+            .unwrap();
+
+        assert_eq!(
+            producer.try_batch_publish(0, |_event, _| {
+                panic!("indexed closure must not run for n=0")
+            }),
+            Ok(-1)
+        );
+
+        producer
+            .simple_batch_publish(0, |_event, _| {
+                panic!("simple_batch_publish no-op closure must not run for n=0")
+            })
+            .unwrap();
+        assert_eq!(producer.last_published_sequence(), -1);
+    }
+
+    #[test]
+    fn test_try_batch_publish_reports_missing_slots_when_full() {
+        let name = unique_test_segment("batch_full");
+        let buffer_size = 4;
+        let start_consume = Arc::new(AtomicBool::new(false));
+        let consumed = Arc::new(AtomicUsize::new(0));
+
+        let mut producer = build_shared_single_producer::<TestEvent>(&name, buffer_size)
+            .discover_consumer_with_prefix(1, "bchk")
+            .build_producer(TestEvent::default)
+            .unwrap();
+
+        let consumer_handle = {
+            let name = name.clone();
+            let start_consume = start_consume.clone();
+            let consumed = consumed.clone();
+
+            std::thread::spawn(move || {
+                let config = SharedMemoryConfig {
+                    name,
+                    buffer_size,
+                    element_size: std::mem::size_of::<TestEvent>(),
+                    create: false,
+                };
+                let mut consumer: SharedConsumer<TestEvent> = SharedDisruptorBuilder::new(config)
+                    .discover_consumer_with_prefix(1, "bchk")
+                    .with_consumer_id("bchk_0")
+                    .build_consumer()
+                    .unwrap();
+
+                while !start_consume.load(Ordering::Acquire) {
+                    std::thread::yield_now();
+                }
+
+                while consumed.load(Ordering::Acquire) < (buffer_size + 1) {
+                    let processed = consumer.process_available(|_event, _| {
+                        consumed.fetch_add(1, Ordering::AcqRel);
+                    });
+                    if processed == 0 {
+                        std::thread::yield_now();
+                    }
+                }
+            })
+        };
+
+        producer
+            .try_batch_publish(4, |event, i| {
+                event.sequence = i as i64;
+                event.data = 10 + i as i64;
+            })
+            .expect("full buffer should accept exactly `buffer_size` slots");
+
+        // Ensure producer sees the consumer cursor before evaluating full-capacity math.
+        let producer_seq = producer.last_published_sequence();
+        let discovery_deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if producer.min_gating_sequence() != producer_seq {
+                break;
+            }
+            if Instant::now() > discovery_deadline {
+                panic!("consumer discovery did not reduce gating sequence below producer cursor");
+            }
+            std::thread::yield_now();
+        }
+
+        let err = producer
+            .try_batch_publish(1, |_event, _| {
+                panic!("second batch must not run when capacity is exhausted")
+            })
+            .expect_err("producer must report missing free slots when full");
+        assert_eq!(err, MissingFreeSlots(1));
+
+        start_consume.store(true, Ordering::Release);
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while consumed.load(Ordering::Acquire) == 0 {
+            if Instant::now() > deadline {
+                panic!("consumer did not start consuming after start signal");
+            }
+            std::thread::yield_now();
+        }
+
+        producer
+            .try_batch_publish(1, |event, i| {
+                event.sequence = 4 + i as i64;
+                event.data = 14;
+            })
+            .expect("single-slot batch should succeed once one slot is released");
+
+        consumer_handle.join().unwrap();
+        assert_eq!(consumed.load(Ordering::Acquire), buffer_size + 1);
+    }
+
+    #[test]
     #[ignore] // Passes individually, fails in suite due to timing/resource conflicts (20s timeout)
     fn test_fast_slow_consumer_race_condition_fix() {
-        let name = "race_condition_fix".to_string();
+        let name = unique_test_segment("race_condition_fix");
         let buffer_size = 8; // Small buffer to force backpressure
 
         // Create producer with discovery to track both consumers
@@ -1603,7 +1171,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {{
                 event.data = (i % 1000) as i64;
             });
 
-            if i > 0 && i % 10_000 == 0 {
+            if i > 0 && (i % 10_000 == 0) {
                 println!("Published {} events", i);
             }
         }

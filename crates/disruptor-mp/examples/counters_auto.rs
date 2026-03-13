@@ -186,6 +186,18 @@ fn format_number(num: f64) -> String {
     (num as i64).to_formatted_string(&Locale::en)
 }
 
+#[derive(Debug)]
+struct TestSummaryInputs<'a> {
+    scenario: &'a str,
+    buffer_size: usize,
+    events: u64,
+    payload_size: usize,
+    producer_throughput: f64,
+    consumer_throughput: f64,
+    consumer_p50_us: f64,
+    consumer_p99_us: f64,
+}
+
 /// Create comprehensive test summary with performance metrics - matching counters.rs structure
 ///
 /// **IMPORTANT:** All performance calculations assume --release builds.
@@ -196,26 +208,16 @@ fn format_number(num: f64) -> String {
 /// - Data transfer rates for SPMC scenarios (broadcast semantics)
 /// - Statistical latency approximations (P50/P99) based on average latency
 /// - Proper handling of multiple consumer scenarios
-#[allow(clippy::too_many_arguments)]
-fn create_test_summary(
-    scenario: &str,
-    buffer_size: usize,
-    events: u64,
-    payload_size: usize,
-    producer_throughput: f64,
-    consumer_throughput: f64,
-    consumer_p50_us: f64,
-    consumer_p99_us: f64,
-) -> TestSummary {
+fn create_test_summary(inputs: &TestSummaryInputs<'_>) -> TestSummary {
     // Calculate per-event latency in nanoseconds (more precise than microseconds)
-    let producer_avg_ns = if producer_throughput > 0.0 {
-        1_000_000_000.0 / producer_throughput // Nanoseconds = 1_000_000_000 / events_per_sec
+    let producer_avg_ns = if inputs.producer_throughput > 0.0 {
+        1_000_000_000.0 / inputs.producer_throughput // Nanoseconds = 1_000_000_000 / events_per_sec
     } else {
         0.0
     };
 
-    let consumer_avg_ns = if consumer_throughput > 0.0 {
-        1_000_000_000.0 / consumer_throughput // Nanoseconds = 1_000_000_000 / events_per_sec
+    let consumer_avg_ns = if inputs.consumer_throughput > 0.0 {
+        1_000_000_000.0 / inputs.consumer_throughput // Nanoseconds = 1_000_000_000 / events_per_sec
     } else {
         0.0
     };
@@ -223,9 +225,9 @@ fn create_test_summary(
     // Calculate data transfer rate properly for SPMC scenarios
     // In SPMC mode, producer writes once, multiple consumers read (broadcast)
     // Total system data transfer = producer writes + (N * consumer reads)
-    let num_consumers = if scenario.contains("SPMC-2") {
+    let num_consumers = if inputs.scenario.contains("SPMC-2") {
         2
-    } else if scenario.contains("SPMC-5") {
+    } else if inputs.scenario.contains("SPMC-5") {
         5
     } else {
         1 // SPSC
@@ -235,13 +237,13 @@ fn create_test_summary(
     // For SPSC: just use the higher of producer or consumer throughput
     let effective_data_rate = if num_consumers > 1 {
         // SPMC: Producer writes + all consumers read (broadcast semantics)
-        producer_throughput + (num_consumers as f64 * consumer_throughput)
+        inputs.producer_throughput + (num_consumers as f64 * inputs.consumer_throughput)
     } else {
         // SPSC: Use the bottleneck (typically consumer is faster)
-        producer_throughput.max(consumer_throughput)
+        inputs.producer_throughput.max(inputs.consumer_throughput)
     };
 
-    let data_transfer_rate = (effective_data_rate * payload_size as f64) / (1024.0 * 1024.0);
+    let data_transfer_rate = (effective_data_rate * inputs.payload_size as f64) / (1024.0 * 1024.0);
     let data_transfer_rate_gb = data_transfer_rate / 1024.0; // Convert MB/s to GB/s
 
     // Calculate producer P50/P99 from average latency (realistic estimation, not fabricated)
@@ -251,16 +253,17 @@ fn create_test_summary(
     let producer_p99_us = producer_p99_ns / 1000.0;
 
     // Consumer measurements use actual measured values from histograms
-    let consumer_p50_ns = consumer_p50_us * 1000.0;
-    let consumer_p99_ns = consumer_p99_us * 1000.0;
+    let consumer_p50_ns = inputs.consumer_p50_us * 1000.0;
+    let consumer_p99_ns = inputs.consumer_p99_us * 1000.0;
+    let consumer_p99_us = inputs.consumer_p99_us;
 
     TestSummary {
-        scenario: scenario.to_string(),
-        buffer_size: format_number(buffer_size as f64),
-        events: format_number(events as f64),
-        payload_size: format_number(payload_size as f64),
-        producer_ops: format_number(producer_throughput),
-        consumer_ops: format_number(consumer_throughput),
+        scenario: inputs.scenario.to_string(),
+        buffer_size: format_number(inputs.buffer_size as f64),
+        events: format_number(inputs.events as f64),
+        payload_size: format_number(inputs.payload_size as f64),
+        producer_ops: format_number(inputs.producer_throughput),
+        consumer_ops: format_number(inputs.consumer_throughput),
         data_transfer_rate: format!("{:.2}", data_transfer_rate),
         data_transfer_rate_gb: format!("{:.3}", data_transfer_rate_gb),
         producer_avg_ns: format!("{:.0}", producer_avg_ns),
@@ -308,11 +311,7 @@ fn extract_latency_percentiles(output: &str) -> (f64, f64) {
 /// Parses producer and consumer output to extract performance metrics
 /// including throughput, latency percentiles, and test pass/fail status.
 /// Critical for automated performance validation.
-fn extract_test_results(
-    producer_output: &str,
-    consumer_outputs: &[String],
-    _test_passed: bool,
-) -> TestResults {
+fn extract_test_results(producer_output: &str, consumer_outputs: &[String]) -> TestResults {
     let mut producer_throughput = 0.0;
     let mut consumer_throughput = 0.0;
     let mut consumer_p50_us = 0.0;
@@ -425,7 +424,7 @@ fn spmc_producer_process(expected_consumers: i64) -> Result<(), Box<dyn std::err
         });
 
         // Progress reporting for long-running tests
-        if i % 1_000 == 0 && i > 0 {
+        if i.is_multiple_of(1_000) && i > 0 {
             println!("Produced {} events", i);
         }
     }
@@ -534,7 +533,7 @@ fn spmc_consumer_process(consumer_id: &str) -> Result<(), Box<dyn std::error::Er
             total_counter_clone.fetch_add(event.value as i64, Ordering::Relaxed);
 
             // Progress reporting for long-running tests
-            if consumed % 1_000 == 0 && consumed > 0 {
+            if consumed.is_multiple_of(1_000) && consumed > 0 {
                 println!(
                     "Consumer {} consumed {} events, counter: {}",
                     consumer_id_owned,
@@ -722,7 +721,7 @@ fn spsc_discovery_producer_process() -> Result<(), Box<dyn std::error::Error>> {
         });
 
         // Progress reporting for long-running tests
-        if i % 5_000 == 0 && i > 0 {
+        if i.is_multiple_of(5_000) && i > 0 {
             let progress = (i as f64 / NUM_EVENTS as f64) * 100.0;
             println!(" Produced {} events ({:.1}%)", i, progress);
         }
@@ -800,7 +799,7 @@ fn spsc_discovery_consumer_process() -> Result<(), Box<dyn std::error::Error>> {
             total_counter_clone.fetch_add(event.value as i64, Ordering::Relaxed);
 
             // Progress reporting
-            if consumed % 5_000 == 0 && consumed > 0 {
+            if consumed.is_multiple_of(5_000) && consumed > 0 {
                 let progress = (consumed as f64 / NUM_EVENTS as f64) * 100.0;
                 println!(
                     " Discovered consumer processed {} events, counter: {} ({:.1}%)",
@@ -972,7 +971,7 @@ fn spmc_discovery_producer_process(
         });
 
         // Progress reporting for long-running tests
-        if i % 10_000 == 0 && i > 0 {
+        if i.is_multiple_of(10_000) && i > 0 {
             let progress = (i as f64 / NUM_EVENTS as f64) * 100.0;
             println!(" Produced {} events ({:.1}%)", i, progress);
         }
@@ -1237,7 +1236,7 @@ fn producer_process() -> Result<(), Box<dyn std::error::Error>> {
         });
 
         // Progress reporting for long-running tests
-        if i % 1_000 == 0 && i > 0 {
+        if i.is_multiple_of(1_000) && i > 0 {
             let progress = (i as f64 / NUM_EVENTS as f64) * 100.0;
             println!("Published {} events ({:.1}%)", i, progress);
         }
@@ -1349,7 +1348,7 @@ fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
             total_counter_clone.fetch_add(event.value as i64, Ordering::Relaxed);
 
             // Progress reporting for long-running tests
-            if consumed % 1_000 == 0 && consumed > 0 {
+            if consumed.is_multiple_of(1_000) && consumed > 0 {
                 println!(
                     "Automatic processing: {} events, counter: {}",
                     consumed,
@@ -1542,11 +1541,8 @@ fn run_automated_spmc_test() -> (Result<(), Box<dyn std::error::Error>>, TestRes
     println!("\n === SPMC Consumer 2 Output ===");
     println!("{}", consumer2_output);
 
-    let test_results = extract_test_results(
-        &producer_output,
-        &[consumer1_output.to_string(), consumer2_output.to_string()],
-        test_passed,
-    );
+    let consumer_outputs = vec![consumer1_output.to_string(), consumer2_output.to_string()];
+    let test_results = extract_test_results(&producer_output, &consumer_outputs);
 
     if test_passed {
         println!(" Automated SPMC test with automatic coordination PASSED!");
@@ -1635,8 +1631,7 @@ fn run_automated_spmc_5_test() -> (Result<(), Box<dyn std::error::Error>>, TestR
         println!("\n === SPMC Consumer {} Output ===", i + 1);
         println!("{}", output);
     }
-
-    let test_results = extract_test_results(&producer_output, &consumer_outputs, test_passed);
+    let test_results = extract_test_results(&producer_output, &consumer_outputs);
 
     if test_passed {
         println!(" Automated SPMC-5 test with automatic coordination PASSED!");
@@ -1729,11 +1724,8 @@ fn run_automated_spsc_discovery_test() -> (Result<(), Box<dyn std::error::Error>
     println!("\n === SPSC Discovery Consumer Output ===");
     println!("{}", consumer_output);
 
-    let test_results = extract_test_results(
-        &producer_output,
-        &[consumer_output.to_string()],
-        test_passed,
-    );
+    let consumer_outputs = vec![consumer_output.to_string()];
+    let test_results = extract_test_results(&producer_output, &consumer_outputs);
 
     if test_passed {
         println!(" Automated SPSC discovery test with automatic coordination PASSED!");
@@ -1846,11 +1838,8 @@ fn run_automated_spmc_2_discovery_test() -> (Result<(), Box<dyn std::error::Erro
     println!("\n === SPMC Discovery Consumer 2 Output ===");
     println!("{}", consumer2_output);
 
-    let test_results = extract_test_results(
-        &producer_output,
-        &[consumer1_output.to_string(), consumer2_output.to_string()],
-        test_passed,
-    );
+    let consumer_outputs = vec![consumer1_output.to_string(), consumer2_output.to_string()];
+    let test_results = extract_test_results(&producer_output, &consumer_outputs);
 
     if test_passed {
         println!(" Automated SPMC-2 discovery test with automatic coordination PASSED!");
@@ -1948,8 +1937,7 @@ fn run_automated_spmc_5_discovery_test() -> (Result<(), Box<dyn std::error::Erro
         println!("\n === SPMC Discovery Consumer {} Output ===", i + 1);
         println!("{}", output);
     }
-
-    let test_results = extract_test_results(&producer_output, &consumer_outputs, test_passed);
+    let test_results = extract_test_results(&producer_output, &consumer_outputs);
 
     if test_passed {
         println!(" Automated SPMC-5 discovery test with automatic coordination PASSED!");
@@ -2032,98 +2020,98 @@ fn run_comprehensive_test_suite() -> Result<(), Box<dyn std::error::Error>> {
     // Create comprehensive test summary table - matching counters.rs structure
     let summary_table = vec![
         // Group tests by consumer count for better readability - SPSC tests
-        create_test_summary(
-            "SPSC-Auto",
-            get_buffer_size(),
-            NUM_EVENTS,
-            std::mem::size_of::<Event>(),
-            spsc_metrics.producer_throughput,
-            spsc_metrics.consumer_throughput,
-            spsc_metrics.consumer_p50_us,
-            spsc_metrics.consumer_p99_us,
-        ),
-        create_test_summary(
-            "SPSC-Discovery-Auto",
-            get_buffer_size(),
-            NUM_EVENTS,
-            std::mem::size_of::<Event>(),
-            spsc_discovery_metrics.producer_throughput,
-            spsc_discovery_metrics.consumer_throughput,
-            spsc_discovery_metrics.consumer_p50_us,
-            spsc_discovery_metrics.consumer_p99_us,
-        ),
-        create_test_summary(
-            "SPSC-Prefix-Discovery-Auto",
-            get_buffer_size(),
-            NUM_EVENTS,
-            std::mem::size_of::<Event>(),
-            spsc_prefix_discovery_metrics.producer_throughput,
-            spsc_prefix_discovery_metrics.consumer_throughput,
-            spsc_prefix_discovery_metrics.consumer_p50_us,
-            spsc_prefix_discovery_metrics.consumer_p99_us,
-        ),
+        create_test_summary(&TestSummaryInputs {
+            scenario: "SPSC-Auto",
+            buffer_size: get_buffer_size(),
+            events: NUM_EVENTS,
+            payload_size: std::mem::size_of::<Event>(),
+            producer_throughput: spsc_metrics.producer_throughput,
+            consumer_throughput: spsc_metrics.consumer_throughput,
+            consumer_p50_us: spsc_metrics.consumer_p50_us,
+            consumer_p99_us: spsc_metrics.consumer_p99_us,
+        }),
+        create_test_summary(&TestSummaryInputs {
+            scenario: "SPSC-Discovery-Auto",
+            buffer_size: get_buffer_size(),
+            events: NUM_EVENTS,
+            payload_size: std::mem::size_of::<Event>(),
+            producer_throughput: spsc_discovery_metrics.producer_throughput,
+            consumer_throughput: spsc_discovery_metrics.consumer_throughput,
+            consumer_p50_us: spsc_discovery_metrics.consumer_p50_us,
+            consumer_p99_us: spsc_discovery_metrics.consumer_p99_us,
+        }),
+        create_test_summary(&TestSummaryInputs {
+            scenario: "SPSC-Prefix-Discovery-Auto",
+            buffer_size: get_buffer_size(),
+            events: NUM_EVENTS,
+            payload_size: std::mem::size_of::<Event>(),
+            producer_throughput: spsc_prefix_discovery_metrics.producer_throughput,
+            consumer_throughput: spsc_prefix_discovery_metrics.consumer_throughput,
+            consumer_p50_us: spsc_prefix_discovery_metrics.consumer_p50_us,
+            consumer_p99_us: spsc_prefix_discovery_metrics.consumer_p99_us,
+        }),
         // SPMC-2 tests
-        create_test_summary(
-            "SPMC-2-Auto",
-            get_buffer_size(),
-            NUM_EVENTS,
-            std::mem::size_of::<Event>(),
-            spmc_2_metrics.producer_throughput,
-            spmc_2_metrics.consumer_throughput,
-            spmc_2_metrics.consumer_p50_us,
-            spmc_2_metrics.consumer_p99_us,
-        ),
-        create_test_summary(
-            "SPMC-2-Discovery-Auto",
-            get_buffer_size(),
-            NUM_EVENTS,
-            std::mem::size_of::<Event>(),
-            spmc_2_discovery_metrics.producer_throughput,
-            spmc_2_discovery_metrics.consumer_throughput,
-            spmc_2_discovery_metrics.consumer_p50_us,
-            spmc_2_discovery_metrics.consumer_p99_us,
-        ),
-        create_test_summary(
-            "SPMC-2-Prefix-Discovery-Auto",
-            get_buffer_size(),
-            NUM_EVENTS,
-            std::mem::size_of::<Event>(),
-            spmc_2_prefix_discovery_metrics.producer_throughput,
-            spmc_2_prefix_discovery_metrics.consumer_throughput,
-            spmc_2_prefix_discovery_metrics.consumer_p50_us,
-            spmc_2_prefix_discovery_metrics.consumer_p99_us,
-        ),
+        create_test_summary(&TestSummaryInputs {
+            scenario: "SPMC-2-Auto",
+            buffer_size: get_buffer_size(),
+            events: NUM_EVENTS,
+            payload_size: std::mem::size_of::<Event>(),
+            producer_throughput: spmc_2_metrics.producer_throughput,
+            consumer_throughput: spmc_2_metrics.consumer_throughput,
+            consumer_p50_us: spmc_2_metrics.consumer_p50_us,
+            consumer_p99_us: spmc_2_metrics.consumer_p99_us,
+        }),
+        create_test_summary(&TestSummaryInputs {
+            scenario: "SPMC-2-Discovery-Auto",
+            buffer_size: get_buffer_size(),
+            events: NUM_EVENTS,
+            payload_size: std::mem::size_of::<Event>(),
+            producer_throughput: spmc_2_discovery_metrics.producer_throughput,
+            consumer_throughput: spmc_2_discovery_metrics.consumer_throughput,
+            consumer_p50_us: spmc_2_discovery_metrics.consumer_p50_us,
+            consumer_p99_us: spmc_2_discovery_metrics.consumer_p99_us,
+        }),
+        create_test_summary(&TestSummaryInputs {
+            scenario: "SPMC-2-Prefix-Discovery-Auto",
+            buffer_size: get_buffer_size(),
+            events: NUM_EVENTS,
+            payload_size: std::mem::size_of::<Event>(),
+            producer_throughput: spmc_2_prefix_discovery_metrics.producer_throughput,
+            consumer_throughput: spmc_2_prefix_discovery_metrics.consumer_throughput,
+            consumer_p50_us: spmc_2_prefix_discovery_metrics.consumer_p50_us,
+            consumer_p99_us: spmc_2_prefix_discovery_metrics.consumer_p99_us,
+        }),
         // SPMC-5 tests
-        create_test_summary(
-            "SPMC-5-Auto",
-            get_buffer_size(),
-            NUM_EVENTS,
-            std::mem::size_of::<Event>(),
-            spmc_5_metrics.producer_throughput,
-            spmc_5_metrics.consumer_throughput,
-            spmc_5_metrics.consumer_p50_us,
-            spmc_5_metrics.consumer_p99_us,
-        ),
-        create_test_summary(
-            "SPMC-5-Discovery-Auto",
-            get_buffer_size(),
-            NUM_EVENTS,
-            std::mem::size_of::<Event>(),
-            spmc_5_discovery_metrics.producer_throughput,
-            spmc_5_discovery_metrics.consumer_throughput,
-            spmc_5_discovery_metrics.consumer_p50_us,
-            spmc_5_discovery_metrics.consumer_p99_us,
-        ),
-        create_test_summary(
-            "SPMC-5-Prefix-Discovery-Auto",
-            get_buffer_size(),
-            NUM_EVENTS,
-            std::mem::size_of::<Event>(),
-            spmc_5_prefix_discovery_metrics.producer_throughput,
-            spmc_5_prefix_discovery_metrics.consumer_throughput,
-            spmc_5_prefix_discovery_metrics.consumer_p50_us,
-            spmc_5_prefix_discovery_metrics.consumer_p99_us,
-        ),
+        create_test_summary(&TestSummaryInputs {
+            scenario: "SPMC-5-Auto",
+            buffer_size: get_buffer_size(),
+            events: NUM_EVENTS,
+            payload_size: std::mem::size_of::<Event>(),
+            producer_throughput: spmc_5_metrics.producer_throughput,
+            consumer_throughput: spmc_5_metrics.consumer_throughput,
+            consumer_p50_us: spmc_5_metrics.consumer_p50_us,
+            consumer_p99_us: spmc_5_metrics.consumer_p99_us,
+        }),
+        create_test_summary(&TestSummaryInputs {
+            scenario: "SPMC-5-Discovery-Auto",
+            buffer_size: get_buffer_size(),
+            events: NUM_EVENTS,
+            payload_size: std::mem::size_of::<Event>(),
+            producer_throughput: spmc_5_discovery_metrics.producer_throughput,
+            consumer_throughput: spmc_5_discovery_metrics.consumer_throughput,
+            consumer_p50_us: spmc_5_discovery_metrics.consumer_p50_us,
+            consumer_p99_us: spmc_5_discovery_metrics.consumer_p99_us,
+        }),
+        create_test_summary(&TestSummaryInputs {
+            scenario: "SPMC-5-Prefix-Discovery-Auto",
+            buffer_size: get_buffer_size(),
+            events: NUM_EVENTS,
+            payload_size: std::mem::size_of::<Event>(),
+            producer_throughput: spmc_5_prefix_discovery_metrics.producer_throughput,
+            consumer_throughput: spmc_5_prefix_discovery_metrics.consumer_throughput,
+            consumer_p50_us: spmc_5_prefix_discovery_metrics.consumer_p50_us,
+            consumer_p99_us: spmc_5_prefix_discovery_metrics.consumer_p99_us,
+        }),
     ];
 
     println!("\nAUTOMATIC COORDINATION TEST SUMMARY (Including Discovery and Prefix Discovery)");
@@ -2252,11 +2240,8 @@ fn run_automated_spsc_test() -> (Result<(), Box<dyn std::error::Error>>, TestRes
 
     let test_passed = consumer_result.status.success() && producer_result.status.success();
 
-    let test_results = extract_test_results(
-        &producer_output,
-        &[consumer_output.to_string()],
-        test_passed,
-    );
+    let consumer_outputs = vec![consumer_output.to_string()];
+    let test_results = extract_test_results(&producer_output, &consumer_outputs);
 
     // Check results
     if test_passed {
@@ -2448,7 +2433,7 @@ fn spsc_prefix_discovery_producer_process() -> Result<(), Box<dyn std::error::Er
         });
 
         // Progress reporting for long-running tests
-        if i % 5_000 == 0 && i > 0 {
+        if i.is_multiple_of(5_000) && i > 0 {
             let progress = (i as f64 / NUM_EVENTS as f64) * 100.0;
             println!(" Produced {} events ({:.1}%)", i, progress);
         }
@@ -2528,7 +2513,7 @@ fn spsc_prefix_discovery_consumer_process() -> Result<(), Box<dyn std::error::Er
             total_counter_clone.fetch_add(event.value as i64, Ordering::Relaxed);
 
             // Progress reporting
-            if consumed % 5_000 == 0 && consumed > 0 {
+            if consumed.is_multiple_of(5_000) && consumed > 0 {
                 let progress = (consumed as f64 / NUM_EVENTS as f64) * 100.0;
                 println!(
                     " Prefix consumer processed {} events, counter: {} ({:.1}%)",
@@ -2706,7 +2691,7 @@ fn spmc_prefix_discovery_producer_process(
         });
 
         // Progress reporting for long-running tests
-        if i % 10_000 == 0 && i > 0 {
+        if i.is_multiple_of(10_000) && i > 0 {
             let progress = (i as f64 / NUM_EVENTS as f64) * 100.0;
             println!(" Produced {} events ({:.1}%)", i, progress);
         }
@@ -3008,11 +2993,8 @@ fn run_automated_spsc_prefix_discovery_test(
     println!("\n === SPSC Prefix Discovery Consumer Output ===");
     println!("{}", consumer_output);
 
-    let test_results = extract_test_results(
-        &producer_output,
-        &[consumer_output.to_string()],
-        test_passed,
-    );
+    let consumer_outputs = vec![consumer_output.to_string()];
+    let test_results = extract_test_results(&producer_output, &consumer_outputs);
 
     if test_passed {
         println!(" Automated SPSC prefix discovery test with automatic coordination PASSED!");
@@ -3132,11 +3114,8 @@ fn run_automated_spmc_2_prefix_discovery_test(
     println!("\n === SPMC Prefix Discovery Consumer 2 Output ===");
     println!("{}", consumer2_output);
 
-    let test_results = extract_test_results(
-        &producer_output,
-        &[consumer1_output.to_string(), consumer2_output.to_string()],
-        test_passed,
-    );
+    let consumer_outputs = vec![consumer1_output.to_string(), consumer2_output.to_string()];
+    let test_results = extract_test_results(&producer_output, &consumer_outputs);
 
     if test_passed {
         println!(" Automated SPMC-2 prefix discovery test with automatic coordination PASSED!");
@@ -3341,7 +3320,7 @@ fn run_automated_spmc_5_prefix_discovery_test(
             .all(|output| output.contains("AUTOMATIC PREFIX DISCOVERY TEST PASSED"));
 
     // Extract metrics from the same run that produced the output
-    let metrics = extract_test_results(&producer_output, &consumer_outputs, test_passed);
+    let metrics = extract_test_results(&producer_output, &consumer_outputs);
 
     // Check results
     if test_passed {

@@ -223,6 +223,8 @@ where
     /// Attempt to publish a batch of events using an indexed closure.
     ///
     /// The closure receives `(&mut event, batch_index)`.
+    /// Batch size zero is a documented no-op for compatibility with upstream
+    /// `Producer` API semantics and returns the previous published sequence.
     pub fn try_batch_publish<F>(
         &mut self,
         n: usize,
@@ -242,17 +244,14 @@ where
     /// Publish a batch of events, spinning until enough slots are available.
     ///
     /// The closure receives `(&mut event, batch_index)`.
-    pub fn batch_publish<F>(&mut self, n: usize, update_fn: F)
+    ///
+    /// This returns a `Result` so callers can fail fast when capacity is unavailable.
+    /// There is no implicit blocking wait in this method.
+    pub fn batch_publish<F>(&mut self, n: usize, update_fn: F) -> Result<Sequence, MissingFreeSlots>
     where
         F: Fn(&mut E, usize),
     {
-        if n == 0 {
-            return;
-        }
-        while self.next_sequences(n).is_err() {
-            std::hint::spin_loop();
-        }
-        self.apply_batch_updates(n, update_fn);
+        self.try_batch_publish(n, update_fn)
     }
 
     /// Compatibility wrapper for the legacy explicit method name.
@@ -349,9 +348,9 @@ where
         &mut self,
         seq: Sequence,
         timeout: Duration,
-        strategy: crate::builder::AutoWaitStrategy,
+        strategy: super::builder::AutoWaitStrategy,
     ) -> bool {
-        use crate::builder::AutoWaitStrategy as WS;
+        use super::builder::AutoWaitStrategy as WS;
         use std::time::Instant;
 
         let deadline = Instant::now() + timeout;

@@ -1,0 +1,367 @@
+{
+  "snapshot_id": "C10-linux-2026-03-13-1",
+  "captured_at": "2026-03-13T14:38:09+00:00",
+  "scope": {
+    "primary_crate": "disruptor-mp",
+    "python_suite": "python-surface-archive",
+    "platform": "linux"
+  },
+  "revision": {
+    "commit": "8f8d28b",
+    "branch": "main",
+    "dirty": false
+  },
+  "environment": {
+    "os": "Ubuntu 22.04.5 LTS",
+    "kernel": "6.8.0-100-generic",
+    "hostname": "venkat-pc",
+    "architecture": "x86_64",
+    "cpu": "AMD Ryzen 7 5800X 8-Core Processor",
+    "logical_cores": 16,
+    "physical_cores": 8,
+    "thread_per_core": 2,
+    "memory_kib": 65763684,
+    "rustc": "rustc 1.90.0 (1159e78c4 2025-09-14)",
+    "cargo": "cargo 1.90.0 (840b83a10 2025-07-30)"
+  },
+  "commands": [
+    {
+      "name": "rust_unit_list",
+      "command": "cargo test -p disruptor-mp --lib -- --list",
+      "exit_code": 0,
+      "status": "pass"
+    },
+    {
+      "name": "rust_tests_list",
+      "command": "cargo test -p disruptor-mp --tests -- --list",
+      "exit_code": 0,
+      "status": "pass"
+    },
+    {
+      "name": "rust_stress_list",
+      "command": "cargo test -p disruptor-mp --test multiprocess_cleanup -- --list",
+      "exit_code": 0,
+      "status": "pass"
+    },
+    {
+      "name": "ipc_shm_help",
+      "command": "cargo bench -p disruptor-mp --bench ipc_shm -- --help",
+      "exit_code": 0,
+      "status": "pass"
+    },
+    {
+      "name": "wait_strategy_help",
+      "command": "cargo bench -p disruptor-mp --bench benchmark_all_wait_strategies_auto_rust -- --help",
+      "exit_code": 0,
+      "status": "pass"
+    },
+    {
+      "name": "competitor_rust_benchmark",
+      "command": "COMPETITOR=rust-1p1c-test cargo bench -p disruptor-mp --bench competitor_vs_rust_benchmark",
+      "exit_code": 0,
+      "status": "pass"
+    },
+    {
+      "name": "ipc_shm_high_load_help",
+      "command": "cargo bench -p disruptor-mp --bench ipc_shm_high_load -- --help",
+      "exit_code": 0,
+      "status": "pass"
+    }
+  ],
+  "test_tiers": {
+    "rust": {
+      "unit": {
+        "tests": 32,
+        "notes": "src/lib.rs test modules from --list output"
+      },
+      "integration": {
+        "tests": 20,
+        "notes": "integration and ui/namespace tests from --tests --list output"
+      },
+      "stress_like": {
+        "tests": 9,
+        "tests_list": [
+          "api::tests::test_exact_64kb_boundary_no_deadlock",
+          "api::tests::test_high_throughput_stress_threads",
+          "test_shm_cleanup_owner::ringbuffer_recreate_recovers_after_simulated_crash",
+          "test_shm_cleanup_owner::cursor_recreate_recovers_after_simulated_crash",
+          "test_shm_cleanup_attach_drop::short_name_repeated_create_attach_drop_stress",
+          "true_multiprocess_startup_determinism_loop",
+          "true_multiprocess_64kb_buffer_deadlock_at_65536_events",
+          "true_multiprocess_deadlock_boundary_conditions",
+          "true_multiprocess_deadlock_multiple_buffer_sizes"
+        ]
+      },
+      "perf": {
+        "benchmarks": 4,
+        "bench_names": [
+          "ipc_shm",
+          "ipc_shm_high_load",
+          "benchmark_all_wait_strategies_auto_rust",
+          "competitive_pingpong"
+        ]
+      }
+    },
+    "python": {
+      "unit": {
+        "tests": 178,
+        "files": 38,
+        "method": "AST grep of def test_* in tests/unit"
+      },
+      "integration": {
+        "tests": 176,
+        "files": 39,
+        "method": "integration(96)+external_integrations(80)"
+      },
+      "performance": {
+        "tests": 3,
+        "files": 1,
+        "method": "tests/performance"
+      },
+      "stress": {
+        "tests": 11,
+        "files": 5,
+        "method": "tests/stress"
+      },
+      "analysis": {
+        "tests": 1,
+        "files": 1,
+        "method": "tests/analysis"
+      }
+    }
+  },
+  "benchmarks": [
+    {
+      "benchmark_id": "ipc_shm_help",
+      "command": "cargo bench -p disruptor-mp --bench ipc_shm -- --help",
+      "category": "throughput_latency",
+      "executed": true,
+      "status": "pass",
+      "required_result_fields": [
+        "library",
+        "events",
+        "payload_bytes",
+        "buffer_size",
+        "producer_throughput_ops_per_sec",
+        "consumer_throughput_ops_per_sec",
+        "producer_data_rate_mb_per_s",
+        "consumer_data_rate_mb_per_s",
+        "producer_total_ms",
+        "consumer_total_ms",
+        "producer_avg_ns",
+        "consumer_avg_ns",
+        "latency_p50_ns",
+        "latency_p99_ns",
+        "combined_total_ms",
+        "benchmark_total_s"
+      ],
+      "results": [
+        {
+          "library": "disruptor-rs",
+          "events": 100000,
+          "payload_bytes": 144,
+          "buffer_size": 1024,
+          "producer_throughput_ops_per_sec": 37226354,
+          "consumer_throughput_ops_per_sec": 37112788,
+          "producer_data_rate_mb_per_s": 5112.3,
+          "consumer_data_rate_mb_per_s": 5096.7,
+          "producer_total_ms": 3,
+          "consumer_total_ms": 3,
+          "producer_avg_ns": 30,
+          "consumer_avg_ns": 30,
+          "latency_p50_ns": 30,
+          "latency_p99_ns": 32,
+          "combined_total_ms": 6,
+          "benchmark_total_s": 1.533
+        },
+        {
+          "library": "disruptor-rs-broadcast",
+          "events": 100000,
+          "payload_bytes": 144,
+          "buffer_size": 1024,
+          "producer_throughput_ops_per_sec": 31868163,
+          "consumer_throughput_ops_per_sec": 12976997,
+          "producer_data_rate_mb_per_s": 4376.4,
+          "consumer_data_rate_mb_per_s": 1782.1,
+          "producer_total_ms": 3,
+          "consumer_total_ms": 3,
+          "producer_avg_ns": 30,
+          "consumer_avg_ns": 30,
+          "latency_p50_ns": 30,
+          "latency_p99_ns": 34,
+          "combined_total_ms": 6,
+          "benchmark_total_s": 1.534
+        },
+        {
+          "library": "shared-file",
+          "events": 100000,
+          "payload_bytes": 144,
+          "buffer_size": 1024,
+          "producer_throughput_ops_per_sec": 94050,
+          "consumer_throughput_ops_per_sec": 94145,
+          "producer_data_rate_mb_per_s": 12.9,
+          "consumer_data_rate_mb_per_s": 12.9,
+          "producer_total_ms": 1063,
+          "consumer_total_ms": 1062,
+          "producer_avg_ns": 10630,
+          "consumer_avg_ns": 10620,
+          "latency_p50_ns": 10631,
+          "latency_p99_ns": 13823,
+          "combined_total_ms": 2125,
+          "benchmark_total_s": 1.072
+        },
+        {
+          "library": "mmap-shared-mem",
+          "events": 100000,
+          "payload_bytes": 144,
+          "buffer_size": 1024,
+          "producer_throughput_ops_per_sec": 94787,
+          "consumer_throughput_ops_per_sec": 94785,
+          "producer_data_rate_mb_per_s": 13.0,
+          "consumer_data_rate_mb_per_s": 13.0,
+          "producer_total_ms": 1055,
+          "consumer_total_ms": 1055,
+          "producer_avg_ns": 10550,
+          "consumer_avg_ns": 10550,
+          "latency_p50_ns": 10551,
+          "latency_p99_ns": 13191,
+          "combined_total_ms": 2110,
+          "benchmark_total_s": 2.124
+        },
+        {
+          "library": "shared-mem-queue",
+          "events": 100000,
+          "payload_bytes": 144,
+          "buffer_size": 1024,
+          "producer_throughput_ops_per_sec": 4681822,
+          "consumer_throughput_ops_per_sec": 4678516,
+          "producer_data_rate_mb_per_s": 643.0,
+          "consumer_data_rate_mb_per_s": 642.5,
+          "producer_total_ms": 21,
+          "consumer_total_ms": 21,
+          "producer_avg_ns": 210,
+          "consumer_avg_ns": 210,
+          "latency_p50_ns": 210,
+          "latency_p99_ns": 251,
+          "combined_total_ms": 42,
+          "benchmark_total_s": 0.026
+        },
+        {
+          "library": "unix-socket",
+          "events": 100000,
+          "payload_bytes": 144,
+          "buffer_size": 1024,
+          "producer_throughput_ops_per_sec": 632306,
+          "consumer_throughput_ops_per_sec": 631672,
+          "producer_data_rate_mb_per_s": 86.8,
+          "consumer_data_rate_mb_per_s": 86.7,
+          "producer_total_ms": 158,
+          "consumer_total_ms": 158,
+          "producer_avg_ns": 1580,
+          "consumer_avg_ns": 1580,
+          "latency_p50_ns": 1580,
+          "latency_p99_ns": 2211,
+          "combined_total_ms": 316,
+          "benchmark_total_s": 0.162
+        }
+      ]
+    },
+    {
+      "benchmark_id": "benchmark_all_wait_strategies_auto_rust_highlight",
+      "command": "cargo bench -p disruptor-mp --bench benchmark_all_wait_strategies_auto_rust -- --help",
+      "category": "wait_strategy",
+      "executed": true,
+      "status": "pass",
+      "required_result_fields": [
+        "scenario",
+        "wait_strategy",
+        "buffer_size_kib",
+        "events",
+        "payload_bytes",
+        "producer_throughput_ops_per_sec",
+        "avg_consumer_throughput_ops_per_sec",
+        "data_rate_mb_per_s",
+        "data_rate_gb_per_s"
+      ],
+      "results": [
+        {
+          "scenario": "1p8c",
+          "wait_strategy": "Sleep",
+          "buffer_size_kib": 64,
+          "events": 100000,
+          "payload_bytes": 128,
+          "producer_throughput_ops_per_sec": 32300000,
+          "avg_consumer_throughput_ops_per_sec": 10000000,
+          "data_rate_mb_per_s": 3945.8,
+          "data_rate_gb_per_s": 3.85
+        },
+        {
+          "scenario": "1p12c",
+          "wait_strategy": "BusySpinWithSpinLoopHint",
+          "buffer_size_kib": 64,
+          "events": 100000,
+          "payload_bytes": 128,
+          "producer_throughput_ops_per_sec": 32000000,
+          "avg_consumer_throughput_ops_per_sec": 10000000,
+          "data_rate_mb_per_s": 3920.6,
+          "data_rate_gb_per_s": 3.84
+        }
+      ]
+    },
+    {
+      "benchmark_id": "competitor_vs_rust_benchmark",
+      "command": "COMPETITOR=rust-1p1c-test cargo bench -p disruptor-mp --bench competitor_vs_rust_benchmark",
+      "category": "throughput_latency",
+      "executed": true,
+      "status": "pass",
+      "required_result_fields": [
+        "library",
+        "events",
+        "payload_bytes",
+        "buffer_size",
+        "producer_throughput_ops_per_sec",
+        "consumer_throughput_ops_per_sec",
+        "producer_data_rate_mb_per_s",
+        "consumer_data_rate_mb_per_s",
+        "producer_total_ms",
+        "consumer_total_ms",
+        "producer_avg_ns",
+        "consumer_avg_ns",
+        "latency_p50_ns",
+        "latency_p99_ns",
+        "combined_total_ms",
+        "benchmark_total_s"
+      ],
+      "results": [
+        {
+          "library": "rust-1p1c-test",
+          "events": 1000,
+          "payload_bytes": 8192,
+          "buffer_size": 512,
+          "producer_throughput_ops_per_sec": 738223,
+          "consumer_throughput_ops_per_sec": 736597,
+          "producer_data_rate_mb_per_s": 5767.4,
+          "consumer_data_rate_mb_per_s": 5754.7,
+          "producer_total_ms": 1,
+          "consumer_total_ms": 0,
+          "producer_avg_ns": 1000,
+          "consumer_avg_ns": 0,
+          "latency_p50_ns": 1,
+          "latency_p99_ns": 1,
+          "combined_total_ms": 1,
+          "benchmark_total_s": 1.0
+        }
+      ]
+    },
+    {
+      "benchmark_id": "ipc_shm_high_load_help",
+      "command": "cargo bench -p disruptor-mp --bench ipc_shm_high_load -- --help",
+      "category": "high_load_orchestrator",
+      "executed": false,
+      "status": "unsupported",
+      "reason": "This benchmark expects orchestrator mode without --help",
+      "required_result_fields": [],
+      "results": []
+    }
+  ]
+}

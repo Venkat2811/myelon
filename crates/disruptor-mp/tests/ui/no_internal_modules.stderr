@@ -1,17 +1,29 @@
-error[E0432]: unresolved import `disruptor_mp::cursor`
+error[E0432]: unresolved import `disruptor_mp::builder`
  --> tests/ui/no_internal_modules.rs:1:19
   |
-1 | use disruptor_mp::cursor::SharedCursor;
-  |                   ^^^^^^ could not find `cursor` in `disruptor_mp`
+1 | use disruptor_mp::builder::build_shared_single_producer;
+  |                   ^^^^^^^ could not find `builder` in `disruptor_mp`
 
-error[E0432]: unresolved import `disruptor_mp::ringbuffer`
+error[E0432]: unresolved import `disruptor_mp::cursor`
  --> tests/ui/no_internal_modules.rs:2:19
   |
-2 | use disruptor_mp::ringbuffer::SharedRingBuffer;
+2 | use disruptor_mp::cursor::SharedCursor;
+  |                   ^^^^^^ could not find `cursor` in `disruptor_mp`
+
+error[E0432]: unresolved import `disruptor_mp::producer`
+ --> tests/ui/no_internal_modules.rs:3:19
+  |
+3 | use disruptor_mp::producer::SharedProducer;
+  |                   ^^^^^^^^ could not find `producer` in `disruptor_mp`
+
+error[E0432]: unresolved import `disruptor_mp::ringbuffer`
+ --> tests/ui/no_internal_modules.rs:4:19
+  |
+4 | use disruptor_mp::ringbuffer::SharedRingBuffer;
   |                   ^^^^^^^^^^ could not find `ringbuffer` in `disruptor_mp`
 
 error[E0432]: unresolved import `disruptor_mp::wait`
- --> tests/ui/no_internal_modules.rs:3:19
+ --> tests/ui/no_internal_modules.rs:5:19
   |
-3 | use disruptor_mp::wait::SLEEP_CONFIG;
+5 | use disruptor_mp::wait::SLEEP_CONFIG;
   |                   ^^^^ could not find `wait` in `disruptor_mp`
