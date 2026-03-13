@@ -9,4 +9,5 @@
 pub use disruptor_core::{MissingFreeSlots, Producer, RingBufferFull, Sequence};
 
 mod api;
+mod shared_memory_layout;
 pub use api::*;

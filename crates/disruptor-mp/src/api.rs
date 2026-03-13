@@ -302,8 +302,8 @@ pub enum MultiProcessError {
     SegmentNotFound(String),
 
     /// Incompatible data layout
-    #[error("Incompatible data layout")]
-    IncompatibleLayout,
+    #[error("Incompatible data layout: {0}")]
+    IncompatibleLayout(String),
 
     /// Permission denied
     #[error("Permission denied")]

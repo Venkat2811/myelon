@@ -8,12 +8,20 @@ It no longer vendors/copypastes single-process internals from `disruptor-rs`.
 ## Boundary
 
 - `disruptor-mp` owns:
-  - `disruptor_mp::{shared_memory, lock_free, producer, consumer, builder}`
-  - shared-memory lifecycle, producer/consumer coordination, and multiprocess benchmarks/tests.
+  - shared-memory lifecycle, producer/consumer coordination, and multiprocess benchmarks/tests via stable namespaces:
+    - `disruptor_mp::shared_memory`
+    - `disruptor_mp::lock_free`
+    - `disruptor_mp::backend`
+  - high-level constructors and types:
+    - `attach_shared_consumer`
+    - `build_shared_single_producer`
+    - `SharedProducer`, `SharedConsumer`, `SharedCursor`, `SharedRingBuffer`, `ShmRingBuffer`
+    - `CoordinationMode`, `DiscoveryMode`, `ConsumerBarrier`, `ProducerBarrier`
 - crates.io `disruptor` owns:
   - single-process/threaded disruptor APIs (`build_single_producer`, `build_multi_producer`, wait strategies, pollers).
 
 See `the workspace book` for migration details.
+See `the workspace book` for shared-memory layout versioning rules.
 
 ## Dependency Model
 
@@ -32,7 +40,7 @@ disruptor = { package = "disruptor-mp", version = "3.7.1" }
 ```
 
 ```rust,no_run
-use disruptor_mp::builder::build_shared_single_producer;
+use disruptor_mp::build_shared_single_producer;
 use disruptor_mp::shared_memory::ShmRingBuffer;
 
 #[derive(Copy, Clone, Default)]
@@ -58,9 +66,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 - `disruptor_mp::shared_memory::{SharedRingBuffer, ShmRingBuffer, SharedMemoryConfig}`
 - `disruptor_mp::lock_free::{SharedCursor, ConsumerBarrier, ProducerBarrier, DiscoveryMode}`
-- `disruptor_mp::producer::{SharedProducer, CoordinationMode}`
-- `disruptor_mp::consumer::SharedConsumer`
+- `disruptor_mp::{CoordinationMode, DiscoveryMode, SharedProducer, SharedConsumer}`
 - `disruptor_mp::backend::shared_memory::*` (same API, backend-oriented path)
+
+## API Stability
+
+- Stable API is `disruptor_mp::{...}` namespaces and explicit re-exports documented above.
+- Internal modules (`builder`, `producer`, `consumer`, `ringbuffer`, `cursor`, `wait`) are intentionally private.
+- Breaking changes to public surface are tracked by kanban card and include migration notes.
+- Internal refactors that do not change the public surface are not part of this compatibility policy.
 
 ## Platform Support
 

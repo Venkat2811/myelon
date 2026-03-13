@@ -4,11 +4,14 @@
 //! that can be accessed by multiple processes. The ring buffer provides lock-free,
 //! wait-free access patterns with power-of-2 sizing for efficient indexing.
 
-use crate::{MultiProcessError, MultiProcessResult, SharedMemoryConfig};
+use crate::{
+    shared_memory_layout::{required_layout_size, validate_layout, write_layout, SegmentKind},
+    MultiProcessError, MultiProcessResult, SharedMemoryConfig,
+};
 use disruptor_core::Sequence;
 use shared_memory::{Shmem, ShmemConf};
 use std::cell::UnsafeCell;
-use std::mem;
+use std::mem::{align_of, size_of};
 use std::ptr::NonNull;
 
 /// Ring buffer stored in shared memory for multi-process access
@@ -37,6 +40,16 @@ fn is_pow_of_2(num: usize) -> bool {
     num != 0 && (num & (num - 1) == 0)
 }
 
+fn validate_event_config(name: &str, expected: usize, configured: usize) -> MultiProcessResult<()> {
+    if expected != configured {
+        return Err(MultiProcessError::IncompatibleLayout(format!(
+            "{} event element size mismatch: expected {}, configured {}",
+            name, expected, configured
+        )));
+    }
+    Ok(())
+}
+
 impl<E> SharedRingBuffer<E>
 where
     E: Copy + Default,
@@ -58,7 +71,7 @@ where
         // Best-effort no-op on non-Unix platforms.
     }
 
-    /// Create a new shared ring buffer with automatic naming
+    /// Create a new shared ring buffer with automatic naming.
     pub fn new_auto<F>(
         buffer_size: usize,
         mut event_factory: F,
@@ -67,77 +80,117 @@ where
         F: FnMut() -> E,
     {
         if !is_pow_of_2(buffer_size) {
-            return Err(MultiProcessError::IncompatibleLayout);
+            return Err(MultiProcessError::IncompatibleLayout(
+                "ring buffer size must be power-of-two".to_string(),
+            ));
         }
 
+        let element_size = size_of::<UnsafeCell<E>>();
         let size = buffer_size;
-        let element_size = mem::size_of::<UnsafeCell<E>>();
-        let total_size = element_size * size;
+        let payload_size = element_size.checked_mul(size).ok_or_else(|| {
+            MultiProcessError::SharedMemoryError("shared memory size overflow".to_string())
+        })?;
+        let payload_alignment = align_of::<UnsafeCell<E>>();
+        let required_size = required_layout_size(payload_size, payload_alignment)?;
 
         // Let shared_memory crate generate the name automatically
         let shmem = ShmemConf::new()
-            .size(total_size)
-            .create() // No .os_id() = automatic naming
+            .size(required_size)
+            .create()
             .map_err(|e| MultiProcessError::SharedMemoryError(e.to_string()))?;
 
         let generated_name = shmem.get_os_id().to_string();
+        let contract = write_layout(
+            &shmem,
+            payload_size,
+            element_size,
+            size,
+            payload_alignment,
+            SegmentKind::RingBuffer,
+        )?;
 
-        let ptr = shmem.as_ptr() as *mut UnsafeCell<E>;
+        let ptr = unsafe {
+            shmem.as_ptr().cast::<u8>().add(contract.payload_offset) as *mut UnsafeCell<E>
+        };
         let slots_ptr = NonNull::new(ptr)
             .ok_or_else(|| MultiProcessError::MemoryMapError("Null pointer".to_string()))?;
 
         // Initialize the ring buffer with default values
         unsafe {
             for i in 0..size {
-                let slot_ptr = ptr.add(i);
-                std::ptr::write(slot_ptr, UnsafeCell::new(event_factory()));
+                std::ptr::write(ptr.add(i), UnsafeCell::new(event_factory()));
             }
         }
 
         let index_mask = (size - 1) as i64;
-
         let ring_buffer = SharedRingBuffer {
             _shmem: shmem,
             slots_ptr,
             index_mask,
             size,
-            is_owner: true, // Creator is the owner
+            is_owner: true,
         };
 
         Ok((ring_buffer, generated_name))
     }
 
-    /// Create a new shared ring buffer (legacy method with explicit naming)
+    /// Create a new shared ring buffer (legacy method with explicit naming).
     pub fn new<F>(config: SharedMemoryConfig, mut event_factory: F) -> MultiProcessResult<Self>
     where
         F: FnMut() -> E,
     {
         if !is_pow_of_2(config.buffer_size) {
-            return Err(MultiProcessError::IncompatibleLayout);
+            return Err(MultiProcessError::IncompatibleLayout(
+                "ring buffer size must be power-of-two".to_string(),
+            ));
         }
 
+        validate_event_config("ring", size_of::<E>(), config.element_size)?;
+
         let size = config.buffer_size;
-        let element_size = mem::size_of::<UnsafeCell<E>>();
-        let total_size = element_size * size;
+        let element_size = size_of::<UnsafeCell<E>>();
+        let payload_size = element_size.checked_mul(size).ok_or_else(|| {
+            MultiProcessError::SharedMemoryError("shared memory size overflow".to_string())
+        })?;
+        let payload_alignment = align_of::<UnsafeCell<E>>();
 
         let shmem = if config.create {
-            // Producer creates the shared memory.
-            // Do not unlink preemptively: that can replace a live segment and break
-            // existing attachers. Callers should use unique names or explicit cleanup.
+            let required_size = required_layout_size(payload_size, payload_alignment)?;
             ShmemConf::new()
-                .size(total_size)
+                .size(required_size)
                 .os_id(&config.name)
                 .create()
                 .map_err(|e| MultiProcessError::SharedMemoryError(e.to_string()))?
         } else {
-            // Consumer attaches to existing shared memory
             ShmemConf::new()
                 .os_id(&config.name)
                 .open()
                 .map_err(|e| MultiProcessError::SegmentNotFound(e.to_string()))?
         };
 
-        let ptr = shmem.as_ptr() as *mut UnsafeCell<E>;
+        let payload_offset = if config.create {
+            write_layout(
+                &shmem,
+                payload_size,
+                element_size,
+                size,
+                payload_alignment,
+                SegmentKind::RingBuffer,
+            )?
+            .payload_offset
+        } else {
+            validate_layout(
+                &shmem,
+                payload_size,
+                element_size,
+                size,
+                payload_alignment,
+                SegmentKind::RingBuffer,
+            )?
+            .payload_offset
+        };
+
+        let ptr = unsafe { shmem.as_ptr().cast::<u8>().add(payload_offset) as *mut UnsafeCell<E> };
         let slots_ptr = NonNull::new(ptr)
             .ok_or_else(|| MultiProcessError::MemoryMapError("Null pointer".to_string()))?;
 
@@ -145,20 +198,18 @@ where
             // Initialize the ring buffer with default values
             unsafe {
                 for i in 0..size {
-                    let slot_ptr = ptr.add(i);
-                    std::ptr::write(slot_ptr, UnsafeCell::new(event_factory()));
+                    std::ptr::write(ptr.add(i), UnsafeCell::new(event_factory()));
                 }
             }
         }
 
         let index_mask = (size - 1) as i64;
-
         Ok(SharedRingBuffer {
             _shmem: shmem,
             slots_ptr,
             index_mask,
             size,
-            is_owner: config.create, // Creator is the owner
+            is_owner: config.create,
         })
     }
 
@@ -176,43 +227,52 @@ where
                 "SharedRingBuffer::recreate requires config.create = true".to_string(),
             ));
         }
-
+        validate_event_config("ring", size_of::<E>(), config.element_size)?;
         Self::unlink_shared_segment(&config.name);
         Self::new(config, event_factory)
     }
 
-    /// Attach to an existing shared ring buffer
+    /// Attach to an existing shared ring buffer.
     pub fn attach(config: SharedMemoryConfig) -> MultiProcessResult<Self> {
         if !is_pow_of_2(config.buffer_size) {
-            return Err(MultiProcessError::IncompatibleLayout);
+            return Err(MultiProcessError::IncompatibleLayout(
+                "ring buffer size must be power-of-two".to_string(),
+            ));
         }
+        validate_event_config("ring", size_of::<E>(), config.element_size)?;
 
         let size = config.buffer_size;
-        let element_size = mem::size_of::<UnsafeCell<E>>();
-        let expected_size = element_size * size;
+        let element_size = size_of::<UnsafeCell<E>>();
+        let payload_size = element_size.checked_mul(size).ok_or_else(|| {
+            MultiProcessError::SharedMemoryError("shared memory size overflow".to_string())
+        })?;
+        let payload_alignment = align_of::<UnsafeCell<E>>();
 
         let shmem = ShmemConf::new()
             .os_id(&config.name)
             .open()
             .map_err(|e| MultiProcessError::SegmentNotFound(e.to_string()))?;
+        let payload_offset = validate_layout(
+            &shmem,
+            payload_size,
+            element_size,
+            size,
+            payload_alignment,
+            SegmentKind::RingBuffer,
+        )?
+        .payload_offset;
 
-        // Verify size is at least as large as expected
-        if shmem.len() < expected_size {
-            return Err(MultiProcessError::IncompatibleLayout);
-        }
-
-        let ptr = shmem.as_ptr() as *mut UnsafeCell<E>;
+        let ptr = unsafe { shmem.as_ptr().cast::<u8>().add(payload_offset) as *mut UnsafeCell<E> };
         let slots_ptr = NonNull::new(ptr)
             .ok_or_else(|| MultiProcessError::MemoryMapError("Null pointer".to_string()))?;
 
         let index_mask = (size - 1) as i64;
-
         Ok(SharedRingBuffer {
             _shmem: shmem,
             slots_ptr,
             index_mask,
             size,
-            is_owner: false, // Attacher is not the owner
+            is_owner: false,
         })
     }
 

@@ -5,8 +5,12 @@
 //! sequence positions and coordinate between producers and consumers across processes
 //! with cache-line padding to prevent false sharing.
 
-use crate::{MultiProcessError, MultiProcessResult};
+use crate::{
+    shared_memory_layout::{required_layout_size, validate_layout, write_layout, SegmentKind},
+    MultiProcessError, MultiProcessResult,
+};
 use shared_memory::{Shmem, ShmemConf};
+use std::mem::align_of;
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicI64, Ordering};
 
@@ -86,16 +90,28 @@ impl SharedCursor {
 
     /// Create a new shared cursor with automatic naming
     pub fn new_auto(initial_value: i64) -> MultiProcessResult<(Self, String)> {
+        let payload_size = std::mem::size_of::<PaddedAtomicI64>();
+        let payload_alignment = align_of::<PaddedAtomicI64>();
         // Let shared_memory crate generate the name automatically
         let shmem = ShmemConf::new()
-            .size(std::mem::size_of::<PaddedAtomicI64>())
+            .size(required_layout_size(payload_size, payload_alignment)?)
             .create() // No .os_id() = automatic naming
             .map_err(|e| MultiProcessError::SharedMemoryError(e.to_string()))?;
 
         let generated_name = shmem.get_os_id().to_string();
 
+        let contract = write_layout(
+            &shmem,
+            payload_size,
+            payload_size,
+            1,
+            payload_alignment,
+            SegmentKind::Cursor,
+        )?;
         // Map the shared memory
-        let ptr = shmem.as_ptr() as *mut PaddedAtomicI64;
+        let ptr = unsafe {
+            shmem.as_ptr().cast::<u8>().add(contract.payload_offset) as *mut PaddedAtomicI64
+        };
         let cursor_ptr = NonNull::new(ptr)
             .ok_or_else(|| MultiProcessError::MemoryMapError("Null pointer".to_string()))?;
 
@@ -118,13 +134,26 @@ impl SharedCursor {
         // Do not unlink preemptively: that can replace a live segment and break
         // existing attachers. Callers should use unique names or explicit cleanup.
         let shmem = ShmemConf::new()
-            .size(std::mem::size_of::<PaddedAtomicI64>())
+            .size(required_layout_size(
+                std::mem::size_of::<PaddedAtomicI64>(),
+                align_of::<PaddedAtomicI64>(),
+            )?)
             .os_id(name)
             .create()
             .map_err(|e| MultiProcessError::SharedMemoryError(e.to_string()))?;
 
+        let contract = write_layout(
+            &shmem,
+            std::mem::size_of::<PaddedAtomicI64>(),
+            std::mem::size_of::<PaddedAtomicI64>(),
+            1,
+            align_of::<PaddedAtomicI64>(),
+            SegmentKind::Cursor,
+        )?;
         // Map the shared memory
-        let ptr = shmem.as_ptr() as *mut PaddedAtomicI64;
+        let ptr = unsafe {
+            shmem.as_ptr().cast::<u8>().add(contract.payload_offset) as *mut PaddedAtomicI64
+        };
         let cursor_ptr = NonNull::new(ptr)
             .ok_or_else(|| MultiProcessError::MemoryMapError("Null pointer".to_string()))?;
 
@@ -152,12 +181,24 @@ impl SharedCursor {
 
     /// Attach to an existing shared cursor in an existing shared memory segment
     pub fn attach(name: &str) -> MultiProcessResult<Self> {
+        let payload_size = std::mem::size_of::<PaddedAtomicI64>();
+        let payload_alignment = align_of::<PaddedAtomicI64>();
         let shmem = ShmemConf::new()
             .os_id(name)
             .open()
             .map_err(|e| MultiProcessError::SegmentNotFound(e.to_string()))?;
 
-        let ptr = shmem.as_ptr() as *mut PaddedAtomicI64;
+        let contract = validate_layout(
+            &shmem,
+            payload_size,
+            payload_size,
+            1,
+            payload_alignment,
+            SegmentKind::Cursor,
+        )?;
+        let ptr = unsafe {
+            shmem.as_ptr().cast::<u8>().add(contract.payload_offset) as *mut PaddedAtomicI64
+        };
         let cursor_ptr = NonNull::new(ptr)
             .ok_or_else(|| MultiProcessError::MemoryMapError("Null pointer".to_string()))?;
 

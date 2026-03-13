@@ -94,6 +94,11 @@ name = "benchmark_all_wait_strategies_auto_rust"
 path = "benches/ipc/benchmark_all_wait_strategies_auto.rs"
 harness = false
 
+[[bench]]
+name = "layout_validation"
+path = "benches/layout_validation.rs"
+harness = false
+
 # Competitive benchmarks for industry comparison
 [[bench]]
 name = "competitive_pingpong"
@@ -132,7 +137,6 @@ path = "examples/performance_runner.rs"
 # [[bin]]
 # name = "test_rust_baseline"
 # path = "bindings/python/benchmarks/test_rust_baseline.rs"
-
 
 
 
