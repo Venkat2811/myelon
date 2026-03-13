@@ -79,6 +79,10 @@ where
     where
         F: FnMut() -> E,
     {
+        assert!(
+            buffer_size > 0,
+            "ring buffer size must be greater than zero"
+        );
         if !is_pow_of_2(buffer_size) {
             return Err(MultiProcessError::IncompatibleLayout(
                 "ring buffer size must be power-of-two".to_string(),
@@ -139,6 +143,14 @@ where
     where
         F: FnMut() -> E,
     {
+        assert!(
+            !config.name.is_empty(),
+            "shared ring buffer name must not be empty"
+        );
+        assert!(
+            config.buffer_size > 0,
+            "ring buffer size must be greater than zero"
+        );
         if !is_pow_of_2(config.buffer_size) {
             return Err(MultiProcessError::IncompatibleLayout(
                 "ring buffer size must be power-of-two".to_string(),
@@ -222,6 +234,10 @@ where
     where
         F: FnMut() -> E,
     {
+        assert!(
+            config.create,
+            "SharedRingBuffer::recreate requires create = true"
+        );
         if !config.create {
             return Err(MultiProcessError::SharedMemoryError(
                 "SharedRingBuffer::recreate requires config.create = true".to_string(),
@@ -234,6 +250,14 @@ where
 
     /// Attach to an existing shared ring buffer.
     pub fn attach(config: SharedMemoryConfig) -> MultiProcessResult<Self> {
+        assert!(
+            !config.name.is_empty(),
+            "shared ring buffer name must not be empty"
+        );
+        assert!(
+            config.buffer_size > 0,
+            "ring buffer size must be greater than zero"
+        );
         if !is_pow_of_2(config.buffer_size) {
             return Err(MultiProcessError::IncompatibleLayout(
                 "ring buffer size must be power-of-two".to_string(),
@@ -300,7 +324,13 @@ where
     /// exist at any point in time for the same sequence.
     #[inline]
     pub fn get(&self, sequence: Sequence) -> *mut E {
-        let index = (sequence & self.index_mask) as usize;
+        assert!(sequence >= 0, "ring buffer sequence cannot be negative");
+
+        let sequence =
+            usize::try_from(sequence).expect("validated non-negative sequence before indexing");
+        let index_mask =
+            usize::try_from(self.index_mask).expect("ring index mask must be non-negative");
+        let index = sequence & index_mask;
         unsafe {
             let slot_ptr = self.slots_ptr.as_ptr().add(index);
             (*slot_ptr).get()
@@ -351,5 +381,19 @@ mod tests {
         assert_eq!(0, ring_buffer.free_slots(8, 0));
         assert_eq!(8, ring_buffer.free_slots(0, 0));
         assert_eq!(4, ring_buffer.free_slots(3, -1));
+    }
+
+    #[test]
+    #[should_panic(expected = "ring buffer sequence cannot be negative")]
+    fn test_get_panics_on_negative_sequence() {
+        let config = SharedMemoryConfig {
+            name: "test_negative_get".to_string(),
+            buffer_size: 8,
+            element_size: std::mem::size_of::<i32>(),
+            create: true,
+        };
+
+        let ring_buffer = SharedRingBuffer::new(config, || 0i32).unwrap();
+        let _ = ring_buffer.get(-1);
     }
 }

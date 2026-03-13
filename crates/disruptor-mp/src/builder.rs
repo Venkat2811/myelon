@@ -313,9 +313,32 @@ pub struct SharedDisruptorBuilder<E> {
     coordination_mode: Option<CoordinationMode>,
     discovery_mode: Option<DiscoveryMode>,
     consumer_id: Option<String>,
+    process_core: Option<usize>,
     consumer_core: Option<usize>,
     coordination_timeout: Option<Duration>,
     _phantom: std::marker::PhantomData<E>,
+}
+
+#[derive(Copy, Clone)]
+enum ProcessRole {
+    Producer,
+    Consumer,
+}
+
+impl ProcessRole {
+    fn env_var(self) -> &'static str {
+        match self {
+            ProcessRole::Producer => "DISRUPTOR_MP_PRODUCER_CORE",
+            ProcessRole::Consumer => "DISRUPTOR_MP_CONSUMER_CORE",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            ProcessRole::Producer => "producer process",
+            ProcessRole::Consumer => "consumer process",
+        }
+    }
 }
 
 impl<E> SharedDisruptorBuilder<E>
@@ -329,6 +352,7 @@ where
             coordination_mode: None,
             discovery_mode: None,
             consumer_id: None,
+            process_core: None,
             consumer_core: None,
             coordination_timeout: None,
             _phantom: std::marker::PhantomData,
@@ -505,6 +529,29 @@ where
         self
     }
 
+    /// Bind this process (producer or consumer) to a specific CPU core.
+    ///
+    /// On Linux this pins the current thread before ring setup. For the normal
+    /// single-threaded producer/consumer entrypoints this acts as process-role
+    /// affinity, and newly spawned auto-consumer threads inherit the mask unless
+    /// they are pinned separately with `with_consumer_core()`.
+    ///
+    /// Resolution order:
+    /// 1. Explicit builder value via `with_process_core()`
+    /// 2. Role specific env var (`DISRUPTOR_MP_PRODUCER_CORE`
+    ///    or `DISRUPTOR_MP_CONSUMER_CORE`)
+    /// 3. Generic env var `DISRUPTOR_MP_PROCESS_CORE`
+    pub fn with_process_core(mut self, core_id: usize) -> Self {
+        self.process_core = Some(core_id);
+        self
+    }
+
+    fn maybe_pin_process_to_core(&self, role: ProcessRole) {
+        if let Some(core_id) = resolve_process_core(self.process_core, role) {
+            pin_current_thread_to_core(core_id, role.label());
+        }
+    }
+
     /// Build a consumer with automatic batch event handling
     ///
     /// This provides automatic event delivery with configurable wait strategies.
@@ -544,6 +591,8 @@ where
     where
         EH: 'static + Send + FnMut(&E, Sequence, bool),
     {
+        self.maybe_pin_process_to_core(ProcessRole::Consumer);
+
         let ring_buffer: SharedRingBuffer<E> = SharedRingBuffer::attach(self.config.clone())?;
 
         // Attach to existing shared atomics
@@ -584,7 +633,7 @@ where
             .name(thread_name.clone())
             .spawn(move || {
                 if let Some(core_id) = consumer_core {
-                    pin_thread_to_core(core_id, &thread_name);
+                    pin_current_thread_to_core(core_id, &thread_name);
                 }
 
                 loop {
@@ -693,6 +742,8 @@ where
     where
         F: FnMut() -> E,
     {
+        self.maybe_pin_process_to_core(ProcessRole::Producer);
+
         let ring_buffer: SharedRingBuffer<E> =
             SharedRingBuffer::new(self.config.clone(), event_factory)?;
 
@@ -773,6 +824,8 @@ where
 
     /// Build a consumer (attaches to existing shared memory segments)
     pub fn build_consumer(self) -> MultiProcessResult<SharedConsumer<E>> {
+        self.maybe_pin_process_to_core(ProcessRole::Consumer);
+
         let ring_buffer: SharedRingBuffer<E> = SharedRingBuffer::attach(self.config.clone())?;
 
         // Attach to existing shared atomics
@@ -810,23 +863,43 @@ fn resolve_auto_consumer_core(consumer_core: Option<usize>) -> Option<usize> {
         return Some(core_id);
     }
 
-    match env::var("DISRUPTOR_MP_AUTO_CONSUMER_CORE") {
-        Ok(raw) => match raw.parse::<usize>() {
-            Ok(core_id) => Some(core_id),
-            Err(_) => {
-                eprintln!(
-                    "Invalid DISRUPTOR_MP_AUTO_CONSUMER_CORE='{}'. Expected a non-negative integer.",
-                    raw
-                );
-                None
-            }
-        },
-        Err(_) => None,
+    resolve_core_from_env_vars(&["DISRUPTOR_MP_AUTO_CONSUMER_CORE"])
+}
+
+fn resolve_process_core(process_core: Option<usize>, role: ProcessRole) -> Option<usize> {
+    if let Some(core_id) = process_core {
+        return Some(core_id);
     }
+
+    resolve_core_from_env_vars(&[role.env_var(), "DISRUPTOR_MP_PROCESS_CORE"])
+}
+
+fn resolve_core_from_env_vars(env_vars: &[&str]) -> Option<usize> {
+    for env_var in env_vars {
+        match env::var(env_var) {
+            Ok(raw) => match raw.parse::<usize>() {
+                Ok(core_id) => return Some(core_id),
+                Err(_) => {
+                    eprintln!(
+                        "Invalid {}='{}'. Expected a non-negative integer.",
+                        env_var, raw
+                    );
+                    return None;
+                }
+            },
+            Err(env::VarError::NotPresent) => {}
+            Err(env::VarError::NotUnicode(_)) => {
+                eprintln!("Invalid {}: value is not valid Unicode.", env_var);
+                return None;
+            }
+        }
+    }
+
+    None
 }
 
 #[cfg(target_os = "linux")]
-fn pin_thread_to_core(core_id: usize, thread_name: &str) {
+fn pin_current_thread_to_core(core_id: usize, thread_name: &str) {
     let available_cores = core_affinity::get_core_ids().unwrap_or_default();
     let core = core_affinity::CoreId { id: core_id };
 
@@ -847,7 +920,7 @@ fn pin_thread_to_core(core_id: usize, thread_name: &str) {
 }
 
 #[cfg(not(target_os = "linux"))]
-fn pin_thread_to_core(core_id: usize, thread_name: &str) {
+fn pin_current_thread_to_core(core_id: usize, thread_name: &str) {
     eprintln!(
         "Affinity support for automatic consumer core pinning is not implemented on this platform. \
          Requested pinning {} -> core {} ignored.",
@@ -948,13 +1021,50 @@ pub fn attach_shared_consumer<E: Copy + Default + 'static>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsString;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::sync::{Mutex, OnceLock};
     use std::time::{Duration, Instant};
 
     #[derive(Copy, Clone, Default)]
     struct TestEvent {
         value: i64,
+    }
+
+    fn env_lock() -> &'static Mutex<()> {
+        static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        ENV_LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    fn with_env_vars<const N: usize, F, R>(
+        vars: [(&'static str, Option<&'static str>); N],
+        f: F,
+    ) -> R
+    where
+        F: FnOnce() -> R,
+    {
+        let _guard = env_lock().lock().expect("environment lock poisoned");
+        let previous: [(&'static str, Option<OsString>); N] =
+            vars.map(|(key, _)| (key, std::env::var_os(key)));
+
+        for (key, value) in vars {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+
+        let result = f();
+
+        for (key, value) in previous {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+
+        result
     }
 
     /// Test that Block wait strategy doesn't hang when no events are available
@@ -1272,31 +1382,86 @@ mod tests {
 
     #[test]
     fn test_consumer_core_resolve_from_env_var() {
-        const ENV_VAR: &str = "DISRUPTOR_MP_AUTO_CONSUMER_CORE";
-        let previous = std::env::var_os(ENV_VAR);
-        std::env::set_var(ENV_VAR, "9");
-
-        let resolved = resolve_auto_consumer_core(None);
-        assert_eq!(resolved, Some(9));
-
-        match previous {
-            Some(value) => std::env::set_var(ENV_VAR, value),
-            None => std::env::remove_var(ENV_VAR),
-        }
+        with_env_vars([("DISRUPTOR_MP_AUTO_CONSUMER_CORE", Some("9"))], || {
+            let resolved = resolve_auto_consumer_core(None);
+            assert_eq!(resolved, Some(9));
+        });
     }
 
     #[test]
     fn test_consumer_core_resolve_from_invalid_env_var() {
-        const ENV_VAR: &str = "DISRUPTOR_MP_AUTO_CONSUMER_CORE";
-        let previous = std::env::var_os(ENV_VAR);
-        std::env::set_var(ENV_VAR, "invalid");
+        with_env_vars(
+            [("DISRUPTOR_MP_AUTO_CONSUMER_CORE", Some("invalid"))],
+            || {
+                let resolved = resolve_auto_consumer_core(None);
+                assert_eq!(resolved, None);
+            },
+        );
+    }
 
-        let resolved = resolve_auto_consumer_core(None);
-        assert_eq!(resolved, None);
+    #[test]
+    fn test_process_core_override_is_preserved() {
+        let segment_name = format!("test_prc_{}", std::process::id() % 10000);
+        let buffer_size = 128;
+        let builder = build_shared_single_producer::<TestEvent>(&segment_name, buffer_size)
+            .with_process_core(5);
 
-        match previous {
-            Some(value) => std::env::set_var(ENV_VAR, value),
-            None => std::env::remove_var(ENV_VAR),
-        }
+        assert_eq!(builder.process_core, Some(5));
+    }
+
+    #[test]
+    fn test_process_core_resolve_from_builder_overrides_env() {
+        with_env_vars(
+            [
+                ("DISRUPTOR_MP_PRODUCER_CORE", Some("7")),
+                ("DISRUPTOR_MP_PROCESS_CORE", Some("9")),
+            ],
+            || {
+                let resolved = resolve_process_core(Some(11), ProcessRole::Producer);
+                assert_eq!(resolved, Some(11));
+            },
+        );
+    }
+
+    #[test]
+    fn test_process_core_resolve_from_role_specific_env_var() {
+        with_env_vars(
+            [
+                ("DISRUPTOR_MP_PRODUCER_CORE", Some("6")),
+                ("DISRUPTOR_MP_PROCESS_CORE", Some("8")),
+            ],
+            || {
+                let resolved = resolve_process_core(None, ProcessRole::Producer);
+                assert_eq!(resolved, Some(6));
+            },
+        );
+    }
+
+    #[test]
+    fn test_process_core_resolve_from_generic_env_var() {
+        with_env_vars(
+            [
+                ("DISRUPTOR_MP_PRODUCER_CORE", None),
+                ("DISRUPTOR_MP_PROCESS_CORE", Some("10")),
+            ],
+            || {
+                let resolved = resolve_process_core(None, ProcessRole::Producer);
+                assert_eq!(resolved, Some(10));
+            },
+        );
+    }
+
+    #[test]
+    fn test_process_core_resolve_from_invalid_role_specific_env_var() {
+        with_env_vars(
+            [
+                ("DISRUPTOR_MP_CONSUMER_CORE", Some("invalid")),
+                ("DISRUPTOR_MP_PROCESS_CORE", Some("12")),
+            ],
+            || {
+                let resolved = resolve_process_core(None, ProcessRole::Consumer);
+                assert_eq!(resolved, None);
+            },
+        );
     }
 }

@@ -71,6 +71,10 @@ impl Drop for SharedCursor {
 }
 
 impl SharedCursor {
+    fn ensure_name(name: &str) {
+        assert!(!name.is_empty(), "shared cursor name must not be empty");
+    }
+
     #[cfg(unix)]
     fn unlink_shared_segment(name: &str) {
         use std::ffi::CString;
@@ -131,6 +135,7 @@ impl SharedCursor {
 
     /// Create a new shared cursor in a new shared memory segment (legacy method)
     pub fn new(name: &str, initial_value: i64) -> MultiProcessResult<Self> {
+        Self::ensure_name(name);
         // Do not unlink preemptively: that can replace a live segment and break
         // existing attachers. Callers should use unique names or explicit cleanup.
         let shmem = ShmemConf::new()
@@ -175,12 +180,14 @@ impl SharedCursor {
     /// remain after an unclean shutdown. This operation is destructive for any
     /// currently attached process using the same name.
     pub fn recreate(name: &str, initial_value: i64) -> MultiProcessResult<Self> {
+        Self::ensure_name(name);
         Self::unlink_shared_segment(name);
         Self::new(name, initial_value)
     }
 
     /// Attach to an existing shared cursor in an existing shared memory segment
     pub fn attach(name: &str) -> MultiProcessResult<Self> {
+        Self::ensure_name(name);
         let payload_size = std::mem::size_of::<PaddedAtomicI64>();
         let payload_alignment = align_of::<PaddedAtomicI64>();
         let shmem = ShmemConf::new()
@@ -226,11 +233,15 @@ impl SharedCursor {
 
     /// Load the current value
     pub fn load(&self, ordering: Ordering) -> i64 {
+        // Caller-supplied ordering allows callers in producer/consumer layers
+        // to enforce the required synchronizes-with relation in each hot path.
         unsafe { self.cursor_ptr.as_ref().atomic.load(ordering) }
     }
 
     /// Store a new value
     pub fn store(&self, value: i64, ordering: Ordering) {
+        // Store ordering is selected by the caller because this type is shared
+        // across producers/consumers with different release/acquire needs.
         unsafe { self.cursor_ptr.as_ref().atomic.store(value, ordering) }
     }
 
@@ -268,6 +279,8 @@ impl SharedCursor {
 
     /// Fetch and add
     pub fn fetch_add(&self, val: i64, ordering: Ordering) -> i64 {
+        // Caller controls ordering for backpressure and publication fences
+        // at the ring-buffer protocol level.
         unsafe { self.cursor_ptr.as_ref().atomic.fetch_add(val, ordering) }
     }
 
@@ -332,5 +345,23 @@ mod tests {
         let old = cursor.fetch_add(5, Ordering::Relaxed);
         assert_eq!(old, 100);
         assert_eq!(cursor.load(Ordering::Relaxed), 105);
+    }
+
+    #[test]
+    #[should_panic(expected = "shared cursor name must not be empty")]
+    fn test_new_cursor_rejects_empty_name() {
+        let _ = SharedCursor::new("", 0).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "shared cursor name must not be empty")]
+    fn test_attach_cursor_rejects_empty_name() {
+        let _ = SharedCursor::attach("").unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "shared cursor name must not be empty")]
+    fn test_recreate_cursor_rejects_empty_name() {
+        let _ = SharedCursor::recreate("", 0).unwrap();
     }
 }

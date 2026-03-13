@@ -3,6 +3,7 @@ members = [
   "crates/disruptor-mp",
   "crates/legacy-wip",
   "python-surface-archive",
+  "crates/dst-fixtures",
 ]
 resolver = "2"
 

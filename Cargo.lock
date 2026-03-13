@@ -437,6 +437,7 @@ dependencies = [
  "crossbeam",
  "ctrlc",
  "disruptor",
+ "dst-fixtures",
  "hdrhistogram",
  "libc",
  "memmap2",
@@ -452,6 +453,14 @@ dependencies = [
  "thiserror",
  "trybuild",
  "winapi",
+]
+
+[[package]]
+name = "dst-fixtures"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -711,6 +720,7 @@ name = "myelon"
 version = "0.1.0"
 dependencies = [
  "disruptor-mp",
+ "dst-fixtures",
  "trybuild",
 ]
 

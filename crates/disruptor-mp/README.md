@@ -22,6 +22,8 @@ It no longer vendors/copypastes single-process internals from `disruptor-rs`.
 
 See `the workspace book` for migration details.
 See `the workspace book` for shared-memory layout versioning rules.
+See `the workspace book` for Linux CPU affinity controls and benchmark usage.
+See `the workspace book` for current Linux core-to-core optimization measurements.
 
 ## Dependency Model
 
@@ -90,4 +92,6 @@ make test
 cargo test -p disruptor-mp --test true_multiprocess -- --nocapture
 make test-shm-cleanup-stress ITERATIONS=50
 make bench-multiprocess
+make bench-affinity-matrix
+make bench-r10-ab
 ```

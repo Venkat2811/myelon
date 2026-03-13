@@ -35,6 +35,8 @@ where
         consumer_id: String,
         base_name: Option<String>,
     ) -> Self {
+        assert!(!consumer_id.is_empty(), "consumer_id must not be empty");
+
         // Try to attach to coordination structure if base_name is provided
         let consumers_ready = base_name.as_ref().and_then(|name| {
             // Use shorter name for macOS compatibility (error 63 = name too long)
@@ -50,6 +52,8 @@ where
             last_processed_sequence: -1,
             consumers_ready,
         };
+
+        consumer.last_processed_sequence = consumer.consumer_sequence.load(Ordering::Acquire);
 
         // Automatically signal readiness if coordination is available
         consumer.signal_readiness();
@@ -73,12 +77,15 @@ where
     /// This is called automatically when the consumer is created
     pub fn signal_readiness(&self) {
         if let Some(consumers_ready) = &self.consumers_ready {
+            // AcqRel preserves readiness-count monotonicity across processes.
             consumers_ready.fetch_add(1, Ordering::AcqRel);
         }
     }
 
     /// Try to attach to coordination structure (retry mechanism for timing issues)
     pub fn try_attach_coordination(&mut self, base_name: &str) -> bool {
+        assert!(!base_name.is_empty(), "base_name must not be empty");
+
         if self.consumers_ready.is_some() {
             return true; // Already attached
         }
@@ -101,30 +108,94 @@ where
     /// Try to consume the next available event for this consumer
     /// Returns None if no new events are available
     pub fn try_consume_next(&mut self) -> Option<(Sequence, E)> {
-        let producer_seq = self.producer_sequence.load(Ordering::Acquire);
-        let current_consumer_seq = self.consumer_sequence.load(Ordering::Acquire);
-        let next_sequence = current_consumer_seq + 1;
+        // Acquire load enforces visibility for producer progress before deciding
+        // whether the next slot is safe to consume.
+        let (next_sequence, _) = self.available_batch_bounds()?;
 
-        // Check if there are new events available
-        if next_sequence > producer_seq {
-            return None; // No new events available
-        }
-
-        // Get the event (this consumer gets to see it)
         let event_ptr = self.ring_buffer.get(next_sequence);
         let event = unsafe { *event_ptr }; // Copy the event
 
-        // Advance this consumer's sequence
-        self.consumer_sequence
-            .store(next_sequence, Ordering::Release);
-
-        // P0 FIX: Each consumer only updates its own sequence
-        // The producer will discover and track individual consumer sequences
-        // This eliminates the race condition where fast consumers could advance
-        // the global minimum past slow consumers
-
-        self.last_processed_sequence = next_sequence;
+        self.publish_consumed_sequence(next_sequence);
         Some((next_sequence, event))
+    }
+
+    #[inline]
+    fn available_batch_bounds(&self) -> Option<(Sequence, Sequence)> {
+        assert!(
+            self.last_processed_sequence >= -1,
+            "consumer sequence must not be lower than -1"
+        );
+
+        let producer_seq = self.producer_sequence.load(Ordering::Acquire);
+        let next_sequence = self.last_processed_sequence + 1;
+
+        if next_sequence > producer_seq {
+            return None;
+        }
+
+        Some((next_sequence, producer_seq))
+    }
+
+    #[inline]
+    fn publish_consumed_sequence(&mut self, sequence: Sequence) {
+        // Publish consumer progress once per consumed snapshot batch. Keeping the
+        // shared cursor slightly behind while callbacks run is safe because it can
+        // only make the producer more conservative; it cannot permit overwrite of
+        // unread slots.
+        self.consumer_sequence.store(sequence, Ordering::Release);
+        self.last_processed_sequence = sequence;
+    }
+
+    #[inline]
+    fn is_end_of_batch(&self) -> bool {
+        self.last_processed_sequence >= self.producer_sequence.load(Ordering::Acquire)
+    }
+
+    #[inline]
+    fn process_snapshot_batch<F>(
+        &mut self,
+        lower: Sequence,
+        upper: Sequence,
+        processor: &mut F,
+    ) -> usize
+    where
+        F: FnMut(&E, Sequence),
+    {
+        let mut processed = 0usize;
+
+        for sequence in lower..=upper {
+            let event_ptr = self.ring_buffer.get(sequence);
+            let event = unsafe { &*event_ptr };
+            processor(event, sequence);
+            processed += 1;
+        }
+
+        self.publish_consumed_sequence(upper);
+        processed
+    }
+
+    #[inline]
+    fn process_snapshot_batch_with_eob<F>(
+        &mut self,
+        lower: Sequence,
+        upper: Sequence,
+        processor: &mut F,
+    ) -> usize
+    where
+        F: FnMut(&E, Sequence, bool),
+    {
+        let mut processed = 0usize;
+
+        for sequence in lower..=upper {
+            let event_ptr = self.ring_buffer.get(sequence);
+            let event = unsafe { &*event_ptr };
+            let end_of_batch = sequence == upper;
+            processor(event, sequence, end_of_batch);
+            processed += 1;
+        }
+
+        self.publish_consumed_sequence(upper);
+        processed
     }
 
     /// Wait for and consume the next event (blocking)
@@ -166,9 +237,7 @@ where
         let (sequence, event) = self.consume_next();
 
         // Check if more events are immediately available (end_of_batch detection)
-        let producer_seq = self.producer_sequence.load(Ordering::Acquire);
-        let consumer_seq = self.consumer_sequence.load(Ordering::Acquire);
-        let end_of_batch = consumer_seq >= producer_seq;
+        let end_of_batch = self.is_end_of_batch();
 
         // Process the event with end_of_batch information
         processor(&event, sequence, end_of_batch);
@@ -188,9 +257,7 @@ where
         let (sequence, event) = self.consume_next_with_sleep();
 
         // Check if more events are immediately available (end_of_batch detection)
-        let producer_seq = self.producer_sequence.load(Ordering::Acquire);
-        let consumer_seq = self.consumer_sequence.load(Ordering::Acquire);
-        let end_of_batch = consumer_seq >= producer_seq;
+        let end_of_batch = self.is_end_of_batch();
 
         // Process the event with end_of_batch information
         processor(&event, sequence, end_of_batch);
@@ -206,29 +273,20 @@ where
     where
         F: FnMut(&E, Sequence, bool),
     {
-        // Block until at least one event is available (high performance)
-        let (first_sequence, first_event) = self.consume_next();
+        let mut processed = 0usize;
 
-        // Process the first event
-        let mut processed = 1;
+        loop {
+            if let Some((lower, upper)) = self.available_batch_bounds() {
+                processed += self.process_snapshot_batch_with_eob(lower, upper, &mut processor);
+                break;
+            }
 
-        // Check if more events are immediately available for batch processing
-        let producer_seq = self.producer_sequence.load(Ordering::Acquire);
-        let consumer_seq = self.consumer_sequence.load(Ordering::Acquire);
-        let first_end_of_batch = consumer_seq >= producer_seq;
+            // High performance blocking wait for the first batch.
+            std::hint::spin_loop();
+        }
 
-        processor(&first_event, first_sequence, first_end_of_batch);
-
-        // Now process any additional available events in batch (non-blocking)
-        while let Some((seq, event)) = self.try_consume_next() {
-            processed += 1;
-
-            // Check if this is the end of the batch
-            let producer_seq = self.producer_sequence.load(Ordering::Acquire);
-            let consumer_seq = self.consumer_sequence.load(Ordering::Acquire);
-            let end_of_batch = consumer_seq >= producer_seq;
-
-            processor(&event, seq, end_of_batch);
+        while let Some((lower, upper)) = self.available_batch_bounds() {
+            processed += self.process_snapshot_batch_with_eob(lower, upper, &mut processor);
         }
 
         processed
@@ -240,12 +298,10 @@ where
     where
         F: FnMut(&E, Sequence),
     {
-        let mut processed = 0;
+        let mut processed = 0usize;
 
-        // Keep processing events until we're caught up
-        while let Some((seq, event)) = self.try_consume_next() {
-            processor(&event, seq);
-            processed += 1;
+        while let Some((lower, upper)) = self.available_batch_bounds() {
+            processed += self.process_snapshot_batch(lower, upper, &mut processor);
         }
 
         processed
@@ -258,11 +314,13 @@ where
 
     /// Get the current producer sequence (for debugging)
     pub fn producer_sequence(&self) -> Sequence {
+        // Acquire load gives a coherent producer cursor for diagnostics.
         self.producer_sequence.load(Ordering::Acquire)
     }
 
     /// Get this consumer's sequence (for debugging)
     pub fn consumer_sequence(&self) -> Sequence {
+        // Acquire load keeps debug output in the same ordering domain as runtime reads.
         self.consumer_sequence.load(Ordering::Acquire)
     }
 

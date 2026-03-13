@@ -1,0 +1,13 @@
+[package]
+name          = "dst-fixtures"
+version       = "0.1.0"
+edition       = "2021"
+description   = "Shared deterministic simulation support types for disruptor-mp and myelon tests"
+license       = "MIT"
+
+[lib]
+name = "dst_fixtures"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"

@@ -576,6 +576,86 @@ mod tests {
     }
 
     #[test]
+    fn test_process_available_advances_consumer_sequence_after_batch() {
+        let name = unique_test_segment("process_available_batch");
+        let buffer_size = 16;
+        let num_events = 6;
+
+        let mut producer = build_shared_single_producer::<TestEvent>(&name, buffer_size)
+            .build_producer(TestEvent::default)
+            .unwrap();
+
+        let config = SharedMemoryConfig {
+            name,
+            buffer_size,
+            element_size: std::mem::size_of::<TestEvent>(),
+            create: false,
+        };
+        let mut consumer: SharedConsumer<TestEvent> = SharedDisruptorBuilder::new(config)
+            .build_consumer()
+            .unwrap();
+
+        for i in 0..num_events {
+            producer.publish(|event| {
+                event.sequence = i as i64;
+                event.data = i as i64 * 10;
+            });
+        }
+
+        let mut consumed = Vec::new();
+        let processed = consumer.process_available(|event: &TestEvent, seq| {
+            consumed.push((seq, event.sequence, event.data));
+        });
+
+        assert_eq!(processed, num_events);
+        assert_eq!(consumed.len(), num_events);
+        assert_eq!(consumer.current_sequence(), (num_events - 1) as i64);
+        assert_eq!(consumer.producer_sequence(), (num_events - 1) as i64);
+        assert_eq!(consumer.consumer_sequence(), (num_events - 1) as i64);
+    }
+
+    #[test]
+    fn test_process_available_blocking_marks_only_final_event_as_end_of_batch() {
+        let name = unique_test_segment("process_available_blocking_batch");
+        let buffer_size = 16;
+        let num_events = 4;
+
+        let mut producer = build_shared_single_producer::<TestEvent>(&name, buffer_size)
+            .build_producer(TestEvent::default)
+            .unwrap();
+
+        let config = SharedMemoryConfig {
+            name,
+            buffer_size,
+            element_size: std::mem::size_of::<TestEvent>(),
+            create: false,
+        };
+        let mut consumer: SharedConsumer<TestEvent> = SharedDisruptorBuilder::new(config)
+            .build_consumer()
+            .unwrap();
+
+        for i in 0..num_events {
+            producer.publish(|event| {
+                event.sequence = i as i64;
+                event.data = i as i64;
+            });
+        }
+
+        let mut observed = Vec::new();
+        let processed =
+            consumer.process_available_blocking(|event: &TestEvent, seq, end_of_batch| {
+                observed.push((seq, event.sequence, end_of_batch));
+            });
+
+        assert_eq!(processed, num_events);
+        assert_eq!(
+            observed,
+            vec![(0, 0, false), (1, 1, false), (2, 2, false), (3, 3, true),]
+        );
+        assert_eq!(consumer.current_sequence(), (num_events - 1) as i64);
+    }
+
+    #[test]
     fn test_per_consumer_sequences_prevent_race_conditions() {
         let name = unique_test_segment("per_consumer_test");
         let buffer_size = 64;

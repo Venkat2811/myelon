@@ -33,6 +33,7 @@ pub enum CoordinationMode {
 impl CoordinationMode {
     /// Create a coordination mode that waits for consumers
     pub fn wait_for_consumers(min_consumers: i64, timeout: Duration) -> Self {
+        assert!(min_consumers > 0, "min_consumers must be greater than zero");
         CoordinationMode::WaitForConsumers {
             min_consumers,
             timeout,
@@ -41,6 +42,7 @@ impl CoordinationMode {
 
     /// Create a coordination mode for single consumer scenarios
     pub fn wait_for_single_consumer(timeout: Duration) -> Self {
+        assert!(!timeout.is_zero(), "timeout must be greater than zero");
         CoordinationMode::WaitForConsumers {
             min_consumers: 1,
             timeout,
@@ -78,7 +80,8 @@ where
         coordination_mode: CoordinationMode,
         discovery_mode: DiscoveryMode,
     ) -> Self {
-        // Initialize producer sequence to -1 (no events published yet)
+        // Initialize producer sequence to -1 (no events published yet).
+        // Release publishing makes the initial state visible before consumers start publishing.
         producer_sequence.store(-1, std::sync::atomic::Ordering::Release);
 
         // Create consumer barrier with coordination support only when needed
@@ -120,28 +123,47 @@ where
         // Skip coordination check - should be completed during creation
         // self.ensure_coordination_completed(); // Removed per-operation overhead
 
-        let n = n as i64;
-        let n_next = self.sequence - 1 + n;
+        let n = i64::try_from(n).map_err(|_| MissingFreeSlots(u64::MAX))?;
+        assert!(n > 0, "batch size must be greater than zero");
 
-        if self.sequence_clear_of_consumers < n_next {
-            // PERFORMANCE OPTIMIZATION: Reduce expensive barrier checks by batching them
-            // Check where consumers are to avoid overwriting unread slots
-            let last_published = self.sequence - 1;
-            let rear_sequence_read = self.consumer_barrier.get_min_consumer_sequence();
-            let free_slots = self
-                .ring_buffer
-                .free_slots(last_published, rear_sequence_read);
+        let n_next = self.last_reserved_sequence(n)?;
+        self.update_min_consumer_clearance_window(n, n_next)?;
+        Ok(n_next)
+    }
 
-            if free_slots < n {
-                return Err(MissingFreeSlots((n - free_slots) as u64));
-            }
+    fn last_reserved_sequence(&self, n: i64) -> Result<Sequence, MissingFreeSlots> {
+        self.sequence
+            .checked_sub(1)
+            .and_then(|current| current.checked_add(n))
+            .ok_or(MissingFreeSlots(u64::MAX))
+    }
 
-            // PERFORMANCE OPTIMIZATION: Cache more aggressively to reduce barrier calls
-            // Use all available free slots for better batching (safe because we check rear_sequence_read)
-            self.sequence_clear_of_consumers = last_published + free_slots;
+    fn update_min_consumer_clearance_window(
+        &mut self,
+        n: i64,
+        n_next: Sequence,
+    ) -> Result<(), MissingFreeSlots> {
+        if self.sequence_clear_of_consumers >= n_next {
+            return Ok(());
         }
 
-        Ok(n_next)
+        // PERFORMANCE OPTIMIZATION: Reduce expensive barrier checks by batching them
+        // Check where consumers are to avoid overwriting unread slots.
+        let last_published = self.sequence - 1;
+        let rear_sequence_read = self.consumer_barrier.get_min_consumer_sequence();
+        let free_slots = self
+            .ring_buffer
+            .free_slots(last_published, rear_sequence_read);
+
+        if free_slots < n {
+            return Err(MissingFreeSlots((n - free_slots) as u64));
+        }
+
+        // PERFORMANCE OPTIMIZATION: Cache more aggressively to reduce barrier calls
+        // Use all available free slots for better batching (safe because we checked
+        // rear_sequence_read for the current cursor snapshot).
+        self.sequence_clear_of_consumers = last_published + free_slots;
+        Ok(())
     }
 
     /// Apply update to a single event and publish it
@@ -150,6 +172,11 @@ where
     where
         F: FnOnce(&mut E),
     {
+        assert!(
+            self.sequence >= 0,
+            "producer sequence must be non-negative while active"
+        );
+
         let sequence = self.sequence;
 
         // Get mutable access to the event at this sequence
@@ -159,7 +186,7 @@ where
         // Apply the update
         update(event);
 
-        // Publish the sequence (make it available to consumers)
+        // Publish sequence with release ordering so consumer-visible event writes happen-before sequence update.
         self.producer_sequence.store(sequence, Ordering::Release);
 
         // Move to next sequence
@@ -174,9 +201,17 @@ where
     where
         F: Fn(&mut E, usize), // Function that takes event and index
     {
-        let n = n as i64;
+        assert!(
+            n > 0,
+            "batch publish requires a non-zero number of events to update"
+        );
+
+        let n = i64::try_from(n).expect("batch size must fit in Sequence");
         let lower = self.sequence;
-        let upper = lower + n - 1;
+        let upper_offset = n.checked_sub(1).expect("batch size is positive");
+        let upper = lower
+            .checked_add(upper_offset)
+            .expect("sequence arithmetic must not overflow");
 
         // Apply updates to each event in the batch
         for (i, seq) in (lower..=upper).enumerate() {
@@ -185,7 +220,7 @@ where
             update_fn(event, i);
         }
 
-        // Publish the entire batch by publishing the upper sequence
+        // Publish the entire batch by publishing the upper sequence with release ordering.
         self.producer_sequence.store(upper, Ordering::Release);
 
         // Move sequence forward
@@ -297,7 +332,14 @@ where
     where
         F: FnOnce(&mut E),
     {
-        let deadline = Instant::now() + timeout;
+        assert!(
+            timeout > Duration::ZERO,
+            "timeout must be greater than zero"
+        );
+
+        let deadline = Instant::now()
+            .checked_add(timeout)
+            .expect("timeout duration does not fit in Instant");
 
         // Wait for available slots with timeout
         while self.next_sequences(1).is_err() {
@@ -335,6 +377,11 @@ where
 
     /// Check if the given sequence has been consumed by all known consumers.
     pub fn is_consumed(&mut self, seq: Sequence) -> bool {
+        // Barrier comparison uses current consumer state loaded with producer-side
+        // synchronization semantics.
+        //
+        // This is intentionally acquired on every check so the producer observes
+        // the latest consumer progress before advancing lifecycle assumptions.
         self.consumer_barrier.get_min_consumer_sequence() >= seq
     }
 
@@ -350,35 +397,45 @@ where
         timeout: Duration,
         strategy: super::builder::AutoWaitStrategy,
     ) -> bool {
-        use super::builder::AutoWaitStrategy as WS;
         use std::time::Instant;
 
-        let deadline = Instant::now() + timeout;
+        assert!(timeout >= Duration::ZERO, "timeout must be non-negative");
 
-        loop {
+        let deadline = Instant::now()
+            .checked_add(timeout)
+            .expect("timeout duration does not fit in Instant");
+
+        while Instant::now() < deadline {
             if self.is_consumed(seq) {
                 return true;
             }
-            if Instant::now() >= deadline {
-                return false;
-            }
+            Self::apply_wait_strategy(&strategy);
+        }
 
-            match strategy {
-                WS::BusySpin | WS::BusySpinWithSpinLoopHint => {
+        false
+    }
+
+    fn apply_wait_strategy(strategy: &super::builder::AutoWaitStrategy) {
+        use super::builder::AutoWaitStrategy as WS;
+
+        match strategy {
+            WS::BusySpin | WS::BusySpinWithSpinLoopHint => {
+                // Hot-path spin keeps this method low-latency for small bounded waits.
+                std::hint::spin_loop();
+            }
+            WS::SpinThenYield { spins } => {
+                for _ in 0..*spins {
                     std::hint::spin_loop();
                 }
-                WS::SpinThenYield { spins } => {
-                    for _ in 0..spins {
-                        std::hint::spin_loop();
-                    }
-                    std::thread::yield_now();
-                }
-                WS::Block => {
-                    std::thread::sleep(super::wait::SLEEP_CONFIG.block_strategy_duration());
-                }
-                WS::Sleep(d) => {
-                    std::thread::sleep(d);
-                }
+                // Yield after bounded spin to allow other runnable threads.
+                std::thread::yield_now();
+            }
+            WS::Block => {
+                std::thread::sleep(super::wait::SLEEP_CONFIG.block_strategy_duration());
+            }
+            WS::Sleep(d) => {
+                // Explicit sleep strategy lets the platform scheduler absorb queueing jitter.
+                std::thread::sleep(*d);
             }
         }
     }
