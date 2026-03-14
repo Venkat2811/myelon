@@ -38,6 +38,11 @@ PYTHON_RAW_PATTERNS = [
     re.compile(r"\bfrom\s+\.\._internal_raw\s+import\b"),
 ]
 
+PYTHON_RAW_ATTRIBUTE_PATTERNS = [
+    re.compile(r"\b_internal\._raw\b"),
+    re.compile(r"\bdisruptor_rs\._internal\._raw\b"),
+]
+
 RUST_PRIVATE_PATTERNS = [
     re.compile(r"\bdisruptor_mp::(api|builder|consumer|cursor|producer|ringbuffer|wait)\b"),
     re.compile(r"\buse\s+disruptor_mp\s+as\s+inner\b"),
@@ -70,6 +75,14 @@ def check_python_boundaries(failures: list[str]) -> None:
             failures.append(
                 f"{rel_path}:{find_line_number(text, match.start())}: direct _internal_raw import "
                 "is forbidden outside the hidden loader path"
+            )
+        for pattern in PYTHON_RAW_ATTRIBUTE_PATTERNS:
+            match = pattern.search(text)
+            if match is None:
+                continue
+            failures.append(
+                f"{rel_path}:{find_line_number(text, match.start())}: direct _internal._raw access "
+                "is forbidden; use the private _dataplane loader bridge instead"
             )
 
 

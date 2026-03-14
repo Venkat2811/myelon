@@ -227,8 +227,28 @@ pub(crate) fn write_layout(
     payload_alignment: usize,
     kind: SegmentKind,
 ) -> MultiProcessResult<LayoutContract> {
+    write_layout_bytes(
+        shmem.as_ptr().cast::<u8>(),
+        shmem.len(),
+        payload_size,
+        element_size,
+        capacity,
+        payload_alignment,
+        kind,
+    )
+}
+
+pub(crate) fn write_layout_bytes(
+    base: *mut u8,
+    region_len: usize,
+    payload_size: usize,
+    element_size: usize,
+    capacity: usize,
+    payload_alignment: usize,
+    kind: SegmentKind,
+) -> MultiProcessResult<LayoutContract> {
     let contract = make_contract(payload_size, payload_alignment)?;
-    if shmem.len() < contract.total_size {
+    if region_len < contract.total_size {
         return Err(MultiProcessError::SharedMemoryError(
             "shared segment too small for layout".to_string(),
         ));
@@ -244,7 +264,7 @@ pub(crate) fn write_layout(
 
     let bytes = bytes_of_header(&header);
     unsafe {
-        ptr::copy_nonoverlapping(bytes.as_ptr(), shmem.as_ptr().cast::<u8>(), bytes.len());
+        ptr::copy_nonoverlapping(bytes.as_ptr(), base, bytes.len());
     }
     Ok(contract)
 }
@@ -257,7 +277,27 @@ pub(crate) fn validate_layout(
     payload_alignment: usize,
     kind: SegmentKind,
 ) -> MultiProcessResult<LayoutContract> {
-    let header = read_header(shmem.as_ptr())?;
+    validate_layout_bytes(
+        shmem.as_ptr().cast::<u8>(),
+        shmem.len(),
+        payload_size,
+        element_size,
+        capacity,
+        payload_alignment,
+        kind,
+    )
+}
+
+pub(crate) fn validate_layout_bytes(
+    base: *const u8,
+    region_len: usize,
+    payload_size: usize,
+    element_size: usize,
+    capacity: usize,
+    payload_alignment: usize,
+    kind: SegmentKind,
+) -> MultiProcessResult<LayoutContract> {
+    let header = read_header(base)?;
     validate_kind(header.kind, kind)?;
 
     let expected_payload_size = u64::try_from(payload_size).map_err(|_| {
@@ -300,11 +340,10 @@ pub(crate) fn validate_layout(
         payload_size,
         payload_alignment.max(usize::from(header.alignment)),
     )?;
-    if shmem.len() < contract.total_size {
+    if region_len < contract.total_size {
         return Err(MultiProcessError::IncompatibleLayout(format!(
             "shared segment too small for layout: got {} bytes, expected at least {}",
-            shmem.len(),
-            contract.total_size
+            region_len, contract.total_size
         )));
     }
 

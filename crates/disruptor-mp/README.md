@@ -23,6 +23,7 @@ It no longer vendors/copypastes single-process internals from `disruptor-rs`.
 See `the workspace book` for migration details.
 See `the workspace book` for shared-memory layout versioning rules.
 See `the workspace book` for Linux CPU affinity controls and benchmark usage.
+See `docs/MAKE_TARGETS.md` for the included Makefile fragment layout and runtime tiers.
 See `the workspace book` for current Linux core-to-core optimization measurements.
 
 ## Dependency Model
@@ -162,11 +163,11 @@ make benchmark-summary-json \
 
 The JSON report includes:
 
-- benchmark id and competitor selector
-- OS, architecture, kernel release, CPU count, package version, and git commit
-- relevant affinity/output environment overrides
+- normalized `benchmark_id`, emitted `benchmark_name`, and competitor selector
+- OS, architecture, kernel release, CPU count, CPU model, package version, and git commit
+- relevant affinity/output and benchmark-shaping environment overrides
 - result-level `library_id`, `scenario_id`, event count, payload size, and buffer size
-- per-library producer/consumer throughput, data rate, total time, and latency `p50`/`p95`/`p99` when the benchmark collects latency
+- per-library producer/consumer throughput, data rate, total time, deterministic `buffer_memory_bytes`, and latency `p50`/`p95`/`p99` when the benchmark collects latency
 
 `bench-ipc-json-validate` runs the benchmark and fails if the JSON artifact is missing
 required metadata, has non-positive metrics, or reports invalid latency quantiles.

@@ -15,10 +15,8 @@ PYTHON_ROOT = ROOT / "python-surface-archive/python/disruptor_rs"
 
 ALLOWED_FILES = {
     Path("python-surface-archive/python/disruptor_rs/batching_producer.py"),
-    Path("python-surface-archive/python/disruptor_rs/multiprocess.py"),
-    Path("python-surface-archive/python/disruptor_rs/external_integrations/mq_disruptor_v2.py"),
-    Path("python-surface-archive/python/disruptor_rs/external_integrations/nano_competitor.py"),
-    Path("python-surface-archive/python/disruptor_rs/external_integrations/competitor_disruptor_broadcast.py"),
+    Path("python-surface-archive/python/disruptor_rs/_dataplane_runtime.py"),
+    Path("python-surface-archive/python/disruptor_rs/external_integrations/_hot_path_runtime.py"),
 }
 
 HOT_PATH_PATTERNS = [

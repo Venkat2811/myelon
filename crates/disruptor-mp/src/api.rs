@@ -254,6 +254,18 @@ pub mod backend {
         /// Short alias for shared-memory ring buffer.
         pub type ShmRingBuffer<E> = SharedRingBuffer<E>;
     }
+
+    /// File-backed mmap backend implementation.
+    pub mod mmap {
+        pub use super::super::MmapConsumerBarrier;
+        pub use super::super::MmapCursorConfig;
+        pub use super::super::MmapFileConfig;
+        pub use super::super::MmapTransportLayout;
+        pub use crate::mmap_consumer::MmapConsumer;
+        pub use crate::mmap_cursor::MmapCursor;
+        pub use crate::mmap_producer::MmapProducer;
+        pub use crate::mmap_ringbuffer::MmapRingBuffer;
+    }
 }
 
 /// Lock-free coordination primitives.
@@ -265,6 +277,12 @@ pub mod lock_free {
     pub type ProducerBarrier = super::cursor::SharedCursor;
 }
 
+pub use crate::mmap_barrier::MmapConsumerBarrier;
+pub use crate::mmap_consumer::MmapConsumer;
+pub use crate::mmap_cursor::MmapCursor;
+pub use crate::mmap_producer::MmapProducer;
+pub use crate::mmap_ringbuffer::MmapRingBuffer;
+pub use crate::mmap_transport::MmapTransportLayout;
 pub use builder::{
     attach_shared_consumer, build_shared_single_producer, AutoConsumer, AutoWaitStrategy,
     SharedDisruptorBuilder,
@@ -277,7 +295,7 @@ pub use ringbuffer::SharedRingBuffer;
 pub use shared_memory::ShmRingBuffer;
 
 // Re-exports for public API
-use std::fmt;
+use std::{fmt, path::PathBuf};
 
 /// Default maximum number of consumers that can be registered with a single shared ring buffer.
 ///
@@ -337,6 +355,46 @@ impl fmt::Display for SharedMemoryConfig {
             "SharedMemory(name={}, size={}, element_size={})",
             self.name, self.buffer_size, self.element_size
         )
+    }
+}
+
+/// Configuration for file-backed mmap segments.
+#[derive(Debug, Clone)]
+pub struct MmapFileConfig {
+    /// Path to the backing file used for the shared mapping.
+    pub path: PathBuf,
+    /// Size of the ring buffer (must be power of 2).
+    pub buffer_size: usize,
+    /// Element size in bytes.
+    pub element_size: usize,
+    /// Whether to create the backing file or attach to an existing one.
+    pub create: bool,
+}
+
+impl fmt::Display for MmapFileConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "MmapFile(path={}, size={}, element_size={})",
+            self.path.display(),
+            self.buffer_size,
+            self.element_size
+        )
+    }
+}
+
+/// Configuration for file-backed mmap cursor segments.
+#[derive(Debug, Clone)]
+pub struct MmapCursorConfig {
+    /// Path to the backing file used for the shared mapping.
+    pub path: PathBuf,
+    /// Whether to create the backing file or attach to an existing one.
+    pub create: bool,
+}
+
+impl fmt::Display for MmapCursorConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "MmapCursor(path={})", self.path.display())
     }
 }
 
