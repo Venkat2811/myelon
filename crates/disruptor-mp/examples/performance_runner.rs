@@ -285,9 +285,9 @@ fn run_python_bindings_test() -> PerformanceResults {
     let test_start = Instant::now();
 
     // Use the automatic counters example (1:1 equivalent to counters_auto.rs).
-    // Support both legacy disruptor-rs-playground and current myelon layouts.
+    // Support both workspace-root and crate-local invocation from the current monorepo.
     let python_script_candidates = [
-        "bindings/python/examples/counters/py_bindings_mp_counters_auto.py",
+        "python-surface-archive/examples/counters/py_bindings_mp_counters_auto.py",
         "../../python-surface-archive/examples/counters/py_bindings_mp_counters_auto.py",
     ];
     let python_script = match python_script_candidates

@@ -799,17 +799,22 @@ where
                     "Framework coordinating startup: waiting for {} consumers (timeout: {:?})...",
                     min_consumers, timeout
                 );
-                if !producer
+                let coordination_ready = producer
                     .consumer_barrier
-                    .wait_for_consumers_ready(min_consumers, timeout)
-                {
+                    .wait_for_consumers_ready(min_consumers, timeout);
+                if !coordination_ready {
                     eprintln!("Warning: Timed out waiting for {} consumers after {:?}. Producer created anyway.",
                         min_consumers, timeout);
+                    println!(
+                        "Framework coordination incomplete - producer continuing without {} ready consumers",
+                        min_consumers
+                    );
+                } else {
+                    println!(
+                        "Framework coordination completed - {} consumers ready",
+                        min_consumers
+                    );
                 }
-                println!(
-                    "Framework coordination completed - {} consumers ready",
-                    min_consumers
-                );
                 // Mark coordination as completed
                 producer.coordination_completed = true;
             }

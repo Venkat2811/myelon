@@ -8,6 +8,17 @@ Monorepo playground for Linux-first multiprocess disruptor IPC and inference int
 - `crates/legacy-wip`: high-level Rust API layer.
 - `python-surface-archive`: Python bindings and integrations.
 
+## Architecture Boundaries
+
+| Layer | Owner | Purpose |
+|:------|:------|:--------|
+| `crates/disruptor-mp` | low-level data plane | shared-memory layout, lock-free coordination, producer/consumer primitives |
+| `crates/legacy-wip` | domain Rust layer | stable Rust-facing monorepo API and future topology/domain policy |
+| `python-surface-archive/src` + `python/disruptor_rs/multiprocess.py` | Python data plane | PyO3 bridge and raw producer/consumer operations |
+| `python-surface-archive/python/disruptor_rs/__init__.py`, `compat.py`, `legacy.py`, `external_integrations/` | Python control plane | stable imports, compatibility shims, and framework adapters |
+
+Boundary rules and enforced checks live in the workspace book.
+
 ## Status
 
 - Linux: priority target
@@ -24,6 +35,38 @@ Monorepo playground for Linux-first multiprocess disruptor IPC and inference int
   - `make orchestrate-python`
 - Full monorepo orchestration:
   - `make orchestrate-all`
+
+## Rust Fixed Topology
+
+`crates/legacy-wip` now exposes a first domain-layer topology API for
+fixed scheduler-to-worker pools:
+
+```rust
+use myelon::inference::{FixedTopology, WorkerCount};
+use std::time::Duration;
+
+#[derive(Copy, Clone, Default)]
+struct InferenceEvent {
+    token_id: u32,
+    worker_id: u16,
+    end_of_batch: bool,
+}
+
+let topology = FixedTopology::new("infer_demo", 1024, WorkerCount::Three)
+    .with_coordination_timeout(Duration::from_secs(5));
+
+let _scheduler_builder = topology.scheduler_builder::<InferenceEvent>();
+for worker_index in topology.worker_indices() {
+    let _worker_builder = topology.worker_builder::<InferenceEvent>(worker_index)?;
+}
+```
+
+This keeps the domain crate thin:
+
+- worker counts are typed (`WorkerCount::Two` through `WorkerCount::Eight`)
+- coordination timeout stays explicit
+- worker ids are generated and validated by the topology wrapper
+- underlying producer/consumer handles still come from the canonical `disruptor-mp` API
 
 ## Platform Policy
 

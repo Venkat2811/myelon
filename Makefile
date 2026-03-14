@@ -2,7 +2,9 @@ CARGO ?= cargo
 
 .PHONY: \
 	help fmt check build test bench bench-mp \
-	py-check py-test \
+	test-rust-fast test-rust-extended test-rust-manifest \
+	test-py-fast test-py-extended test-py-manifest py-check py-test \
+	check-layer-boundaries check-layout-refs check-hot-path-ffi \
 	smoke orchestrate-rust orchestrate-python orchestrate-all \
 	validate-ci-workflows
 
@@ -18,8 +20,17 @@ help:
 	@echo "  make build               - cargo build --workspace"
 	@echo "  make test                - cargo test --workspace"
 	@echo "  make bench-mp            - run multiprocess benchmark set"
+	@echo "  make test-rust-fast      - canonical disruptor-mp Linux Rust lane"
+	@echo "  make test-rust-extended  - disruptor-mp Linux lane + stress/perf smoke"
+	@echo "  make test-rust-manifest  - emit disruptor-mp machine-readable test manifest"
+	@echo "  make test-py-fast        - canonical myelon-py Linux Python lane"
+	@echo "  make test-py-extended    - myelon-py Linux lane + stress/perf/large-element lanes"
+	@echo "  make test-py-manifest    - emit myelon-py machine-readable test manifest"
 	@echo "  make py-check            - cargo check for Python extension crate"
-	@echo "  make py-test             - run Python pytest suite"
+	@echo "  make py-test             - alias for canonical myelon-py Linux Python lane"
+	@echo "  make check-layer-boundaries - fail cross-layer import violations"
+	@echo "  make check-layout-refs   - fail stale pre-monorepo user-facing paths"
+	@echo "  make check-hot-path-ffi  - fail unexpected Python hot-path per-event FFI spread"
 
 fmt:
 	@$(CARGO) fmt --all
@@ -42,36 +53,69 @@ bench-mp:
 	@$(CARGO) bench -p disruptor-mp --bench benchmark_all_wait_strategies_auto_rust
 	@$(CARGO) bench -p disruptor-mp --bench competitive_pingpong
 
+test-rust-fast:
+	@$(MAKE) test-linux
+
+test-rust-extended:
+	@$(MAKE) test-linux-extended
+
+test-rust-manifest:
+	@$(MAKE) test-manifest-json
+
+test-py-fast:
+	@$(MAKE) -C python-surface-archive test-linux
+
+test-py-extended:
+	@$(MAKE) -C python-surface-archive test-linux-extended
+
+test-py-manifest:
+	@$(MAKE) -C python-surface-archive test-manifest-json
+
 py-check:
 	@$(CARGO) check -p python-surface-archive
 
 py-test:
-	@cd python-surface-archive && python3 -m pytest
+	@$(MAKE) test-py-fast
+
+check-layer-boundaries:
+	@python3 scripts/check_layer_boundaries.py
+
+check-layout-refs:
+	@python3 scripts/check_monorepo_layout_refs.py
+
+check-hot-path-ffi:
+	@python3 scripts/check_python_hot_path_ffi.py
 
 validate-ci-workflows:
 	@bash scripts/validate_ci_workflows.sh
 
 smoke:
+	@$(MAKE) check-layer-boundaries
+	@$(MAKE) check-layout-refs
+	@$(MAKE) check-hot-path-ffi
 	@$(MAKE) drift-check
 	@$(MAKE) drift-check-shell-matrix
-	@$(CARGO) check -p disruptor-mp --lib
+	@$(MAKE) test-unit
 	@$(CARGO) check -p myelon
 	@$(CARGO) check -p python-surface-archive
 
 orchestrate-rust:
 	@$(CARGO) fmt --all
+	@$(MAKE) check-layer-boundaries
+	@$(MAKE) check-layout-refs
+	@$(MAKE) check-hot-path-ffi
 	@$(MAKE) drift-check
 	@$(MAKE) drift-check-shell-matrix
 	@$(CARGO) clippy -p disruptor-mp -- -D warnings
 	@$(CARGO) clippy -p myelon -- -D warnings
-	@$(CARGO) test -p disruptor-mp --lib
-	@$(CARGO) test -p disruptor-mp --test multiprocess_cleanup
+	@$(MAKE) test-rust-fast
+	@$(MAKE) test-rust-manifest
 	@$(CARGO) test -p myelon --tests
-	@$(CARGO) test -p disruptor-mp --test compile_api
 	@$(CARGO) test -p myelon --test compile_api
 	@$(CARGO) test -p disruptor-mp --benches --no-run
 	@$(CARGO) test -p disruptor-mp --examples --no-run
 
-orchestrate-python: validate-ci-workflows py-check py-test
+orchestrate-python: validate-ci-workflows check-layer-boundaries check-layout-refs check-hot-path-ffi py-check test-py-fast test-py-manifest
+
 
 orchestrate-all: orchestrate-rust orchestrate-python
