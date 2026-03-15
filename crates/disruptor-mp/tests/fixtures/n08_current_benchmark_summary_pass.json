@@ -1,0 +1,63 @@
+{
+  "metadata": {
+    "generated_at_rfc3339": "2026-03-15T18:00:00+00:00",
+    "input_count": 1,
+    "benchmark_count": 1,
+    "result_count": 2
+  },
+  "inputs": [
+    {
+      "path": "/tmp/ipc_shm.json",
+      "benchmark_id": "ipc_shm",
+      "benchmark_name": "ipc_shm",
+      "competitor_selector": "all",
+      "result_count": 2
+    }
+  ],
+  "benchmarks": [
+    {
+      "benchmark_id": "ipc_shm",
+      "benchmark_name": "ipc_shm",
+      "competitor_selector": "all",
+      "source_path": "/tmp/ipc_shm.json",
+      "result_count": 2,
+      "libraries": [
+        "disruptor-rs",
+        "disruptor-rs-broadcast"
+      ],
+      "scenarios": [],
+      "best_producer": {
+        "library": "disruptor-rs",
+        "scenario_id": null,
+        "throughput_ops_per_sec": 39784321
+      },
+      "best_consumer": {
+        "library": "disruptor-rs",
+        "scenario_id": null,
+        "throughput_ops_per_sec": 39168614
+      }
+    }
+  ],
+  "results": [
+    {
+      "benchmark_id": "ipc_shm",
+      "benchmark_name": "ipc_shm",
+      "competitor_selector": "all",
+      "source_path": "/tmp/ipc_shm.json",
+      "library": "disruptor-rs",
+      "producer_throughput_ops_per_sec": 39784321,
+      "consumer_throughput_ops_per_sec": 39168614,
+      "latency_p99_ns": 35
+    },
+    {
+      "benchmark_id": "ipc_shm",
+      "benchmark_name": "ipc_shm",
+      "competitor_selector": "all",
+      "source_path": "/tmp/ipc_shm.json",
+      "library": "disruptor-rs-broadcast",
+      "producer_throughput_ops_per_sec": 28837400,
+      "consumer_throughput_ops_per_sec": 11935607,
+      "latency_p99_ns": 40
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+{
+  "checks": [
+    {
+      "name": "ipc_shm disruptor-rs spsc",
+      "baseline_benchmark_id": "ipc_shm_help",
+      "current_benchmark_id": "ipc_shm",
+      "selector": {
+        "library": "disruptor-rs"
+      },
+      "metrics": {
+        "producer_throughput_ops_per_sec": {
+          "min_ratio": 0.85
+        },
+        "consumer_throughput_ops_per_sec": {
+          "min_ratio": 0.85
+        },
+        "latency_p99_ns": {
+          "max_ratio": 1.50
+        }
+      }
+    },
+    {
+      "name": "ipc_shm disruptor-rs broadcast",
+      "baseline_benchmark_id": "ipc_shm_help",
+      "current_benchmark_id": "ipc_shm",
+      "selector": {
+        "library": "disruptor-rs-broadcast"
+      },
+      "metrics": {
+        "producer_throughput_ops_per_sec": {
+          "min_ratio": 0.80
+        },
+        "consumer_throughput_ops_per_sec": {
+          "min_ratio": 0.80
+        },
+        "latency_p99_ns": {
+          "max_ratio": 1.50
+        }
+      }
+    }
+  ]
+}

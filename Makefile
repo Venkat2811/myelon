@@ -2,7 +2,7 @@ CARGO ?= cargo
 
 .PHONY: \
 	help fmt check build test bench bench-mp \
-	test-rust-fast test-rust-extended test-rust-manifest \
+	test-rust-fast test-rust-extended test-rust-perf-gate test-rust-manifest \
 	test-py-fast test-py-extended test-py-manifest py-check py-test \
 	check-layer-boundaries check-layout-refs check-hot-path-ffi \
 	smoke orchestrate-rust orchestrate-python orchestrate-all \
@@ -22,6 +22,7 @@ help:
 	@echo "  make bench-mp            - run multiprocess benchmark set"
 	@echo "  make test-rust-fast      - canonical disruptor-mp Linux Rust lane"
 	@echo "  make test-rust-extended  - disruptor-mp Linux lane + stress/perf smoke"
+	@echo "  make test-rust-perf-gate - live disruptor-mp Linux perf regression gate"
 	@echo "  make test-rust-manifest  - emit disruptor-mp machine-readable test manifest"
 	@echo "  make test-py-fast        - canonical myelon-py Linux Python lane"
 	@echo "  make test-py-extended    - myelon-py Linux lane + stress/perf/large-element lanes"
@@ -58,6 +59,9 @@ test-rust-fast:
 
 test-rust-extended:
 	@$(MAKE) test-linux-extended
+
+test-rust-perf-gate:
+	@$(MAKE) test-perf-gate
 
 test-rust-manifest:
 	@$(MAKE) test-manifest-json
@@ -109,6 +113,7 @@ orchestrate-rust:
 	@$(CARGO) clippy -p disruptor-mp -- -D warnings
 	@$(CARGO) clippy -p myelon -- -D warnings
 	@$(MAKE) test-rust-fast
+	@$(MAKE) test-rust-perf-gate
 	@$(MAKE) test-rust-manifest
 	@$(CARGO) test -p myelon --tests
 	@$(CARGO) test -p myelon --test compile_api

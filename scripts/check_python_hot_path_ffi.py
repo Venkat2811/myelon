@@ -14,7 +14,6 @@ ROOT = Path(__file__).resolve().parents[1]
 PYTHON_ROOT = ROOT / "python-surface-archive/python/disruptor_rs"
 
 ALLOWED_FILES = {
-    Path("python-surface-archive/python/disruptor_rs/batching_producer.py"),
     Path("python-surface-archive/python/disruptor_rs/_dataplane_runtime.py"),
     Path("python-surface-archive/python/disruptor_rs/external_integrations/_hot_path_runtime.py"),
 }

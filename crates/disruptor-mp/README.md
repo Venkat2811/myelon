@@ -121,8 +121,9 @@ make bench-r10-ab
 - `test-stress-report-json`: same lane, with explicit JSON artifact path via `STRESS_REPORT_OUT`
 - `test-mmap-stress-report-json`: repeated true-multiprocess mmap stress matrix with archived flake logs
 - `test-perf-smoke`: compile benchmark/example surfaces and run alignment validation helper
+- `test-perf-gate`: run the live Linux `ipc_shm` perf regression gate
 - `test-linux`: default Linux Rust validation gate
-- `test-linux-extended`: Linux gate plus `test-stress` and `test-perf-smoke`
+- `test-linux-extended`: Linux gate plus `test-stress`, `test-perf-smoke`, and `test-perf-gate`
 - `test-macos-smoke`: cross-platform-safe subset while macOS remains unsupported for guarantees
 - `test-manifest-json`: emit the machine-readable lane manifest used by workspace orchestration/CI tooling
 
@@ -170,6 +171,13 @@ make bench-competitor-json-validate \
 make benchmark-summary-json \
   BENCHMARK_SUMMARY_OUT=/tmp/disruptor_mp_summary.json \
   BENCHMARK_SUMMARY_INPUTS="/tmp/disruptor_mp_ipc_shm.json /tmp/disruptor_mp_competitor_compare.json"
+
+make check-linux-perf-regressions \
+  BENCHMARK_SUMMARY_IN=/tmp/disruptor_mp_summary.json
+
+make bench-ipc-linux-gate \
+  BENCHMARK_JSON_OUT=/tmp/disruptor_mp_ipc_gate.json \
+  BENCHMARK_SUMMARY_OUT=/tmp/disruptor_mp_ipc_gate_summary.json
 ```
 
 The JSON report includes:
@@ -196,3 +204,10 @@ Mixed Rust/Python Competitor comparison lanes require `numpy` in the system inte
 `benchmark-summary-json` merges one or more canonical benchmark artifacts into a single
 summary report so a benchmark run can be archived as one machine-readable bundle instead of
 loosely related per-benchmark files.
+`check-linux-perf-regressions` compares `BENCHMARK_SUMMARY_IN` against the committed C10
+Linux baseline snapshot plus an explicit threshold policy. The first gate is intentionally
+narrow and currently covers the `ipc_shm` `disruptor-rs` and `disruptor-rs-broadcast`
+rows only; noisier lanes stay outside the hard gate until their methodology is standardized.
+`bench-ipc-linux-gate` is the one-command Linux lane for that policy: it runs the real
+`ipc_shm` benchmark, validates the emitted JSON, merges a summary artifact, and enforces
+the current threshold gate immediately.
