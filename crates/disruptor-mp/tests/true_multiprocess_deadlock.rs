@@ -6,6 +6,8 @@ use std::str::FromStr;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+const DEADLOCK_PREFIX: &str = "TDL";
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct TestEvent {
@@ -43,9 +45,10 @@ fn unique_segment(prefix: &str) -> String {
     format!("{prefix}_{}_{}", std::process::id(), timestamp_ns)
 }
 
-fn spawn_child(mode: &str, segment: &str, case: CaseSpec) -> Child {
+fn spawn_child(mode: &str, segment: &str, case: CaseSpec, consumer_id: Option<&str>) -> Child {
     let current_exe = env::current_exe().expect("failed to resolve test binary");
-    Command::new(current_exe)
+    let mut command = Command::new(current_exe);
+    command
         .arg("--exact")
         .arg("mp_deadlock_child_entry")
         .arg("--ignored")
@@ -54,13 +57,23 @@ fn spawn_child(mode: &str, segment: &str, case: CaseSpec) -> Child {
         .env("MP_DEADLOCK_SEGMENT", segment)
         .env("MP_DEADLOCK_BUFFER_SIZE", case.buffer_size.to_string())
         .env("MP_DEADLOCK_EVENTS", case.events.to_string())
+        .env("MP_DEADLOCK_PREFIX", DEADLOCK_PREFIX)
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("failed to spawn child process")
+        .stderr(Stdio::piped());
+
+    if let Some(id) = consumer_id {
+        command.env("MP_DEADLOCK_CONSUMER_ID", id);
+    }
+
+    command.spawn().expect("failed to spawn child process")
 }
 
-fn wait_with_timeout(mut child: Child, timeout: Duration, role: &str) -> Output {
+enum ChildOutcome {
+    Completed(Output),
+    TimedOut(Output),
+}
+
+fn wait_with_timeout(mut child: Child, timeout: Duration) -> ChildOutcome {
     let start = Instant::now();
     loop {
         if child
@@ -68,9 +81,11 @@ fn wait_with_timeout(mut child: Child, timeout: Duration, role: &str) -> Output 
             .expect("failed to poll child process")
             .is_some()
         {
-            return child
-                .wait_with_output()
-                .expect("failed to read child output");
+            return ChildOutcome::Completed(
+                child
+                    .wait_with_output()
+                    .expect("failed to read child output"),
+            );
         }
 
         if start.elapsed() > timeout {
@@ -78,15 +93,27 @@ fn wait_with_timeout(mut child: Child, timeout: Duration, role: &str) -> Output 
             let output = child
                 .wait_with_output()
                 .expect("failed to read timed-out child output");
-            panic!(
-                "{role} child timed out after {:?}\nstdout:\n{}\nstderr:\n{}",
-                timeout,
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr),
-            );
+            return ChildOutcome::TimedOut(output);
         }
 
         thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn describe_outcome(role: &str, timeout: Duration, outcome: &ChildOutcome) -> String {
+    match outcome {
+        ChildOutcome::Completed(output) => format!(
+            "{role} completed with status {:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        ),
+        ChildOutcome::TimedOut(output) => format!(
+            "{role} timed out after {:?}\nstdout:\n{}\nstderr:\n{}",
+            timeout,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        ),
     }
 }
 
@@ -115,15 +142,50 @@ fn assert_child_success(output: Output, role: &str, case: CaseSpec) {
 
 fn run_case(case: CaseSpec) {
     let segment = unique_segment("mp_deadlock");
-    let consumer = spawn_child("consumer", &segment, case);
+    let consumer_id = format!("{DEADLOCK_PREFIX}_0");
+    let consumer = spawn_child("consumer", &segment, case, Some(&consumer_id));
     thread::sleep(Duration::from_millis(100));
-    let producer = spawn_child("producer", &segment, case);
+    let producer = spawn_child("producer", &segment, case, None);
 
-    let producer_output = wait_with_timeout(producer, Duration::from_secs(45), "producer");
-    assert_child_success(producer_output, "producer", case);
+    let producer_timeout = Duration::from_secs(45);
+    let consumer_timeout = Duration::from_secs(45);
+    let producer_outcome = wait_with_timeout(producer, producer_timeout);
+    match producer_outcome {
+        ChildOutcome::Completed(output) => {
+            assert_child_success(output, "producer", case);
+        }
+        ChildOutcome::TimedOut(output) => {
+            let producer_outcome = ChildOutcome::TimedOut(output);
+            let consumer_outcome = wait_with_timeout(consumer, Duration::from_secs(5));
+            panic!(
+                "producer child timed out for case '{}' (buffer_size={}, events={})\n{}\n{}\nsegment={}",
+                case.label,
+                case.buffer_size,
+                case.events,
+                describe_outcome("producer", producer_timeout, &producer_outcome),
+                describe_outcome("consumer", Duration::from_secs(5), &consumer_outcome),
+                segment,
+            );
+        }
+    }
 
-    let consumer_output = wait_with_timeout(consumer, Duration::from_secs(45), "consumer");
-    assert_child_success(consumer_output, "consumer", case);
+    let consumer_outcome = wait_with_timeout(consumer, consumer_timeout);
+    match consumer_outcome {
+        ChildOutcome::Completed(output) => {
+            assert_child_success(output, "consumer", case);
+        }
+        ChildOutcome::TimedOut(output) => {
+            let consumer_outcome = ChildOutcome::TimedOut(output);
+            panic!(
+                "consumer child timed out for case '{}' (buffer_size={}, events={})\n{}\nsegment={}",
+                case.label,
+                case.buffer_size,
+                case.events,
+                describe_outcome("consumer", consumer_timeout, &consumer_outcome),
+                segment,
+            );
+        }
+    }
 }
 
 fn parse_env<T>(name: &str) -> T
@@ -148,10 +210,17 @@ fn child_case() -> (String, CaseSpec) {
 
 fn run_child_producer() {
     let (segment, case) = child_case();
+    let prefix = env::var("MP_DEADLOCK_PREFIX").expect("MP_DEADLOCK_PREFIX should be set");
     let mut producer = build_shared_single_producer::<TestEvent>(&segment, case.buffer_size)
-        .enable_discovery(1)
+        .discover_consumer_with_prefix_and_interval(1, &prefix, Duration::from_millis(1))
+        .wait_for_consumers(1, Duration::from_secs(20))
         .build_producer(TestEvent::default)
         .expect("producer build failed");
+
+    for _ in 0..20 {
+        let _ = producer.min_gating_sequence();
+        thread::sleep(Duration::from_millis(2));
+    }
 
     let deadline = Instant::now() + Duration::from_secs(35);
     for sequence in 0..case.events {
@@ -179,9 +248,14 @@ fn run_child_producer() {
 
 fn run_child_consumer() {
     let (segment, case) = child_case();
+    let consumer_id =
+        env::var("MP_DEADLOCK_CONSUMER_ID").expect("MP_DEADLOCK_CONSUMER_ID should be set");
     let attach_deadline = Instant::now() + Duration::from_secs(20);
     let mut consumer = loop {
-        match attach_shared_consumer::<TestEvent>(&segment, case.buffer_size).build_consumer() {
+        match attach_shared_consumer::<TestEvent>(&segment, case.buffer_size)
+            .with_consumer_id(&consumer_id)
+            .build_consumer()
+        {
             Ok(consumer) => break consumer,
             Err(_) if Instant::now() < attach_deadline => thread::sleep(Duration::from_millis(25)),
             Err(err) => panic!("consumer attach failed: {err}"),

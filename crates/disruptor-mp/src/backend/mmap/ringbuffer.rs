@@ -229,7 +229,21 @@ fn ensure_parent_dir(path: &Path) -> MultiProcessResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::mem::align_of;
+    use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[repr(C, align(128))]
+    #[derive(Copy, Clone)]
+    struct Align128 {
+        bytes: [u8; 64],
+    }
+
+    impl Default for Align128 {
+        fn default() -> Self {
+            Self { bytes: [0; 64] }
+        }
+    }
 
     fn unique_test_path(prefix: &str) -> std::path::PathBuf {
         let pid = std::process::id();
@@ -238,6 +252,15 @@ mod tests {
             .expect("system time should be valid")
             .as_nanos();
         std::env::temp_dir().join(format!("{prefix}_{pid}_{nanos}.mmap"))
+    }
+
+    fn truncate_file(path: &Path, len: u64) {
+        let file = OpenOptions::new()
+            .write(true)
+            .open(path)
+            .expect("test file should be reopenable for truncation");
+        file.set_len(len)
+            .expect("test file truncation should succeed");
     }
 
     #[test]
@@ -336,5 +359,96 @@ mod tests {
 
         let ring_buffer = MmapRingBuffer::<u64>::new(config, || 0u64).unwrap();
         let _ = ring_buffer.get(-1);
+    }
+
+    #[test]
+    fn slots_respect_event_alignment() {
+        let path = unique_test_path("mmap_ring_align128");
+        let config = MmapFileConfig {
+            path: path.clone(),
+            buffer_size: 8,
+            element_size: size_of::<Align128>(),
+            create: true,
+        };
+
+        let ring_buffer = MmapRingBuffer::<Align128>::new(config, Align128::default).unwrap();
+        let slot_ptr = ring_buffer.get(0) as usize;
+        assert_eq!(slot_ptr % align_of::<Align128>(), 0);
+
+        drop(ring_buffer);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn attach_rejects_truncated_layout_header() {
+        let path = unique_test_path("mmap_ring_truncated_header");
+        let config_create = MmapFileConfig {
+            path: path.clone(),
+            buffer_size: 8,
+            element_size: size_of::<u64>(),
+            create: true,
+        };
+        let config_attach = MmapFileConfig {
+            path: path.clone(),
+            buffer_size: 8,
+            element_size: size_of::<u64>(),
+            create: false,
+        };
+
+        {
+            let owner = MmapRingBuffer::<u64>::new(config_create, || 0u64).unwrap();
+            drop(owner);
+        }
+
+        truncate_file(&path, 8);
+        let error = match MmapRingBuffer::<u64>::attach(config_attach) {
+            Ok(_) => panic!("expected truncated header attach to fail"),
+            Err(error) => error,
+        };
+        assert!(matches!(
+            error,
+            MultiProcessError::IncompatibleLayout(message)
+                if message.contains("layout header")
+        ));
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn attach_rejects_truncated_payload_region() {
+        let path = unique_test_path("mmap_ring_truncated_payload");
+        let config_create = MmapFileConfig {
+            path: path.clone(),
+            buffer_size: 8,
+            element_size: size_of::<u64>(),
+            create: true,
+        };
+        let config_attach = MmapFileConfig {
+            path: path.clone(),
+            buffer_size: 8,
+            element_size: size_of::<u64>(),
+            create: false,
+        };
+
+        {
+            let owner = MmapRingBuffer::<u64>::new(config_create, || 0u64).unwrap();
+            drop(owner);
+        }
+
+        let file_len = std::fs::metadata(&path)
+            .expect("ring file metadata should exist")
+            .len();
+        truncate_file(&path, file_len - 1);
+        let error = match MmapRingBuffer::<u64>::attach(config_attach) {
+            Ok(_) => panic!("expected truncated payload attach to fail"),
+            Err(error) => error,
+        };
+        assert!(matches!(
+            error,
+            MultiProcessError::IncompatibleLayout(message)
+                if message.contains("shared segment too small for layout")
+        ));
+
+        let _ = std::fs::remove_file(path);
     }
 }

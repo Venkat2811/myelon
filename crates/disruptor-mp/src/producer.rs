@@ -79,6 +79,7 @@ where
         base_name: String,
         coordination_mode: CoordinationMode,
         discovery_mode: DiscoveryMode,
+        consumer_registration: Option<SharedCursor>,
     ) -> Self {
         // Initialize producer sequence to -1 (no events published yet).
         // Release publishing makes the initial state visible before consumers start publishing.
@@ -103,6 +104,9 @@ where
         };
 
         // Set the producer sequence reference so the barrier can handle no-consumer case
+        if let Some(consumer_registration) = consumer_registration {
+            consumer_barrier.set_consumer_registration(consumer_registration);
+        }
         consumer_barrier.set_producer_sequence(producer_sequence.clone());
 
         // Start with all slots available since no consumer has consumed anything

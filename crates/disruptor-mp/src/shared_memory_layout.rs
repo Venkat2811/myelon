@@ -99,11 +99,18 @@ fn is_valid_checksum(header: &LayoutHeader) -> bool {
     checksum32(bytes_of_header(&copy)) == header.checksum
 }
 
-fn read_header(base: *const u8) -> MultiProcessResult<LayoutHeader> {
+fn read_header(base: *const u8, region_len: usize) -> MultiProcessResult<LayoutHeader> {
     if base.is_null() {
         return Err(MultiProcessError::IncompatibleLayout(
             "shared layout pointer is null".to_string(),
         ));
+    }
+    if region_len < header_size() {
+        return Err(MultiProcessError::IncompatibleLayout(format!(
+            "shared segment too small for layout header: got {} bytes, expected at least {}",
+            region_len,
+            header_size()
+        )));
     }
 
     let header = unsafe { ptr::read_unaligned(base.cast::<LayoutHeader>()) };
@@ -297,7 +304,7 @@ pub(crate) fn validate_layout_bytes(
     payload_alignment: usize,
     kind: SegmentKind,
 ) -> MultiProcessResult<LayoutContract> {
-    let header = read_header(base)?;
+    let header = read_header(base, region_len)?;
     validate_kind(header.kind, kind)?;
 
     let expected_payload_size = u64::try_from(payload_size).map_err(|_| {

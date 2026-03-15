@@ -67,7 +67,7 @@
 //! ```
 
 use super::consumer::SharedConsumer;
-use super::consumer_barrier::DiscoveryMode;
+use super::consumer_barrier::{auto_consumer_id, consumer_registration_cursor_name, DiscoveryMode};
 use super::producer::{CoordinationMode, SharedProducer};
 use crate::{MultiProcessResult, SharedCursor, SharedMemoryConfig, SharedRingBuffer};
 use disruptor_core::Sequence;
@@ -78,6 +78,50 @@ use std::time::Duration;
 
 /// Global counter for generating unique consumer IDs within a process
 static CONSUMER_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+fn uses_registered_auto_ids(discovery_mode: &DiscoveryMode) -> bool {
+    matches!(
+        discovery_mode,
+        DiscoveryMode::Enabled {
+            consumer_prefix: None,
+            ..
+        }
+    )
+}
+
+fn create_consumer_registration_cursor(
+    base_name: &str,
+    discovery_mode: &DiscoveryMode,
+) -> MultiProcessResult<Option<SharedCursor>> {
+    if !uses_registered_auto_ids(discovery_mode) {
+        return Ok(None);
+    }
+
+    let registration_name = consumer_registration_cursor_name(base_name);
+    let cursor = SharedCursor::new_or_attach(&registration_name, 0)?;
+    Ok(Some(cursor))
+}
+
+fn allocate_registered_consumer_id(base_name: &str) -> Option<String> {
+    let registration_name = consumer_registration_cursor_name(base_name);
+    let registration = SharedCursor::attach(&registration_name).ok()?;
+    let slot = registration.fetch_add(1, Ordering::AcqRel);
+    if slot < 0 {
+        return None;
+    }
+
+    Some(auto_consumer_id(slot as usize))
+}
+
+fn default_consumer_id(base_name: &str) -> String {
+    if let Some(consumer_id) = allocate_registered_consumer_id(base_name) {
+        return consumer_id;
+    }
+
+    let process_id = std::process::id();
+    let consumer_counter = CONSUMER_COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("c{}_{}", process_id % 10000, consumer_counter)
+}
 
 /// Wait strategy for automatic event handlers
 #[derive(Debug, Clone, Default)]
@@ -402,7 +446,8 @@ where
     ///
     /// # Discovery Modes (Default: Disabled)
     /// - `DiscoveryMode::Disabled` - No discovery (default), maximum performance for externally coordinated scenarios
-    /// - `DiscoveryMode::Enabled { consumer_prefix: None }` - Standard PID-based discovery
+    /// - `DiscoveryMode::Enabled { consumer_prefix: None }` - Deterministic slot-based discovery
+    ///   when coordination is present, with PID scanning as legacy fallback
     /// - `DiscoveryMode::Enabled { consumer_prefix: Some("DIS_SM") }` - Optimized prefix-based discovery
     ///
     /// # Examples
@@ -429,10 +474,13 @@ where
         self.with_discovery(DiscoveryMode::Disabled)
     }
 
-    /// Enable basic consumer discovery with PID scanning for fixed topology (convenience method)
+    /// Enable basic consumer discovery for fixed topology (convenience method)
     ///
-    /// Uses PID-based discovery to find consumers with default naming: "c{pid}_{counter}".
-    /// Stops scanning once the expected number of consumers are discovered, saving CPU cycles.
+    /// When startup coordination is present, consumers are assigned deterministic
+    /// slot-based IDs (`ad_0`, `ad_1`, ...) so discovery does not rely on PID
+    /// proximity. Without coordination, discovery falls back to PID scanning with
+    /// the legacy naming pattern `c{pid}_{counter}`.
+    /// Stops scanning once the expected number of consumers are discovered.
     /// Default scan interval: 100ms.
     pub fn enable_discovery(self, max_consumers: usize) -> Self {
         self.with_discovery(DiscoveryMode::enabled(max_consumers))
@@ -599,14 +647,12 @@ where
         let producer_sequence_name = format!("{}_producer_seq", self.config.name);
         let producer_sequence = SharedCursor::attach(&producer_sequence_name)?;
 
-        // Use custom consumer ID if provided, otherwise generate unique ID
+        // Use custom consumer ID if provided, otherwise generate a deterministic
+        // slot-based ID when coordinated discovery is available.
         let consumer_id = if let Some(custom_id) = self.consumer_id {
             custom_id
         } else {
-            // Generate unique consumer ID (short names for macOS compatibility)
-            let process_id = std::process::id();
-            let consumer_counter = CONSUMER_COUNTER.fetch_add(1, Ordering::Relaxed);
-            format!("c{}_{}", process_id % 10000, consumer_counter)
+            default_consumer_id(&self.config.name)
         };
 
         // Create this consumer's own sequence tracker
@@ -744,6 +790,10 @@ where
     {
         self.maybe_pin_process_to_core(ProcessRole::Producer);
 
+        let discovery_mode = self.discovery_mode.unwrap_or_default();
+        let consumer_registration =
+            create_consumer_registration_cursor(&self.config.name, &discovery_mode)?;
+
         let ring_buffer: SharedRingBuffer<E> =
             SharedRingBuffer::new(self.config.clone(), event_factory)?;
 
@@ -755,8 +805,8 @@ where
         // This eliminates the need for users to manually configure coordination
         let coordination_mode = self.coordination_mode.unwrap_or_else(|| {
             // Auto-enable coordination when discovery is enabled
-            match &self.discovery_mode {
-                Some(DiscoveryMode::Enabled { max_consumers, .. }) => {
+            match &discovery_mode {
+                DiscoveryMode::Enabled { max_consumers, .. } => {
                     // Use custom timeout if provided, otherwise use adaptive timeout
                     let timeout = self.coordination_timeout.unwrap_or_else(|| {
                         // FRAMEWORK INTELLIGENCE: Adaptive timeout based on consumer count
@@ -775,14 +825,13 @@ where
             }
         });
 
-        let discovery_mode = self.discovery_mode.unwrap_or_default();
-
         let mut producer = SharedProducer::new_with_coordination_and_discovery(
             ring_buffer,
             producer_sequence,
             self.config.name.clone(), // Pass base name for consumer discovery
             coordination_mode.clone(),
             discovery_mode,
+            consumer_registration,
         );
 
         // Handle coordination during producer creation, not first publish
@@ -837,14 +886,12 @@ where
         let producer_sequence_name = format!("{}_producer_seq", self.config.name);
         let producer_sequence = SharedCursor::attach(&producer_sequence_name)?;
 
-        // Use custom consumer ID if provided, otherwise generate unique ID
+        // Use custom consumer ID if provided, otherwise generate a deterministic
+        // slot-based ID when coordinated discovery is available.
         let consumer_id = if let Some(custom_id) = self.consumer_id {
             custom_id
         } else {
-            // Generate unique consumer ID using process ID and counter (short names for macOS compatibility)
-            let process_id = std::process::id();
-            let consumer_counter = CONSUMER_COUNTER.fetch_add(1, Ordering::Relaxed);
-            format!("c{}_{}", process_id % 10000, consumer_counter)
+            default_consumer_id(&self.config.name)
         };
 
         // Create this consumer's own sequence tracker

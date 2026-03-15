@@ -1,7 +1,8 @@
 //! Mmap-backed producer implementation.
 
 use crate::{
-    MmapConsumerBarrier, MmapCursor, MmapRingBuffer, MmapTransportLayout, MultiProcessResult,
+    AutoWaitStrategy, MmapConsumerBarrier, MmapCursor, MmapRingBuffer, MmapTransportLayout,
+    MultiProcessResult,
 };
 use disruptor_core::{MissingFreeSlots, RingBufferFull, Sequence};
 use std::sync::atomic::Ordering;
@@ -161,6 +162,27 @@ where
         self.min_gating_sequence() >= sequence
     }
 
+    /// Wait until the provided sequence is consumed by all known consumers or timeout.
+    pub fn wait_until_consumed_with_strategy(
+        &mut self,
+        sequence: Sequence,
+        timeout: Duration,
+        strategy: AutoWaitStrategy,
+    ) -> bool {
+        let deadline = std::time::Instant::now()
+            .checked_add(timeout)
+            .expect("timeout duration does not fit in Instant");
+
+        while std::time::Instant::now() < deadline {
+            if self.is_consumed(sequence) {
+                return true;
+            }
+            Self::apply_wait_strategy(&strategy);
+        }
+
+        false
+    }
+
     /// Wait until at least `min_consumers` have signaled readiness.
     pub fn wait_for_consumers_ready(&self, min_consumers: i64, timeout: Duration) -> bool {
         self.consumer_barrier
@@ -170,6 +192,26 @@ where
     /// Return the number of discovered consumers.
     pub fn get_consumer_count(&mut self) -> usize {
         self.consumer_barrier.best_effort_consumer_count()
+    }
+
+    fn apply_wait_strategy(strategy: &AutoWaitStrategy) {
+        match strategy {
+            AutoWaitStrategy::BusySpin | AutoWaitStrategy::BusySpinWithSpinLoopHint => {
+                std::hint::spin_loop();
+            }
+            AutoWaitStrategy::SpinThenYield { spins } => {
+                for _ in 0..*spins {
+                    std::hint::spin_loop();
+                }
+                std::thread::yield_now();
+            }
+            AutoWaitStrategy::Block => {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            AutoWaitStrategy::Sleep(duration) => {
+                std::thread::sleep(*duration);
+            }
+        }
     }
 }
 
@@ -183,6 +225,33 @@ mod tests {
     struct TestEvent {
         sequence: i64,
         data: i64,
+    }
+
+    #[derive(Debug, Copy, Clone, PartialEq)]
+    struct PayloadEvent {
+        len: u32,
+        bytes: [u8; 64],
+    }
+
+    impl Default for PayloadEvent {
+        fn default() -> Self {
+            Self {
+                len: 0,
+                bytes: [0; 64],
+            }
+        }
+    }
+
+    impl PayloadEvent {
+        fn write_from(&mut self, data: &[u8]) {
+            assert!(data.len() <= self.bytes.len(), "payload exceeds slot size");
+            self.len = data.len() as u32;
+            self.bytes[..data.len()].copy_from_slice(data);
+        }
+
+        fn as_slice(&self) -> &[u8] {
+            &self.bytes[..self.len as usize]
+        }
     }
 
     fn unique_layout(prefix: &str) -> MmapTransportLayout {
@@ -230,6 +299,80 @@ mod tests {
         let _consumer_b = MmapConsumer::<TestEvent>::attach(layout.clone(), 8, "c0002").unwrap();
 
         assert_eq!(producer.get_consumer_count(), 2);
+
+        let _ = std::fs::remove_dir_all(layout.root_dir());
+    }
+
+    #[test]
+    fn consumer_attach_fails_cleanly_after_transport_directory_removal() {
+        let layout = unique_layout("mmap_stale");
+        let _producer =
+            MmapProducer::<TestEvent>::create(layout.clone(), 8, TestEvent::default).unwrap();
+
+        std::fs::remove_dir_all(layout.root_dir()).unwrap();
+
+        let error = match MmapConsumer::<TestEvent>::attach(layout.clone(), 8, "c0001") {
+            Ok(_) => panic!("expected stale transport attach to fail"),
+            Err(error) => error,
+        };
+        let message = error.to_string().to_lowercase();
+        assert!(message.contains("not found") || message.contains("no such file"));
+    }
+
+    #[test]
+    fn transport_can_be_recreated_after_directory_removal() {
+        let layout = unique_layout("mmap_recreate");
+
+        let first_producer =
+            MmapProducer::<TestEvent>::create(layout.clone(), 8, TestEvent::default).unwrap();
+        drop(first_producer);
+
+        std::fs::remove_dir_all(layout.root_dir()).unwrap();
+
+        let mut producer =
+            MmapProducer::<TestEvent>::create(layout.clone(), 8, TestEvent::default).unwrap();
+        let mut consumer = MmapConsumer::<TestEvent>::attach(layout.clone(), 8, "c0001").unwrap();
+
+        producer.publish(|event| {
+            event.sequence = 0;
+            event.data = 77;
+        });
+
+        let (sequence, event) = consumer.consume_next();
+        assert_eq!(sequence, 0);
+        assert_eq!(
+            event,
+            TestEvent {
+                sequence: 0,
+                data: 77,
+            }
+        );
+
+        let _ = std::fs::remove_dir_all(layout.root_dir());
+    }
+
+    #[test]
+    fn slot_reuse_preserves_short_payload_length_after_exact_fit_publish() {
+        let layout = unique_layout("mmap_payload_reuse");
+        let mut producer =
+            MmapProducer::<PayloadEvent>::create(layout.clone(), 1, PayloadEvent::default).unwrap();
+        let mut consumer =
+            MmapConsumer::<PayloadEvent>::attach(layout.clone(), 1, "c0001").unwrap();
+
+        assert!(producer.wait_for_consumers_ready(1, Duration::from_millis(20)));
+
+        let exact_payload = [b'A'; 64];
+        let short_payload = b"short";
+
+        producer.publish(|event| event.write_from(&exact_payload));
+        let (first_sequence, first_event) = consumer.consume_next();
+        assert_eq!(first_sequence, 0);
+        assert_eq!(first_event.as_slice(), exact_payload.as_slice());
+
+        producer.publish(|event| event.write_from(short_payload));
+        let (second_sequence, second_event) = consumer.consume_next();
+        assert_eq!(second_sequence, 1);
+        assert_eq!(second_event.as_slice(), short_payload);
 
         let _ = std::fs::remove_dir_all(layout.root_dir());
     }

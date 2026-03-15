@@ -211,6 +211,7 @@ fn ensure_parent_dir(path: &Path) -> MultiProcessResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn unique_test_path(prefix: &str) -> std::path::PathBuf {
@@ -220,6 +221,15 @@ mod tests {
             .expect("system time should be valid")
             .as_nanos();
         std::env::temp_dir().join(format!("{prefix}_{pid}_{nanos}.cursor"))
+    }
+
+    fn truncate_file(path: &Path, len: u64) {
+        let file = OpenOptions::new()
+            .write(true)
+            .open(path)
+            .expect("test file should be reopenable for truncation");
+        file.set_len(len)
+            .expect("test file truncation should succeed");
     }
 
     #[test]
@@ -268,6 +278,71 @@ mod tests {
         );
 
         drop(cursor);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn attach_rejects_truncated_layout_header() {
+        let path = unique_test_path("mmap_cursor_truncated_header");
+        let config_create = MmapCursorConfig {
+            path: path.clone(),
+            create: true,
+        };
+        let config_attach = MmapCursorConfig {
+            path: path.clone(),
+            create: false,
+        };
+
+        {
+            let owner = MmapCursor::new(config_create, 11).unwrap();
+            drop(owner);
+        }
+
+        truncate_file(&path, 8);
+        let error = match MmapCursor::attach(config_attach) {
+            Ok(_) => panic!("expected truncated header attach to fail"),
+            Err(error) => error,
+        };
+        assert!(matches!(
+            error,
+            MultiProcessError::IncompatibleLayout(message)
+                if message.contains("layout header")
+        ));
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn attach_rejects_truncated_payload_region() {
+        let path = unique_test_path("mmap_cursor_truncated_payload");
+        let config_create = MmapCursorConfig {
+            path: path.clone(),
+            create: true,
+        };
+        let config_attach = MmapCursorConfig {
+            path: path.clone(),
+            create: false,
+        };
+
+        {
+            let owner = MmapCursor::new(config_create, 17).unwrap();
+            drop(owner);
+        }
+
+        let file_len = std::fs::metadata(&path)
+            .expect("cursor file metadata should exist")
+            .len();
+        truncate_file(&path, file_len - 1);
+        let error = match MmapCursor::attach(config_attach) {
+            Ok(_) => panic!("expected truncated payload attach to fail"),
+            Err(error) => error,
+        };
+        assert!(matches!(
+            error,
+            MultiProcessError::IncompatibleLayout(message)
+                if message.contains("shared segment too small for layout")
+        ));
+
         let _ = std::fs::remove_file(path);
     }
 }

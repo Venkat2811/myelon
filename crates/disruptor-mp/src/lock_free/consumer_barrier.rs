@@ -80,6 +80,32 @@ impl DiscoveryMode {
     }
 }
 
+const CONSUMER_READINESS_SUFFIX: &str = "_cr";
+const CONSUMER_REGISTRATION_SUFFIX: &str = "_ci";
+const AUTO_CONSUMER_PREFIX: &str = "ad";
+
+pub(crate) fn consumer_readiness_cursor_name(base_name: &str) -> String {
+    format!("{base_name}{CONSUMER_READINESS_SUFFIX}")
+}
+
+pub(crate) fn consumer_registration_cursor_name(base_name: &str) -> String {
+    format!("{base_name}{CONSUMER_REGISTRATION_SUFFIX}")
+}
+
+pub(crate) fn auto_consumer_id(slot: usize) -> String {
+    format!("{AUTO_CONSUMER_PREFIX}_{slot}")
+}
+
+fn uses_registered_auto_ids(discovery_mode: &DiscoveryMode) -> bool {
+    matches!(
+        discovery_mode,
+        DiscoveryMode::Enabled {
+            consumer_prefix: None,
+            ..
+        }
+    )
+}
+
 /// Barrier for tracking consumers in multiprocess shared-memory topologies.
 pub struct SharedConsumerBarrier {
     /// Map of consumer ID to sequence cursor.
@@ -90,6 +116,8 @@ pub struct SharedConsumerBarrier {
     last_scan: Instant,
     /// Consumer readiness counter for startup coordination.
     consumers_ready: Option<SharedCursor>,
+    /// Consumer registration counter for deterministic auto IDs.
+    consumer_registration: Option<SharedCursor>,
     /// Discovery configuration.
     discovery_mode: DiscoveryMode,
     /// True when all expected consumers have been discovered.
@@ -113,6 +141,7 @@ impl SharedConsumerBarrier {
 
         let mut barrier = Self {
             consumer_cursors: HashMap::new(),
+            consumer_registration: None,
             base_name,
             last_scan: Instant::now(),
             consumers_ready: None,
@@ -138,11 +167,12 @@ impl SharedConsumerBarrier {
     ) -> Result<Self, Box<dyn std::error::Error>> {
         assert!(!base_name.is_empty(), "base_name must not be empty");
 
-        let consumers_ready_name = format!("{}_cr", base_name);
+        let consumers_ready_name = consumer_readiness_cursor_name(&base_name);
         let consumers_ready = Some(SharedCursor::new(&consumers_ready_name, 0)?);
 
         let mut barrier = Self {
             consumer_cursors: HashMap::new(),
+            consumer_registration: None,
             base_name,
             last_scan: Instant::now(),
             consumers_ready,
@@ -157,6 +187,10 @@ impl SharedConsumerBarrier {
     /// Set producer sequence reference for no-consumer fallback.
     pub fn set_producer_sequence(&mut self, producer_sequence: SharedCursor) {
         self.producer_sequence = Some(producer_sequence);
+    }
+
+    pub(crate) fn set_consumer_registration(&mut self, consumer_registration: SharedCursor) {
+        self.consumer_registration = Some(consumer_registration);
     }
 
     /// Access readiness counter used during startup coordination.
@@ -275,7 +309,10 @@ impl SharedConsumerBarrier {
         if let Some(prefix) = consumer_prefix {
             self.discover_with_consumer_prefix(&prefix);
         } else {
-            self.discover_with_pid_based_scanning();
+            let registered_slots = self.discover_with_registered_slots(max_consumers);
+            if registered_slots == 0 || self.consumer_cursors.len() < registered_slots {
+                self.discover_with_pid_based_scanning();
+            }
         }
 
         if self.consumer_cursors.len() >= max_consumers {
@@ -332,6 +369,36 @@ impl SharedConsumerBarrier {
                 self.consumer_cursors.insert(consumer_name, cursor);
             }
         }
+    }
+
+    /// Deterministic discovery for coordinated auto-generated consumer IDs.
+    fn discover_with_registered_slots(&mut self, max_consumers: usize) -> usize {
+        if self.consumer_registration.is_none() && uses_registered_auto_ids(&self.discovery_mode) {
+            self.consumer_registration =
+                SharedCursor::attach(&consumer_registration_cursor_name(&self.base_name)).ok();
+        }
+
+        let Some(consumer_registration) = &self.consumer_registration else {
+            return 0;
+        };
+
+        let registered = consumer_registration.load(Ordering::Acquire);
+        let registered = registered.clamp(0, max_consumers as i64) as usize;
+
+        for slot in 0..registered {
+            let consumer_name = auto_consumer_id(slot);
+            let sequence_name = format!("{}_{}_seq", self.base_name, consumer_name);
+
+            if self.consumer_cursors.contains_key(&consumer_name) {
+                continue;
+            }
+
+            if let Ok(cursor) = SharedCursor::attach(&sequence_name) {
+                self.consumer_cursors.insert(consumer_name, cursor);
+            }
+        }
+
+        registered
     }
 
     /// PID-based discovery fallback.
@@ -429,7 +496,11 @@ impl Clone for SharedConsumerBarrier {
             base_name: self.base_name.clone(),
             last_scan: Instant::now(),
             consumers_ready: self.consumers_ready.as_ref().map(|cursor| {
-                SharedCursor::attach(&format!("{}_cr", self.base_name))
+                SharedCursor::attach(&consumer_readiness_cursor_name(&self.base_name))
+                    .unwrap_or_else(|_| cursor.clone())
+            }),
+            consumer_registration: self.consumer_registration.as_ref().map(|cursor| {
+                SharedCursor::attach(&consumer_registration_cursor_name(&self.base_name))
                     .unwrap_or_else(|_| cursor.clone())
             }),
             discovery_mode: self.discovery_mode.clone(),

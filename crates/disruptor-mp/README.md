@@ -85,6 +85,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 - macOS: known to work for core multiprocess flows, but currently unsupported for official guarantees.
 - Windows: explicitly unsupported.
 
+## Discovery Contract
+
+- Prefer `discover_consumer_with_prefix(...)` for fixed topologies that need deterministic naming.
+- `enable_discovery(n)` now uses coordination-backed slot IDs (`ad_0`, `ad_1`, ...) when startup coordination is active.
+- Legacy PID-based scanning remains available only as a best-effort fallback for non-coordinated or older flows and should not be treated as deterministic under child-process churn.
+
 ## Development
 
 ```bash
@@ -97,6 +103,10 @@ make test-stress-report-json \
   ITERATIONS=50 \
   STRESS_REPORT_OUT=/tmp/disruptor_mp_test_stress.json \
   STRESS_LOG_DIR=/tmp/disruptor_mp_test_stress_logs
+make test-mmap-stress-report-json \
+  ITERATIONS=5 \
+  STRESS_REPORT_OUT=/tmp/disruptor_mp_mmap_stress.json \
+  STRESS_LOG_DIR=/tmp/disruptor_mp_mmap_stress_logs
 make bench-multiprocess
 make bench-affinity-matrix
 make bench-r10-ab
@@ -109,6 +119,7 @@ make bench-r10-ab
 - `test-multiprocess`: true child-process producer/consumer and deadlock regression tests
 - `test-stress`: repeated cleanup/lifecycle lane (`ITERATIONS` controls depth)
 - `test-stress-report-json`: same lane, with explicit JSON artifact path via `STRESS_REPORT_OUT`
+- `test-mmap-stress-report-json`: repeated true-multiprocess mmap stress matrix with archived flake logs
 - `test-perf-smoke`: compile benchmark/example surfaces and run alignment validation helper
 - `test-linux`: default Linux Rust validation gate
 - `test-linux-extended`: Linux gate plus `test-stress` and `test-perf-smoke`
