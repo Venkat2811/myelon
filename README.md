@@ -1,19 +1,22 @@
 # myelon
 
-Monorepo playground for Linux-first multiprocess disruptor IPC and inference integrations.
+`myelon` is an extreme low-latency, high-throughput, high-performance inference fabric.
+
+This monorepo is the Linux-first workspace for the `myelon` Rust façade, Python bindings,
+and the lower-level multiprocess transport it builds on.
 
 ## Layout
 
 - `crates/disruptor-mp`: low-level multiprocess shared-memory disruptor core.
-- `crates/legacy-wip`: high-level Rust API layer.
-- `python-surface-archive`: Python bindings and integrations.
+- `crates/legacy-wip`: `myelon` Rust inference-fabric façade.
+- `python-surface-archive`: Python bindings and integrations for `myelon`.
 
 ## Architecture Boundaries
 
 | Layer | Owner | Purpose |
 |:------|:------|:--------|
 | `crates/disruptor-mp` | low-level data plane | shared-memory layout, lock-free coordination, producer/consumer primitives |
-| `crates/legacy-wip` | domain Rust layer | stable Rust-facing monorepo API and future topology/domain policy |
+| `crates/legacy-wip` | `myelon` Rust layer | inference-fabric API, stable Rust-facing surface, and future topology/domain policy |
 | `python-surface-archive/src` + `python/disruptor_rs/multiprocess.py` | Python data plane | PyO3 bridge and raw producer/consumer operations |
 | `python-surface-archive/python/disruptor_rs/__init__.py`, `compat.py`, `legacy.py`, `external_integrations/` | Python control plane | stable imports, compatibility shims, and framework adapters |
 
