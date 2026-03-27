@@ -566,8 +566,9 @@ where
 
     /// Bind automatic consumer thread to a specific CPU core.
     ///
-    /// Uses Linux core affinity on Linux builds. On unsupported platforms this
-    /// configuration is accepted but logged as unsupported at runtime.
+    /// Uses Linux core affinity on Linux builds. On macOS and other non-Linux
+    /// platforms this configuration is accepted, ignored, and logged as a
+    /// best-effort no-op so consumer bring-up still succeeds.
     ///
     /// The builder resolves the effective affinity order:
     /// 1. Explicit builder value.
@@ -582,7 +583,9 @@ where
     /// On Linux this pins the current thread before ring setup. For the normal
     /// single-threaded producer/consumer entrypoints this acts as process-role
     /// affinity, and newly spawned auto-consumer threads inherit the mask unless
-    /// they are pinned separately with `with_consumer_core()`.
+    /// they are pinned separately with `with_consumer_core()`. On macOS and
+    /// other non-Linux platforms this request is accepted, ignored, and logged
+    /// as a best-effort no-op so producer/consumer bring-up still succeeds.
     ///
     /// Resolution order:
     /// 1. Explicit builder value via `with_process_core()`
@@ -974,8 +977,7 @@ fn pin_current_thread_to_core(core_id: usize, thread_name: &str) {
 #[cfg(not(target_os = "linux"))]
 fn pin_current_thread_to_core(core_id: usize, thread_name: &str) {
     eprintln!(
-        "Affinity support for automatic consumer core pinning is not implemented on this platform. \
-         Requested pinning {} -> core {} ignored.",
+        "CPU affinity support is Linux-only in disruptor-mp. Requested pinning {} -> core {} ignored; bring-up continues without pinning on this platform.",
         thread_name, core_id
     );
 }

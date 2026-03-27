@@ -20,7 +20,7 @@
 //! - **Optimized Discovery**: Stops scanning once all 3 consumers are found (CPU efficient)
 //! - **Broadcast Semantics**: Each consumer sees ALL events independently
 //! - **External Coordination**: Uses separate `ProcessCoordination` for startup synchronization
-//! - **Cross-platform Shared Memory**: Works on Linux, macOS, Windows
+//! - **Platform Policy**: Linux supported, macOS best effort, Windows unsupported
 //! - **Performance Metrics**: Detailed throughput and timing measurements
 //!
 //! ## Architecture Pattern

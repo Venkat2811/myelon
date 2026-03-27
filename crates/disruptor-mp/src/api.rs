@@ -6,7 +6,7 @@
 //!
 //! # Key Features
 //!
-//! - **Cross-platform compatibility**: Works on Linux, macOS, and Windows
+//! - **Platform policy**: Linux supported, macOS best effort, Windows unsupported
 //! - **Automatic coordination**: Built-in consumer discovery and startup coordination
 //! - **Automatic event handlers**: Background thread processing with `handle_events_with()`
 //! - **Consumer discovery**: Automatic detection using process IDs or prefix matching
@@ -406,15 +406,22 @@ mod tests {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Arc;
     use std::thread;
-    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+    use std::time::{Duration, Instant};
 
     fn unique_test_segment(prefix: &str) -> String {
-        let pid = std::process::id();
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system time should be valid")
-            .as_nanos();
-        format!("{prefix}_{pid}_{nanos}")
+        let name = crate::portable_shm_segment_name(prefix);
+        assert!(
+            name.len() <= 14,
+            "test segment name '{}' exceeds macOS-safe budget",
+            name
+        );
+        name
+    }
+
+    #[test]
+    fn test_unique_test_segment_stays_within_macos_budget() {
+        assert!(unique_test_segment("process_available_blocking_batch").len() <= 14);
+        assert!(unique_test_segment("race_condition_fix").len() <= 14);
     }
 
     #[derive(Debug, Copy, Clone, Default, PartialEq)]

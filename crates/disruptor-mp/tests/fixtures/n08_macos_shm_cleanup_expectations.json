@@ -1,0 +1,25 @@
+{
+  "metadata": {
+    "label": "multiprocess_cleanup",
+    "iterations_requested": 50,
+    "keep_passing_logs": true,
+    "command_contains": "cargo test --test multiprocess_cleanup -- --nocapture"
+  },
+  "summary": {
+    "min_pass_count": 50,
+    "max_fail_count": 0,
+    "min_pass_rate": 1.0,
+    "max_failure_fingerprint_count": 0
+  },
+  "iterations": {
+    "status": "pass",
+    "exit_code": 0,
+    "require_log_path": true,
+    "required_log_substrings": [
+      "short-name cleanup artifact scan:",
+      "before=0",
+      "after=0",
+      "test result: ok. 10 passed; 0 failed;"
+    ]
+  }
+}

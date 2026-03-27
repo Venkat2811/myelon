@@ -127,14 +127,15 @@
 //! - Systems requiring automatic worker discovery
 
 use disruptor_mp::{
-    build_shared_single_producer, SharedCursor, SharedDisruptorBuilder, SharedMemoryConfig,
+    attach_shared_consumer, build_shared_single_producer, SharedCursor, SharedDisruptorBuilder,
+    SharedMemoryConfig,
 };
 
 use hdrhistogram::Histogram;
 use num_format::{Locale, ToFormattedString};
 use std::env;
 use std::process::{Command, Stdio};
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 use tabled::{Table, Tabled};
@@ -712,17 +713,26 @@ impl ProcessCoordination {
 ///
 /// ## Naming Strategy:
 /// - Child processes: Use parent-provided name via environment
-/// - Parent processes: Generate "mp{pid}" where pid is truncated to 5 digits
-/// - Ensures uniqueness across concurrent test runs
+/// - Parent processes: Generate a short per-scenario name from pid + time + counter
+/// - Ensures uniqueness across repeated and concurrent test runs
 /// - Compatible with all platforms (short names, no special characters)
 fn get_segment_name() -> String {
+    static SEGMENT_COUNTER: AtomicU32 = AtomicU32::new(0);
+
     // Try to get from environment first (for child processes spawned by automated tests)
     if let Ok(name) = env::var("MP_SEGMENT_NAME") {
         return name;
     }
 
     // Generate unique short name compatible with macOS shared memory limits
-    format!("mp{}", std::process::id() % 100000)
+    let pid_part = std::process::id() % 1000;
+    let time_part = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.subsec_millis() % 1000)
+        .unwrap_or(0);
+    let counter_part = SEGMENT_COUNTER.fetch_add(1, Ordering::Relaxed) % 1000;
+
+    format!("mp{pid_part:03}{time_part:03}{counter_part:03}")
 }
 
 /// Simple event structure for counter testing
@@ -1362,15 +1372,8 @@ fn spsc_discovery_consumer_process() -> Result<(), Box<dyn std::error::Error>> {
     // Attach to existing coordination shared memory created by producer
     let coordination = ProcessCoordination::attach(&segment_name)?;
 
-    let config = SharedMemoryConfig {
-        name: segment_name.clone(),
-        buffer_size: get_buffer_size(),
-        element_size: std::mem::size_of::<Event>(),
-        create: false,
-    };
-
-    let builder: SharedDisruptorBuilder<Event> = SharedDisruptorBuilder::new(config);
-    let mut consumer = builder.build_consumer()?; // Consumer attaches normally, prefix filtering happens on producer side
+    let mut consumer =
+        attach_shared_consumer::<Event>(&segment_name, get_buffer_size()).build_consumer()?;
 
     println!(
         "Consumer attached to shared memory segment: {}",
@@ -1390,10 +1393,13 @@ fn spsc_discovery_consumer_process() -> Result<(), Box<dyn std::error::Error>> {
 
     let start_time = Instant::now();
 
-    // High-performance event consumption loop with spin-wait
+    // Keep discovery examples on an explicit non-blocking loop so the outer
+    // producer-done check still runs even when the underlying consumer would
+    // otherwise busy-wait inside process_available().
     loop {
         let process_start = Instant::now();
-        let processed = consumer.process_available(|event, _sequence| {
+        let mut processed = 0usize;
+        while let Some((_sequence, event)) = consumer.try_consume_next() {
             let consume_time = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -1406,6 +1412,7 @@ fn spsc_discovery_consumer_process() -> Result<(), Box<dyn std::error::Error>> {
 
             events_consumed += 1;
             total_counter += event.value as i64; // Running counter for verification
+            processed += 1;
 
             // Progress reporting for long-running tests
             if disruptor_mp::is_multiple_of_u64(events_consumed, 1_000) && events_consumed > 0 {
@@ -1414,7 +1421,7 @@ fn spsc_discovery_consumer_process() -> Result<(), Box<dyn std::error::Error>> {
                     events_consumed, total_counter
                 );
             }
-        });
+        }
 
         if processed > 0 {
             processing_time += process_start.elapsed();
@@ -2195,15 +2202,8 @@ fn spmc_discovery_consumer_process(consumer_id: &str) -> Result<(), Box<dyn std:
     // Attach to existing coordination shared memory created by producer
     let coordination = ProcessCoordination::attach(&segment_name)?;
 
-    let config = SharedMemoryConfig {
-        name: segment_name.clone(),
-        buffer_size: get_buffer_size(),
-        element_size: std::mem::size_of::<Event>(),
-        create: false,
-    };
-
-    let builder: SharedDisruptorBuilder<Event> = SharedDisruptorBuilder::new(config);
-    let mut consumer = builder.build_consumer()?; // Consumer attaches normally, discovery happens on producer side
+    let mut consumer =
+        attach_shared_consumer::<Event>(&segment_name, get_buffer_size()).build_consumer()?;
 
     println!(
         "Consumer {} attached to shared memory segment: {}",
@@ -2225,10 +2225,13 @@ fn spmc_discovery_consumer_process(consumer_id: &str) -> Result<(), Box<dyn std:
 
     let start_time = Instant::now();
 
-    // High-performance event consumption loop with spin-wait
+    // Keep discovery examples on an explicit non-blocking loop so the outer
+    // producer-done check still runs even when the underlying consumer would
+    // otherwise busy-wait inside process_available().
     loop {
         let process_start = Instant::now();
-        let processed = consumer.process_available(|event, _sequence| {
+        let mut processed = 0usize;
+        while let Some((_sequence, event)) = consumer.try_consume_next() {
             let consume_time = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -2241,6 +2244,7 @@ fn spmc_discovery_consumer_process(consumer_id: &str) -> Result<(), Box<dyn std:
 
             events_consumed += 1;
             total_counter += event.value as i64; // Running counter for verification
+            processed += 1;
 
             // Progress reporting for long-running tests
             if disruptor_mp::is_multiple_of_u64(events_consumed, 1_000) && events_consumed > 0 {
@@ -2249,7 +2253,7 @@ fn spmc_discovery_consumer_process(consumer_id: &str) -> Result<(), Box<dyn std:
                     consumer_id, events_consumed, total_counter
                 );
             }
-        });
+        }
 
         if processed > 0 {
             processing_time += process_start.elapsed();
@@ -2692,19 +2696,13 @@ fn spsc_prefix_discovery_consumer_process() -> Result<(), Box<dyn std::error::Er
     // Attach to existing coordination shared memory created by producer
     let coordination = ProcessCoordination::attach(&segment_name)?;
 
-    let config = SharedMemoryConfig {
-        name: segment_name.clone(),
-        buffer_size: get_buffer_size(),
-        element_size: std::mem::size_of::<Event>(),
-        create: false,
-    };
-
     // Use prefix naming for discovery - must match the pattern expected by prefix discovery
     // For SPSC, always use consumer 0 since there's only one consumer
     let consumer_id = "TEST_CONSUMER_0".to_string();
 
-    let builder: SharedDisruptorBuilder<Event> = SharedDisruptorBuilder::new(config);
-    let mut consumer = builder.with_consumer_id(&consumer_id).build_consumer()?; // Consumer attaches with custom ID for prefix discovery
+    let mut consumer = attach_shared_consumer::<Event>(&segment_name, get_buffer_size())
+        .with_consumer_id(&consumer_id)
+        .build_consumer()?; // Consumer attaches with custom ID for prefix discovery
 
     println!(
         "Consumer {} attached to shared memory segment: {}",
@@ -2724,10 +2722,13 @@ fn spsc_prefix_discovery_consumer_process() -> Result<(), Box<dyn std::error::Er
 
     let start_time = Instant::now();
 
-    // High-performance event consumption loop with spin-wait
+    // Keep discovery examples on an explicit non-blocking loop so the outer
+    // producer-done check still runs even when the underlying consumer would
+    // otherwise busy-wait inside process_available().
     loop {
         let process_start = Instant::now();
-        let processed = consumer.process_available(|event, _sequence| {
+        let mut processed = 0usize;
+        while let Some((_sequence, event)) = consumer.try_consume_next() {
             let consume_time = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -2740,6 +2741,7 @@ fn spsc_prefix_discovery_consumer_process() -> Result<(), Box<dyn std::error::Er
 
             events_consumed += 1;
             total_counter += event.value as i64; // Running counter for verification
+            processed += 1;
 
             // Progress reporting for long-running tests
             if disruptor_mp::is_multiple_of_u64(events_consumed, 1_000) && events_consumed > 0 {
@@ -2748,7 +2750,7 @@ fn spsc_prefix_discovery_consumer_process() -> Result<(), Box<dyn std::error::Er
                     events_consumed, total_counter
                 );
             }
-        });
+        }
 
         if processed > 0 {
             processing_time += process_start.elapsed();
@@ -2953,20 +2955,12 @@ fn spmc_prefix_discovery_consumer_process(
     // Attach to existing coordination shared memory created by producer
     let coordination = ProcessCoordination::attach(&segment_name)?;
 
-    let config = SharedMemoryConfig {
-        name: segment_name.clone(),
-        buffer_size: get_buffer_size(),
-        element_size: std::mem::size_of::<Event>(),
-        create: false,
-    };
-
     // Use prefix naming for discovery - must match the pattern expected by prefix discovery
     // The consumer_id parameter (e.g., "1", "2") is passed from the main function
     let consumer_number: usize = consumer_id.parse().unwrap_or(0);
     let prefixed_consumer_id = format!("SPMC_CONSUMER_{}", consumer_number);
 
-    let builder: SharedDisruptorBuilder<Event> = SharedDisruptorBuilder::new(config);
-    let mut consumer = builder
+    let mut consumer = attach_shared_consumer::<Event>(&segment_name, get_buffer_size())
         .with_consumer_id(&prefixed_consumer_id)
         .build_consumer()?; // Consumer attaches with custom ID for prefix discovery
 
@@ -2993,10 +2987,13 @@ fn spmc_prefix_discovery_consumer_process(
 
     let start_time = Instant::now();
 
-    // High-performance event consumption loop with spin-wait
+    // Keep discovery examples on an explicit non-blocking loop so the outer
+    // producer-done check still runs even when the underlying consumer would
+    // otherwise busy-wait inside process_available().
     loop {
         let process_start = Instant::now();
-        let processed = consumer.process_available(|event, _sequence| {
+        let mut processed = 0usize;
+        while let Some((_sequence, event)) = consumer.try_consume_next() {
             let consume_time = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -3009,6 +3006,7 @@ fn spmc_prefix_discovery_consumer_process(
 
             events_consumed += 1;
             total_counter += event.value as i64; // Running counter for verification
+            processed += 1;
 
             // Progress reporting for long-running tests
             if disruptor_mp::is_multiple_of_u64(events_consumed, 1_000) && events_consumed > 0 {
@@ -3017,7 +3015,7 @@ fn spmc_prefix_discovery_consumer_process(
                     consumer_id, events_consumed, total_counter
                 );
             }
-        });
+        }
 
         if processed > 0 {
             processing_time += process_start.elapsed();

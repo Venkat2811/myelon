@@ -1,14 +1,11 @@
-use disruptor_mp::{MultiProcessError, SharedCursor, SharedMemoryConfig, SharedRingBuffer};
+use disruptor_mp::{
+    portable_shm_segment_name, MultiProcessError, SharedCursor, SharedMemoryConfig,
+    SharedRingBuffer,
+};
 use shared_memory::ShmemConf;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 fn unique_name(prefix: &str) -> String {
-    let pid = std::process::id();
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system time should be valid")
-        .as_nanos();
-    format!("{prefix}_{pid}_{nanos}")
+    portable_shm_segment_name(prefix)
 }
 
 #[test]

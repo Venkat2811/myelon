@@ -182,7 +182,7 @@ These examples are ideal for:
 ### Common Issues
 
 **Permission errors**: Examples handle shared memory cleanup automatically
-**Platform differences**: Examples are cross-platform compatible (Linux, macOS, Windows)
+**Platform differences**: Examples target Linux first, support macOS on a best-effort basis, and do not support Windows.
 **Debug performance**: Always use `--release` builds for performance testing
 **Shared memory conflicts**: Examples use unique segment names to avoid conflicts
 

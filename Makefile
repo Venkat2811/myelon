@@ -1,10 +1,21 @@
 CARGO ?= cargo
+ROOT_TIMEOUT_BIN := $(shell if command -v timeout >/dev/null 2>&1; then printf '%s' timeout; elif command -v gtimeout >/dev/null 2>&1; then printf '%s' gtimeout; fi)
+ROOT_EXAMPLE_TIMEOUT ?= 60
+
+define ROOT_RUN_WITH_TIMEOUT
+	@if [ -n "$(ROOT_TIMEOUT_BIN)" ]; then \
+		$(ROOT_TIMEOUT_BIN) --preserve-status $(1) bash -lc 'set -euo pipefail; $(2)'; \
+	else \
+		bash -lc 'set -euo pipefail; $(2)'; \
+	fi
+endef
 
 .PHONY: \
 	help fmt check build test bench bench-mp \
 	test-rust-fast test-rust-extended test-rust-perf-gate test-rust-manifest \
-	test-py-fast test-py-extended test-py-manifest py-check py-test \
+	test-py-fast test-py-extended test-py-manifest py-check py-test py-setup \
 	check-layer-boundaries check-layout-refs check-hot-path-ffi \
+	test-dst run-rust-examples run-rust-benches run-py-examples run-py-benches \
 	smoke orchestrate-rust orchestrate-python orchestrate-all \
 	validate-ci-workflows
 
@@ -29,6 +40,11 @@ help:
 	@echo "  make test-py-manifest    - emit myelon-py machine-readable test manifest"
 	@echo "  make py-check            - cargo check for Python extension crate"
 	@echo "  make py-test             - alias for canonical myelon-py Linux Python lane"
+	@echo "  make test-dst            - run deterministic DST lanes for disruptor-mp and myelon"
+	@echo "  make run-rust-examples   - run supported Rust examples with timeout protection"
+	@echo "  make run-rust-benches    - run supported Rust benches with timeout protection"
+	@echo "  make run-py-examples     - run supported Python examples with timeout protection"
+	@echo "  make run-py-benches      - run supported Python benchmark suite with timeout protection"
 	@echo "  make check-layer-boundaries - fail cross-layer import violations"
 	@echo "  make check-layout-refs   - fail stale pre-monorepo user-facing paths"
 	@echo "  make check-hot-path-ffi  - fail unexpected Python hot-path per-event FFI spread"
@@ -80,6 +96,28 @@ py-check:
 
 py-test:
 	@$(MAKE) test-py-fast
+
+py-setup:
+	@$(MAKE) -C python-surface-archive setup
+
+test-dst:
+	@$(MAKE) test-dst
+	@$(CARGO) test -p myelon --test dst_contract -- --test-threads=1
+	@$(CARGO) test -p myelon --test dst_profiles -- --test-threads=1
+	@$(CARGO) test -p myelon --test dst_runtime -- --test-threads=1
+
+run-rust-examples:
+	@$(MAKE) example-all
+	$(call ROOT_RUN_WITH_TIMEOUT,$(ROOT_EXAMPLE_TIMEOUT),$(CARGO) run -p myelon --example fixed_inference_topology)
+
+run-rust-benches:
+	@$(MAKE) bench-all
+
+run-py-examples:
+	@$(MAKE) -C python-surface-archive example-all
+
+run-py-benches:
+	@$(MAKE) -C python-surface-archive benchmark-all
 
 check-layer-boundaries:
 	@python3 scripts/check_layer_boundaries.py

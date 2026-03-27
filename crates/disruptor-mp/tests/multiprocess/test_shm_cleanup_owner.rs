@@ -1,8 +1,10 @@
-use disruptor_mp::{SharedCursor, SharedMemoryConfig, SharedRingBuffer};
+use disruptor_mp::{
+    portable_shm_segment_name, SharedCursor, SharedMemoryConfig, SharedRingBuffer,
+};
 use std::sync::atomic::Ordering;
 
 fn unique_name(prefix: &str) -> String {
-    format!("{}_{}", prefix, std::process::id())
+    portable_shm_segment_name(prefix)
 }
 
 #[test]

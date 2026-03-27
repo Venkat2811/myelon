@@ -80,10 +80,10 @@ def check_python_boundaries(failures: list[str]) -> None:
             match = pattern.search(text)
             if match is None:
                 continue
-                failures.append(
-                    f"{rel_path}:{find_line_number(text, match.start())}: direct _internal._raw access "
-                    "is forbidden; use the private _internal factory helpers instead"
-                )
+            failures.append(
+                f"{rel_path}:{find_line_number(text, match.start())}: direct _internal._raw access "
+                "is forbidden; use the private _internal factory helpers instead"
+            )
 
 
 def check_rust_boundaries(failures: list[str]) -> None:

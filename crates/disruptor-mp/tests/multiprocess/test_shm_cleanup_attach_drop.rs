@@ -1,8 +1,19 @@
-use disruptor_mp::{SharedCursor, SharedMemoryConfig, SharedRingBuffer};
+use disruptor_mp::{
+    portable_shm_segment_name, SharedCursor, SharedMemoryConfig, SharedRingBuffer,
+};
 use std::sync::atomic::Ordering;
 
 fn unique_name(prefix: &str) -> String {
-    format!("{}_{}", prefix, std::process::id())
+    portable_shm_segment_name(prefix)
+}
+
+fn count_existing_cursor_segments(base: &str) -> usize {
+    (0..100)
+        .filter(|slot| {
+            let name = format!("{base}{slot:02}");
+            SharedCursor::attach(&name).is_ok()
+        })
+        .count()
 }
 
 #[test]
@@ -133,9 +144,16 @@ fn dropping_owner_ringbuffer_releases_name_for_recreate() {
 
 #[test]
 fn short_name_repeated_create_attach_drop_stress() {
-    // Keep names short for macOS NAME_MAX constraints while still unique per process.
-    let pid = std::process::id() % 10_000;
-    let base = format!("mp{:04}", pid); // <= 8 chars
+    let base = portable_shm_segment_name("mp");
+    let before_count = count_existing_cursor_segments(&base);
+    println!(
+        "short-name cleanup artifact scan: base={} before={}",
+        base, before_count
+    );
+    assert_eq!(
+        before_count, 0,
+        "short-name test base should start without leaked artifacts"
+    );
 
     for i in 0..200 {
         let name = format!("{base}{:02}", i % 100); // <= 10 chars
@@ -154,4 +172,14 @@ fn short_name_repeated_create_attach_drop_stress() {
         let recreated = SharedCursor::new(&name, i + 2).expect("recreate should succeed");
         assert_eq!(recreated.load(Ordering::Acquire), i + 2);
     }
+
+    let after_count = count_existing_cursor_segments(&base);
+    println!(
+        "short-name cleanup artifact scan: base={} after={}",
+        base, after_count
+    );
+    assert_eq!(
+        after_count, 0,
+        "short-name create/attach/drop loop must not leave leaked cursor segments"
+    );
 }
