@@ -377,14 +377,13 @@ fn consumer_process(consumer_id: &str) -> Result<(), Box<dyn std::error::Error>>
 fn run_automated_test() -> Result<(), Box<dyn std::error::Error>> {
     println!("Running automated shared disruptor test with 1 producer + 3 consumers...");
 
-    let _current_exe = env::current_exe()?;
-    let example_name = "shared_disruptor";
+    let current_exe = env::current_exe()?;
     let segment_name = get_segment_name();
 
     // Start producer process first to create shared memory
     println!("Starting producer process (will create shared memory and wait for consumers)...");
-    let producer_child = Command::new("cargo")
-        .args(["run", "--example", example_name, "producer"])
+    let producer_child = Command::new(&current_exe)
+        .arg("producer")
         .env("SHARED_DISRUPTOR_SEGMENT", &segment_name)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -398,8 +397,8 @@ fn run_automated_test() -> Result<(), Box<dyn std::error::Error>> {
     let mut consumer_children = Vec::new();
 
     for i in 1..=3 {
-        let consumer_child = Command::new("cargo")
-            .args(["run", "--example", example_name, &format!("consumer{}", i)])
+        let consumer_child = Command::new(&current_exe)
+            .arg(format!("consumer{}", i))
             .env("SHARED_DISRUPTOR_SEGMENT", &segment_name)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -440,9 +439,8 @@ fn run_automated_test() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Check results - with broadcast semantics, all consumers should succeed
-    let all_success = consumer_results
-        .iter()
-        .all(|result| result.status.success());
+    let all_success =
+        producer_result.status.success() && consumer_results.iter().all(|result| result.status.success());
 
     if all_success {
         println!("Automated shared disruptor test PASSED!");
@@ -451,6 +449,9 @@ fn run_automated_test() -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
     } else {
         println!("Automated shared disruptor test FAILED!");
+        if !producer_result.status.success() {
+            println!("Producer failed");
+        }
         for (i, result) in consumer_results.iter().enumerate() {
             if !result.status.success() {
                 println!("Consumer {} failed", i + 1);

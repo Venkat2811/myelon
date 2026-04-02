@@ -1,0 +1,23 @@
+{
+  "metadata": {
+    "label": "mmap_true_multiprocess",
+    "iterations_requested": 50,
+    "keep_passing_logs": true,
+    "command_contains": "cargo test --test mmap_true_multiprocess true_mmap_multiprocess_stress_matrix -- --ignored --nocapture --test-threads=1"
+  },
+  "summary": {
+    "min_pass_count": 50,
+    "max_fail_count": 0,
+    "min_pass_rate": 1.0,
+    "max_failure_fingerprint_count": 0
+  },
+  "iterations": {
+    "status": "pass",
+    "exit_code": 0,
+    "require_log_path": true,
+    "required_log_substrings": [
+      "test true_mmap_multiprocess_stress_matrix ... ok",
+      "test result: ok. 1 passed; 0 failed;"
+    ]
+  }
+}
