@@ -21,6 +21,7 @@ pub struct LatencyStats {
     pub p99_ns: u64,
     pub p999_ns: u64,
     pub p9999_ns: u64,
+    pub p99999_ns: u64,
 }
 
 /// Records per-event latency values and produces real percentiles.
@@ -85,6 +86,7 @@ impl LatencyRecorder {
             p99_ns: self.histogram.value_at_percentile(99.0),
             p999_ns: self.histogram.value_at_percentile(99.9),
             p9999_ns: self.histogram.value_at_percentile(99.99),
+            p99999_ns: self.histogram.value_at_percentile(99.999),
         })
     }
 
@@ -103,11 +105,14 @@ impl LatencyStats {
     /// Format as a compact one-line summary.
     pub fn summary(&self) -> String {
         format!(
-            "P50={} P95={} P99={} P99.9={} mean={:.0} min={} max={} (n={})",
+            "P50={} P90={} P95={} P99={} P99.9={} P99.99={} P99.999={} mean={:.0} min={} max={} (n={})",
             format_ns(self.p50_ns),
+            format_ns(self.p90_ns),
             format_ns(self.p95_ns),
             format_ns(self.p99_ns),
             format_ns(self.p999_ns),
+            format_ns(self.p9999_ns),
+            format_ns(self.p99999_ns),
             self.mean_ns,
             format_ns(self.min_ns),
             format_ns(self.max_ns),

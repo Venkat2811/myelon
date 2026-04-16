@@ -1,7 +1,7 @@
 //! mmap wait strategy benchmark modeled after the battle-tested SHM matrix.
 
 use myelon_bench::events::format_throughput;
-use myelon_bench::reporting::{BenchReport, BenchResult};
+use myelon_bench::reporting::{self, BenchReport, BenchResult};
 use std::env;
 use std::io::Read as _;
 use std::path::PathBuf;
@@ -300,20 +300,22 @@ fn run_test(num_consumers: usize, wait_strategy: &str) -> BenchResult {
         format_throughput(avg_consumer_throughput),
     );
 
-    BenchResult {
-        scenario: format!("1p{}c", num_consumers),
-        backend: "mmap".to_string(),
-        layer: "wait_strategy".to_string(),
-        codec: None,
-        wait_strategy: wait_strategy.to_string(),
+    reporting::make_result(
+        "wait_strategy_mmap",
+        &format!("1p{}c", num_consumers),
+        "mmap",
+        "wait_strategy",
+        None,
+        wait_strategy,
+        ELEMENT_SIZE,
+        BUFFER_SIZE,
+        NUM_EVENTS,
+        0,
         num_consumers,
-        payload_bytes: ELEMENT_SIZE,
-        events: NUM_EVENTS as usize,
-        producer_ops_sec: producer_throughput,
-        consumer_ops_sec: avg_consumer_throughput,
-        data_rate_mbps: (producer_throughput * ELEMENT_SIZE as f64) / (1024.0 * 1024.0),
-        latency: None,
-    }
+        producer_throughput,
+        avg_consumer_throughput,
+        None,
+    )
 }
 
 fn main() {

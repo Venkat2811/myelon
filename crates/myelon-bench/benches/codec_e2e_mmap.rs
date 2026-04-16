@@ -1,11 +1,11 @@
 //! End-to-end Codec benchmark over mmap typed transport.
 
-use myelon_bench::events::{data_rate_mbps, format_throughput};
+use myelon_bench::events::format_throughput;
 use myelon_bench::generated::bench_payload_generated::myelon::bench as flatbench;
-use myelon_bench::reporting::{BenchReport, BenchResult};
+use myelon_bench::reporting::{self, BenchReport, BenchResult};
 use myelon::codec::{Codec, CodecError};
 use myelon::typed_transport::{MmapTypedConsumer, MmapTypedProducer};
-use myelon::transport::{FixedFrame, MyelonWaitStrategy};
+use myelon::transport::{FixedFrame, MmapFramedTransportConsumer, MmapFramedTransportProducer, MyelonWaitStrategy};
 use std::env;
 use std::hint::black_box;
 use std::io::Read as _;
@@ -163,17 +163,21 @@ fn spawn_child(
     codec: &str,
     batch_size: usize,
     messages: u64,
+    phase_timing: bool,
 ) -> Child {
-    Command::new(exe)
-        .arg(role)
+    let mut cmd = Command::new(exe);
+    cmd.arg(role)
         .env("MMAP_ROOT", root)
         .env("MMAP_SEGMENT", segment)
         .env("BENCH_CODEC", codec)
         .env("BENCH_BATCH_SIZE", batch_size.to_string())
         .env("BENCH_MESSAGES", messages.to_string())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
+        .stderr(Stdio::piped());
+    if phase_timing {
+        cmd.env("BENCH_PHASE_TIMING", "1");
+    }
+    cmd.spawn()
         .unwrap_or_else(|e| panic!("spawn {role}: {e}"))
 }
 
@@ -270,98 +274,137 @@ fn payload_bytes(codec: &str, payloads: &[TestPayload]) -> usize {
 
 fn producer_process() -> Result<(), Box<dyn std::error::Error>> {
     let (codec, batch_size, messages, layout, _segment) = read_env();
+    let phase_timing = env::var("BENCH_PHASE_TIMING").ok().map_or(false, |v| v == "1");
     let payloads = make_payloads(batch_size);
-    let mut producer = MmapTypedProducer::<Frame>::create(layout, BUFFER_DEPTH)?;
 
-    if !producer.raw().wait_for_consumers_ready(1, Duration::from_secs(30)) {
-        return Err("timeout waiting for consumer".into());
-    }
-
-    let start = Instant::now();
-    match codec.as_str() {
-        "bincode" => {
-            let payload = BincodeBatch(payloads);
-            for i in 0..messages {
-                producer.publish(&payload, (i % 256) as u8)?;
-            }
+    if phase_timing {
+        let mut producer = MmapFramedTransportProducer::<Frame>::create(layout, BUFFER_DEPTH)?;
+        if !producer.raw().wait_for_consumers_ready(1, Duration::from_secs(30)) {
+            return Err("timeout waiting for consumer".into());
         }
-        "rkyv" => {
-            let payload = RkyvBatch(payloads);
-            for i in 0..messages {
-                producer.publish(&payload, (i % 256) as u8)?;
-            }
+
+        let mut encode_ns = 0u64;
+        let mut transport_ns = 0u64;
+        let start = Instant::now();
+
+        macro_rules! phase_loop {
+            ($batch:expr) => {
+                for i in 0..messages {
+                    let t0 = Instant::now();
+                    let encoded = $batch.encode()?;
+                    let t1 = Instant::now();
+                    producer.publish(encoded.as_ref(), (i % 256) as u8);
+                    let t2 = Instant::now();
+                    encode_ns += (t1 - t0).as_nanos() as u64;
+                    transport_ns += (t2 - t1).as_nanos() as u64;
+                }
+            };
         }
-        "flatbuf" => {
-            let payload = FlatbufBatch(payloads);
-            for i in 0..messages {
-                producer.publish(&payload, (i % 256) as u8)?;
-            }
+
+        match codec.as_str() {
+            "bincode" => { let b = BincodeBatch(payloads); phase_loop!(b); }
+            "rkyv" => { let b = RkyvBatch(payloads); phase_loop!(b); }
+            "flatbuf" => { let b = FlatbufBatch(payloads); phase_loop!(b); }
+            other => return Err(format!("unknown codec: {other}").into()),
         }
-        other => return Err(format!("unknown codec: {other}").into()),
+
+        let elapsed = start.elapsed();
+        println!("Throughput: {:.0} msgs/sec", messages as f64 / elapsed.as_secs_f64());
+        println!("EncodeAvgUs: {:.1}", encode_ns as f64 / messages as f64 / 1000.0);
+        println!("TransportWriteAvgUs: {:.1}", transport_ns as f64 / messages as f64 / 1000.0);
+
+        let last_sequence = producer.raw().last_published_sequence();
+        producer.wait_until_consumed(last_sequence, Duration::from_secs(30), disruptor_mp::AutoWaitStrategy::BusySpin);
+    } else {
+        let mut producer = MmapTypedProducer::<Frame>::create(layout, BUFFER_DEPTH)?;
+        if !producer.raw().wait_for_consumers_ready(1, Duration::from_secs(30)) {
+            return Err("timeout waiting for consumer".into());
+        }
+
+        let start = Instant::now();
+        match codec.as_str() {
+            "bincode" => { let p = BincodeBatch(payloads); for i in 0..messages { producer.publish(&p, (i % 256) as u8)?; } }
+            "rkyv" => { let p = RkyvBatch(payloads); for i in 0..messages { producer.publish(&p, (i % 256) as u8)?; } }
+            "flatbuf" => { let p = FlatbufBatch(payloads); for i in 0..messages { producer.publish(&p, (i % 256) as u8)?; } }
+            other => return Err(format!("unknown codec: {other}").into()),
+        }
+        let elapsed = start.elapsed();
+        println!("Throughput: {:.0} msgs/sec", messages as f64 / elapsed.as_secs_f64());
+
+        let last_sequence = producer.raw().raw().last_published_sequence();
+        producer.raw().wait_until_consumed(last_sequence, Duration::from_secs(30), disruptor_mp::AutoWaitStrategy::BusySpin);
     }
-    let elapsed = start.elapsed();
-
-    println!("Throughput: {:.0} msgs/sec", messages as f64 / elapsed.as_secs_f64());
-    println!("Time: {:.3} seconds", elapsed.as_secs_f64());
-
-    let last_sequence = producer.raw().raw().last_published_sequence();
-    if !producer.raw().wait_until_consumed(
-        last_sequence,
-        Duration::from_secs(30),
-        disruptor_mp::AutoWaitStrategy::BusySpin,
-    ) {
-        return Err("timeout waiting for consumers to drain".into());
-    }
-
     Ok(())
 }
 
 fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
     let (codec, _batch_size, messages, layout, _segment) = read_env();
+    let phase_timing = env::var("BENCH_PHASE_TIMING").ok().map_or(false, |v| v == "1");
     let consumer_id = format!("c{}", std::process::id());
 
-    let deadline = Instant::now() + Duration::from_secs(15);
-    let mut consumer = loop {
-        match MmapTypedConsumer::<Frame>::attach(
-            layout.clone(),
-            BUFFER_DEPTH,
-            &consumer_id,
-            MyelonWaitStrategy::BusySpin,
-        ) {
-            Ok(consumer) => break consumer,
-            Err(_) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(25)),
-            Err(error) => return Err(format!("consumer attach failed: {error}").into()),
-        }
-    };
+    if phase_timing {
+        let deadline = Instant::now() + Duration::from_secs(15);
+        let mut consumer = loop {
+            match MmapFramedTransportConsumer::<Frame>::attach(layout.clone(), BUFFER_DEPTH, &consumer_id, MyelonWaitStrategy::BusySpin) {
+                Ok(c) => break c,
+                Err(_) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(25)),
+                Err(e) => return Err(format!("consumer attach failed: {e}").into()),
+            }
+        };
 
-    let start = Instant::now();
-    let mut consumed = 0u64;
-    while consumed < messages {
-        match codec.as_str() {
-            "bincode" => {
-                let (_kind, batch): (u8, BincodeBatch) = consumer.recv()?;
-                black_box(batch.0.len());
+        let mut recv_ns = 0u64;
+        let mut decode_ns = 0u64;
+        let start = Instant::now();
+        let mut consumed = 0u64;
+        while consumed < messages {
+            let t0 = Instant::now();
+            let (_kind, raw_bytes) = consumer.recv_message_blocking();
+            let t1 = Instant::now();
+            match codec.as_str() {
+                "bincode" => { black_box(BincodeBatch::decode(&raw_bytes)?); }
+                "rkyv" => { black_box(RkyvBatch::decode(&raw_bytes)?); }
+                "flatbuf" => { black_box(FlatbufBatch::decode(&raw_bytes)?); }
+                other => return Err(format!("unknown codec: {other}").into()),
             }
-            "rkyv" => {
-                let (_kind, batch): (u8, RkyvBatch) = consumer.recv()?;
-                black_box(batch.0.len());
-            }
-            "flatbuf" => {
-                let (_kind, batch): (u8, FlatbufBatch) = consumer.recv()?;
-                black_box(batch.0.len());
-            }
-            other => return Err(format!("unknown codec: {other}").into()),
+            let t2 = Instant::now();
+            recv_ns += (t1 - t0).as_nanos() as u64;
+            decode_ns += (t2 - t1).as_nanos() as u64;
+            consumed += 1;
         }
-        consumed += 1;
+        let elapsed = start.elapsed();
+        println!("Throughput: {:.0} msgs/sec", consumed as f64 / elapsed.as_secs_f64());
+        println!("Events: {}", consumed);
+        println!("TransportReadAvgUs: {:.1}", recv_ns as f64 / consumed as f64 / 1000.0);
+        println!("DecodeAvgUs: {:.1}", decode_ns as f64 / consumed as f64 / 1000.0);
+    } else {
+        let deadline = Instant::now() + Duration::from_secs(15);
+        let mut consumer = loop {
+            match MmapTypedConsumer::<Frame>::attach(layout.clone(), BUFFER_DEPTH, &consumer_id, MyelonWaitStrategy::BusySpin) {
+                Ok(c) => break c,
+                Err(_) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(25)),
+                Err(e) => return Err(format!("consumer attach failed: {e}").into()),
+            }
+        };
+
+        let start = Instant::now();
+        let mut consumed = 0u64;
+        while consumed < messages {
+            match codec.as_str() {
+                "bincode" => { let (_, b): (u8, BincodeBatch) = consumer.recv()?; black_box(b.0.len()); }
+                "rkyv" => { let (_, b): (u8, RkyvBatch) = consumer.recv()?; black_box(b.0.len()); }
+                "flatbuf" => { let (_, b): (u8, FlatbufBatch) = consumer.recv()?; black_box(b.0.len()); }
+                other => return Err(format!("unknown codec: {other}").into()),
+            }
+            consumed += 1;
+        }
+        let elapsed = start.elapsed();
+        println!("Throughput: {:.0} msgs/sec", consumed as f64 / elapsed.as_secs_f64());
+        println!("Events: {}", consumed);
     }
-    let elapsed = start.elapsed();
-
-    println!("Throughput: {:.0} msgs/sec", consumed as f64 / elapsed.as_secs_f64());
-    println!("Events: {}", consumed);
     Ok(())
 }
 
-fn run_codec_bench(codec: &str, batch_size: usize, messages: u64) -> BenchResult {
+fn run_codec_bench(codec: &str, batch_size: usize, messages: u64, phase_timing: bool) -> BenchResult {
     let root = unique_root();
     let segment = unique_segment();
     let root_str = root.display().to_string();
@@ -370,9 +413,9 @@ fn run_codec_bench(codec: &str, batch_size: usize, messages: u64) -> BenchResult
     let encoded_bytes = payload_bytes(codec, &payloads);
 
     let producer =
-        spawn_child(&exe, "codec_producer", &root_str, &segment, codec, batch_size, messages);
+        spawn_child(&exe, "codec_producer", &root_str, &segment, codec, batch_size, messages, phase_timing);
     let consumer =
-        spawn_child(&exe, "codec_consumer", &root_str, &segment, codec, batch_size, messages);
+        spawn_child(&exe, "codec_consumer", &root_str, &segment, codec, batch_size, messages, phase_timing);
 
     let timeout = Duration::from_secs(180);
     let prod_out = wait_timeout(producer, timeout);
@@ -415,28 +458,39 @@ fn run_codec_bench(codec: &str, batch_size: usize, messages: u64) -> BenchResult
 
     let _ = std::fs::remove_dir_all(&root);
 
-    println!(
-        "  codec={:<8} batch={:<3} producer: {:>10} msgs/s  consumer: {:>10} msgs/s",
-        codec,
-        batch_size,
-        format_throughput(prod_tp),
-        format_throughput(cons_tp),
-    );
-
-    BenchResult {
-        scenario: format!("codec_e2e_{batch_size}seq_{codec}"),
-        backend: "mmap".to_string(),
-        layer: "typed".to_string(),
-        codec: Some(codec.to_string()),
-        wait_strategy: "BusySpin".to_string(),
-        num_consumers: 1,
-        payload_bytes: encoded_bytes,
-        events: consumed as usize,
-        producer_ops_sec: prod_tp,
-        consumer_ops_sec: cons_tp,
-        data_rate_mbps: data_rate_mbps(prod_tp, encoded_bytes),
-        latency: None,
+    if phase_timing {
+        let encode_us = extract_value(&prod_str, "EncodeAvgUs");
+        let write_us = extract_value(&prod_str, "TransportWriteAvgUs");
+        let read_us = extract_value(&cons_str, "TransportReadAvgUs");
+        let decode_us = extract_value(&cons_str, "DecodeAvgUs");
+        println!(
+            "  codec={:<8} batch={:<3}  encode: {:>8.1}μs  write: {:>8.1}μs  read: {:>8.1}μs  decode: {:>8.1}μs  | prod: {:>8} cons: {:>8}",
+            codec, batch_size, encode_us, write_us, read_us, decode_us,
+            format_throughput(prod_tp), format_throughput(cons_tp),
+        );
+    } else {
+        println!(
+            "  codec={:<8} batch={:<3} producer: {:>10} msgs/s  consumer: {:>10} msgs/s",
+            codec, batch_size, format_throughput(prod_tp), format_throughput(cons_tp),
+        );
     }
+
+    reporting::make_result(
+        "codec_e2e_mmap",
+        &format!("codec_e2e_{batch_size}seq_{codec}"),
+        "mmap",
+        "typed",
+        Some(codec),
+        "BusySpin",
+        encoded_bytes,
+        BUFFER_DEPTH,
+        consumed,
+        0,
+        1,
+        prod_tp,
+        cons_tp,
+        None,
+    )
 }
 
 fn main() {
@@ -444,7 +498,7 @@ fn main() {
 
     if args.len() > 1 {
         let role = &args[1];
-        if role == "--bench" {
+        if role.starts_with("--") {
             // fall through to orchestrator mode
         } else {
             let result = match role.as_str() {
@@ -460,19 +514,34 @@ fn main() {
         }
     }
 
-    println!("=== Codec E2E MMAP Benchmark ===");
-    println!("Transport: TypedTransport over file-backed mmap");
-    println!("Payload: Vec<TestPayload> with Sequence-like Vec fields");
-    println!();
+    let mode = args.windows(2)
+        .find(|w| w[0] == "--mode")
+        .map(|w| w[1].as_str())
+        .unwrap_or("throughput");
+    let phase_timing = mode == "phase_timing";
+    let json_mode = args.iter().any(|a| a == "--json");
+
+    if !json_mode {
+        println!("=== Codec E2E MMAP Benchmark ===");
+        println!("Transport: TypedTransport over file-backed mmap");
+        println!("Mode: {}", if phase_timing { "phase_timing (encode/transport/decode)" } else { "throughput" });
+        println!("Payload: Vec<TestPayload> with Sequence-like Vec fields");
+        println!();
+    }
 
     let scenarios = [(8usize, 50_000u64), (64, 20_000), (256, 10_000)];
     let mut report = BenchReport::new();
     for (batch_size, messages) in scenarios {
         for codec in ["bincode", "rkyv", "flatbuf"] {
-            report.add(run_codec_bench(codec, batch_size, messages));
+            report.add(run_codec_bench(codec, batch_size, messages, phase_timing));
         }
     }
-    report.print_summary();
+
+    if json_mode {
+        println!("{}", serde_json::to_string_pretty(&report).expect("serialize"));
+    } else {
+        report.print_summary();
+    }
 
     if let Some(path) = env::var("MYELON_BENCH_JSON_OUT").ok() {
         report.write_json(&path).expect("write JSON");

@@ -4,6 +4,7 @@
 //! generators, and reporting utilities used by all bench files.
 
 pub mod cli;
+pub mod competitors;
 pub mod coordination;
 pub mod events;
 pub mod latency;

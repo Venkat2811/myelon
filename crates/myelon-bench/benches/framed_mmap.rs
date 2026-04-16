@@ -1,7 +1,7 @@
 //! FramedTransport benchmark over mmap backend.
 
-use myelon_bench::events::{data_rate_mbps, format_throughput};
-use myelon_bench::reporting::{BenchReport, BenchResult};
+use myelon_bench::events::format_throughput;
+use myelon_bench::reporting::{self, BenchReport, BenchResult};
 use myelon::transport::{
     FixedFrame, MmapFramedTransportConsumer, MmapFramedTransportProducer, MyelonWaitStrategy,
 };
@@ -20,23 +20,45 @@ struct Scenario {
     label: &'static str,
     payload_bytes: usize,
     messages: u64,
+    consumers: usize,
+    tag: &'static str,
 }
 
-const SCENARIOS: [Scenario; 3] = [
+const SCENARIOS: [Scenario; 5] = [
     Scenario {
         label: "1KB",
         payload_bytes: 1024,
-        messages: 50_000,
+        messages: 100_000,
+        consumers: 1,
+        tag: "1K",
     },
     Scenario {
         label: "32KB",
         payload_bytes: 32 * 1024,
-        messages: 10_000,
+        messages: 50_000,
+        consumers: 1,
+        tag: "32K",
+    },
+    Scenario {
+        label: "64KB",
+        payload_bytes: 65_524,
+        messages: 50_000,
+        consumers: 1,
+        tag: "64K",
     },
     Scenario {
         label: "128KB-frag",
         payload_bytes: 128 * 1024,
-        messages: 4_000,
+        messages: 10_000,
+        consumers: 1,
+        tag: "128K",
+    },
+    Scenario {
+        label: "32KB_1p3c",
+        payload_bytes: 32 * 1024,
+        messages: 50_000,
+        consumers: 3,
+        tag: "32K_3c",
     },
 ];
 
@@ -63,6 +85,7 @@ fn spawn_child(
     segment: &str,
     payload_bytes: usize,
     messages: u64,
+    num_consumers: usize,
 ) -> Child {
     Command::new(exe)
         .arg(role)
@@ -70,6 +93,7 @@ fn spawn_child(
         .env("MMAP_SEGMENT", segment)
         .env("BENCH_PAYLOAD_BYTES", payload_bytes.to_string())
         .env("BENCH_MESSAGES", messages.to_string())
+        .env("BENCH_NUM_CONSUMERS", num_consumers.to_string())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -122,6 +146,10 @@ fn extract_value(output: &str, key: &str) -> f64 {
     0.0
 }
 
+fn read_env_usize(key: &str, default: usize) -> usize {
+    env::var(key).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+}
+
 fn read_env() -> (disruptor_mp::MmapTransportLayout, usize, u64) {
     let root = env::var("MMAP_ROOT").expect("MMAP_ROOT");
     let segment = env::var("MMAP_SEGMENT").expect("MMAP_SEGMENT");
@@ -140,11 +168,12 @@ fn read_env() -> (disruptor_mp::MmapTransportLayout, usize, u64) {
 
 fn producer_process() -> Result<(), Box<dyn std::error::Error>> {
     let (layout, payload_bytes, messages) = read_env();
+    let num_consumers = read_env_usize("BENCH_NUM_CONSUMERS", 1);
     let payload = vec![42u8; payload_bytes];
     let mut producer = MmapFramedTransportProducer::<Frame>::create(layout, BUFFER_DEPTH)?;
 
-    if !producer.wait_for_consumers_ready(1, Duration::from_secs(30)) {
-        return Err("timeout waiting for consumer".into());
+    if !producer.wait_for_consumers_ready(num_consumers as i64, Duration::from_secs(60)) {
+        return Err(format!("timeout waiting for {num_consumers} consumers").into());
     }
 
     let start = Instant::now();
@@ -203,96 +232,70 @@ fn run_benchmark(scenario: Scenario) -> BenchResult {
     let segment = unique_segment();
     let root_str = root.display().to_string();
     let exe = env::current_exe().expect("current_exe");
+    let nc = scenario.consumers;
 
     let producer = spawn_child(
-        &exe,
-        "framed_mmap_producer",
-        &root_str,
-        &segment,
-        scenario.payload_bytes,
-        scenario.messages,
+        &exe, "framed_mmap_producer", &root_str, &segment,
+        scenario.payload_bytes, scenario.messages, nc,
     );
-    let consumer = spawn_child(
-        &exe,
-        "framed_mmap_consumer",
-        &root_str,
-        &segment,
-        scenario.payload_bytes,
-        scenario.messages,
-    );
+    let consumers: Vec<Child> = (0..nc)
+        .map(|_| spawn_child(
+            &exe, "framed_mmap_consumer", &root_str, &segment,
+            scenario.payload_bytes, scenario.messages, nc,
+        ))
+        .collect();
 
     let timeout = Duration::from_secs(180);
+    let consumer_outputs: Vec<_> = consumers
+        .into_iter()
+        .map(|c| wait_with_output_timeout(c, timeout))
+        .collect();
     let prod_out = wait_with_output_timeout(producer, timeout);
-    let cons_out = wait_with_output_timeout(consumer, timeout);
 
     let prod_str = match prod_out {
         Ok(o) => {
-            if !o.stderr.is_empty() {
-                eprintln!(
-                    "Prod stderr [{}]: {}",
-                    scenario.label,
-                    String::from_utf8_lossy(&o.stderr)
-                );
-            }
+            if !o.stderr.is_empty() { eprintln!("[{} prod stderr] {}", scenario.label, String::from_utf8_lossy(&o.stderr)); }
             String::from_utf8_lossy(&o.stdout).to_string()
         }
-        Err(e) => {
-            eprintln!("Prod error [{}]: {e}", scenario.label);
-            String::new()
-        }
-    };
-    let cons_str = match cons_out {
-        Ok(o) => {
-            if !o.stderr.is_empty() {
-                eprintln!(
-                    "Cons stderr [{}]: {}",
-                    scenario.label,
-                    String::from_utf8_lossy(&o.stderr)
-                );
-            }
-            String::from_utf8_lossy(&o.stdout).to_string()
-        }
-        Err(e) => {
-            eprintln!("Cons error [{}]: {e}", scenario.label);
-            String::new()
-        }
+        Err(e) => { eprintln!("[{} prod] {e}", scenario.label); String::new() }
     };
 
     let prod_tp = extract_value(&prod_str, "Throughput");
-    let cons_tp = extract_value(&cons_str, "Throughput");
+    let mut total_cons_tp = 0.0;
+    for (i, result) in consumer_outputs.into_iter().enumerate() {
+        match result {
+            Ok(o) => {
+                if !o.stderr.is_empty() { eprintln!("[{} cons{i} stderr] {}", scenario.label, String::from_utf8_lossy(&o.stderr)); }
+                total_cons_tp += extract_value(&String::from_utf8_lossy(&o.stdout), "Throughput");
+            }
+            Err(e) => eprintln!("[{} cons{i}] {e}", scenario.label),
+        }
+    }
+    let avg_cons_tp = if nc > 0 { total_cons_tp / nc as f64 } else { 0.0 };
 
     let _ = std::fs::remove_dir_all(&root);
 
+    let label_prefix = if nc == 1 { "framed_1p1c" } else { &format!("framed_1p{}c", nc) };
+    let cons_label = if nc == 1 { "consumer" } else { "avg cons" };
     println!(
-        "  framed_1p1c_{:<10} producer: {:>10} msgs/s  consumer: {:>10} msgs/s",
-        scenario.label,
-        format_throughput(prod_tp),
-        format_throughput(cons_tp),
+        "  {}_{:<10} producer: {:>10} msgs/s  {}: {:>10} msgs/s",
+        label_prefix, scenario.label, format_throughput(prod_tp), cons_label, format_throughput(avg_cons_tp),
     );
 
-    BenchResult {
-        scenario: format!("framed_1p1c_{}", scenario.label),
-        backend: "mmap".to_string(),
-        layer: "framed".to_string(),
-        codec: None,
-        wait_strategy: "BusySpin".to_string(),
-        num_consumers: 1,
-        payload_bytes: scenario.payload_bytes,
-        events: scenario.messages as usize,
-        producer_ops_sec: prod_tp,
-        consumer_ops_sec: cons_tp,
-        data_rate_mbps: data_rate_mbps(prod_tp, scenario.payload_bytes),
-        latency: None,
-    }
+    reporting::make_result(
+        "framed_mmap",
+        &format!("{}_{}", label_prefix, scenario.label),
+        "mmap", "framed", None, "BusySpin",
+        scenario.payload_bytes, BUFFER_DEPTH, scenario.messages, 0, nc,
+        prod_tp, avg_cons_tp, None,
+    )
 }
 
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() > 1 {
         let role = &args[1];
-        if role == "--bench" {
-            // fall through
-        } else {
+        if role.starts_with("--") { /* fall through */ } else {
             let result = match role.as_str() {
                 "framed_mmap_producer" => producer_process(),
                 "framed_mmap_consumer" => consumer_process(),
@@ -306,16 +309,32 @@ fn main() {
         }
     }
 
-    println!("=== Framed Transport MMAP Benchmark ===");
-    println!("Frame: {}KB data capacity", FRAME_DATA_BYTES / 1024);
-    println!("Transport: file-backed mmap");
-    println!();
+    let payload_arg = args.windows(2)
+        .find(|w| w[0] == "--payload")
+        .map(|w| w[1].as_str())
+        .unwrap_or("all");
+
+    let json_mode = args.iter().any(|a| a == "--json");
+
+    if !json_mode {
+        println!("=== Framed Transport MMAP Benchmark ===");
+        println!("Frame: {}KB data capacity", FRAME_DATA_BYTES / 1024);
+        println!("Transport: file-backed mmap");
+        println!();
+    }
 
     let mut report = BenchReport::new();
     for scenario in SCENARIOS {
-        report.add(run_benchmark(scenario));
+        if payload_arg == "all" || payload_arg == scenario.tag {
+            report.add(run_benchmark(scenario));
+        }
     }
-    report.print_summary();
+
+    if json_mode {
+        println!("{}", serde_json::to_string_pretty(&report).expect("serialize"));
+    } else {
+        report.print_summary();
+    }
 
     if let Some(path) = env::var("MYELON_BENCH_JSON_OUT").ok() {
         report.write_json(&path).expect("write JSON");

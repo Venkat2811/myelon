@@ -145,49 +145,183 @@ impl BenchReport {
     pub fn write_csv(&self, path: &str) -> std::io::Result<()> {
         let mut csv = String::from(
             "scenario,backend,layer,codec,mode,strategy,msg_bytes,buffer,consumers,\
-             prod_ops,cons_ops,mbps,p50_ns,p95_ns,p99_ns,p999_ns,verified\n",
+             prod_ops,cons_ops,mbps,p50_ns,p99_ns,p999_ns,p9999_ns,p99999_ns,verified\n",
         );
         for r in &self.results {
             let codec = r.codec.as_deref().unwrap_or("");
-            let p50 = r.latency.as_ref().map(|l| l.p50_ns.to_string()).unwrap_or_default();
-            let p95 = r.latency.as_ref().map(|l| l.p95_ns.to_string()).unwrap_or_default();
-            let p99 = r.latency.as_ref().map(|l| l.p99_ns.to_string()).unwrap_or_default();
-            let p999 = r.latency.as_ref().map(|l| l.p999_ns.to_string()).unwrap_or_default();
+            let lat_field = |f: fn(&latency::LatencyStats) -> u64| -> String {
+                r.latency.as_ref().map(|l| f(l).to_string()).unwrap_or_default()
+            };
             csv.push_str(&format!(
-                "{},{},{},{},{},{},{},{},{},{:.0},{:.0},{:.1},{},{},{},{},{}\n",
+                "{},{},{},{},{},{},{},{},{},{:.0},{:.0},{:.1},{},{},{},{},{},{}\n",
                 r.scenario, r.backend, r.layer, codec, r.measurement_mode, r.wait_strategy,
                 r.config.message_size_bytes, r.config.buffer_depth, r.config.num_consumers,
                 r.results.producer_throughput_ops_sec, r.results.consumer_throughput_ops_sec,
-                r.results.data_rate_mbps, p50, p95, p99, p999, r.results.verification_passed,
+                r.results.data_rate_mbps,
+                lat_field(|l| l.p50_ns), lat_field(|l| l.p99_ns), lat_field(|l| l.p999_ns),
+                lat_field(|l| l.p9999_ns), lat_field(|l| l.p99999_ns),
+                r.results.verification_passed,
             ));
         }
         std::fs::write(path, csv)
     }
 
-    /// Print a formatted summary table.
+    /// Print a formatted summary table using `tabled`.
     pub fn print_summary(&self) {
-        println!();
-        println!(
-            "{:<28} {:>5} {:>8} {:>7} {:>4} {:>11} {:>11} {:>8} {:>8} {:>8} {:>8}",
-            "Scenario", "Bknd", "Layer", "Codec", "Cons",
-            "Prod ops/s", "Cons ops/s", "P50", "P95", "P99", "P99.9"
-        );
-        println!("{}", "─".repeat(130));
-        for r in &self.results {
-            let codec = r.codec.as_deref().unwrap_or("-");
-            let p50 = r.latency.as_ref().map(|l| latency::format_ns(l.p50_ns)).unwrap_or_else(|| "-".into());
-            let p95 = r.latency.as_ref().map(|l| latency::format_ns(l.p95_ns)).unwrap_or_else(|| "-".into());
-            let p99 = r.latency.as_ref().map(|l| latency::format_ns(l.p99_ns)).unwrap_or_else(|| "-".into());
-            let p999 = r.latency.as_ref().map(|l| latency::format_ns(l.p999_ns)).unwrap_or_else(|| "-".into());
-            println!(
-                "{:<28} {:>5} {:>8} {:>7} {:>4} {:>11} {:>11} {:>8} {:>8} {:>8} {:>8}",
-                r.scenario, r.backend, r.layer, codec, r.config.num_consumers,
-                format_throughput(r.results.producer_throughput_ops_sec),
-                format_throughput(r.results.consumer_throughput_ops_sec),
-                p50, p95, p99, p999,
-            );
+        use tabled::{Table, Tabled};
+
+        #[derive(Tabled)]
+        struct Row {
+            #[tabled(rename = "Scenario")]
+            scenario: String,
+            #[tabled(rename = "Bknd")]
+            backend: String,
+            #[tabled(rename = "Layer")]
+            layer: String,
+            #[tabled(rename = "Codec")]
+            codec: String,
+            #[tabled(rename = "Cons")]
+            consumers: usize,
+            #[tabled(rename = "Prod ops/s")]
+            prod_ops: String,
+            #[tabled(rename = "Cons ops/s")]
+            cons_ops: String,
+            #[tabled(rename = "P50")]
+            p50: String,
+            #[tabled(rename = "P99")]
+            p99: String,
+            #[tabled(rename = "P99.9")]
+            p999: String,
+            #[tabled(rename = "P99.99")]
+            p9999: String,
+            #[tabled(rename = "P99.999")]
+            p99999: String,
         }
-        println!();
+
+        let rows: Vec<Row> = self.results.iter().map(|r| {
+            let lat = |f: fn(&latency::LatencyStats) -> u64| {
+                r.latency.as_ref().map(|l| latency::format_ns(f(l))).unwrap_or_else(|| "-".into())
+            };
+            Row {
+                scenario: r.scenario.clone(),
+                backend: r.backend.clone(),
+                layer: r.layer.clone(),
+                codec: r.codec.as_deref().unwrap_or("-").to_string(),
+                consumers: r.config.num_consumers,
+                prod_ops: format_throughput(r.results.producer_throughput_ops_sec),
+                cons_ops: format_throughput(r.results.consumer_throughput_ops_sec),
+                p50: lat(|l| l.p50_ns),
+                p99: lat(|l| l.p99_ns),
+                p999: lat(|l| l.p999_ns),
+                p9999: lat(|l| l.p9999_ns),
+                p99999: lat(|l| l.p99999_ns),
+            }
+        }).collect();
+
+        println!("\n{}\n", Table::new(rows));
+    }
+
+    /// Write a markdown report file using tabled with markdown style.
+    pub fn write_markdown(&self, path: &str) -> std::io::Result<()> {
+        use tabled::{Table, Tabled, settings::Style};
+
+        #[derive(Tabled)]
+        struct Row {
+            #[tabled(rename = "Scenario")]
+            scenario: String,
+            #[tabled(rename = "Backend")]
+            backend: String,
+            #[tabled(rename = "Layer")]
+            layer: String,
+            #[tabled(rename = "Codec")]
+            codec: String,
+            #[tabled(rename = "Consumers")]
+            consumers: usize,
+            #[tabled(rename = "Producer ops/s")]
+            prod_ops: String,
+            #[tabled(rename = "Consumer ops/s")]
+            cons_ops: String,
+            #[tabled(rename = "P50")]
+            p50: String,
+            #[tabled(rename = "P99")]
+            p99: String,
+            #[tabled(rename = "P99.9")]
+            p999: String,
+            #[tabled(rename = "P99.99")]
+            p9999: String,
+            #[tabled(rename = "P99.999")]
+            p99999: String,
+        }
+
+        let rows: Vec<Row> = self.results.iter().map(|r| {
+            let lat = |f: fn(&latency::LatencyStats) -> u64| -> String {
+                r.latency.as_ref().map(|l| latency::format_ns(f(l))).unwrap_or_else(|| "-".into())
+            };
+            Row {
+                scenario: r.scenario.clone(),
+                backend: r.backend.clone(),
+                layer: r.layer.clone(),
+                codec: r.codec.as_deref().unwrap_or("-").to_string(),
+                consumers: r.config.num_consumers,
+                prod_ops: format_throughput(r.results.producer_throughput_ops_sec),
+                cons_ops: format_throughput(r.results.consumer_throughput_ops_sec),
+                p50: lat(|l| l.p50_ns),
+                p99: lat(|l| l.p99_ns),
+                p999: lat(|l| l.p999_ns),
+                p9999: lat(|l| l.p9999_ns),
+                p99999: lat(|l| l.p99999_ns),
+            }
+        }).collect();
+
+        #[derive(Tabled)]
+        struct ConfigRow {
+            #[tabled(rename = "Scenario")]
+            scenario: String,
+            #[tabled(rename = "Payload")]
+            payload: String,
+            #[tabled(rename = "Buffer Depth")]
+            buffer: usize,
+            #[tabled(rename = "Events")]
+            events: u64,
+            #[tabled(rename = "Warmup")]
+            warmup: u64,
+        }
+
+        let config_rows: Vec<ConfigRow> = self.results.iter().map(|r| {
+            let size = if r.config.message_size_bytes >= 1_048_576 {
+                format!("{}MB", r.config.message_size_bytes / 1_048_576)
+            } else if r.config.message_size_bytes >= 1024 {
+                format!("{}KB", r.config.message_size_bytes / 1024)
+            } else {
+                format!("{}B", r.config.message_size_bytes)
+            };
+            ConfigRow {
+                scenario: r.scenario.clone(),
+                payload: size,
+                buffer: r.config.buffer_depth,
+                events: r.config.num_messages,
+                warmup: r.config.warmup_messages,
+            }
+        }).collect();
+
+        let results_table = Table::new(rows).with(Style::markdown()).to_string();
+        let config_table = Table::new(config_rows).with(Style::markdown()).to_string();
+
+        let mut md = String::new();
+        md.push_str("# Benchmark Report\n\n");
+        md.push_str(&format!("- **Platform**: {}\n", self.metadata.platform));
+        md.push_str(&format!("- **CPU**: {}\n", self.metadata.cpu));
+        md.push_str(&format!("- **Timestamp**: {}\n", self.metadata.timestamp));
+        if let Some(ref commit) = self.metadata.git_commit {
+            md.push_str(&format!("- **Git Commit**: `{}`\n", commit));
+        }
+        md.push_str("\n## Results\n\n");
+        md.push_str(&results_table);
+        md.push_str("\n\n## Configuration\n\n");
+        md.push_str(&config_table);
+        md.push('\n');
+
+        std::fs::write(path, md)
     }
 }
 

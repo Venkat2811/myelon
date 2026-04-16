@@ -74,3 +74,15 @@ harness = false
 [[bench]]
 name = "layout_validation"
 harness = false
+
+[[bench]]
+name = "codec_nofrag_shm"
+harness = false
+
+[[bench]]
+name = "monster_sweep_shm"
+harness = false
+
+[[bench]]
+name = "monster_sweep_mmap"
+harness = false

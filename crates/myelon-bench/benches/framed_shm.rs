@@ -3,11 +3,14 @@
 //! Measures the overhead of myelon's FramedTransportProducer/Consumer
 //! (frame headers, message reassembly) vs raw disruptor-mp ring.
 //!
+//! Payload sizes: 1KB (single-frame), 32KB, 64KB (max single-frame), 128KB (fragmented)
+//!
 //! Run: cargo bench -p myelon-bench --bench framed_shm
+//! Single payload: cargo bench -p myelon-bench --bench framed_shm -- --payload 128K
 
 use myelon_bench::coordination::BenchmarkCoordination;
-use myelon_bench::events::{data_rate_mbps, format_throughput};
-use myelon_bench::reporting::{BenchReport, BenchResult};
+use myelon_bench::events::format_throughput;
+use myelon_bench::reporting::{self, BenchReport, BenchResult};
 use myelon::transport::{
     FixedFrame, FramedTransportConsumer, FramedTransportProducer, MyelonWaitStrategy,
 };
@@ -20,9 +23,6 @@ use std::time::{Duration, Instant};
 const FRAME_DATA_BYTES: usize = 64 * 1024 - 12;
 type Frame = FixedFrame<FRAME_DATA_BYTES>;
 
-const BUFFER_DEPTH: usize = 1024;
-const NUM_MESSAGES: u64 = 50_000;
-
 fn get_segment_name() -> String {
     if let Ok(name) = env::var("BENCHMARK_SEGMENT_NAME") {
         return name;
@@ -30,13 +30,29 @@ fn get_segment_name() -> String {
     disruptor_mp::portable_shm_segment_name("frshm")
 }
 
-fn spawn_child(exe: &std::path::Path, role: &str, segment: &str) -> Child {
-    Command::new(exe)
-        .arg(role)
+fn read_env_usize(key: &str, default: usize) -> usize {
+    env::var(key).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+}
+
+fn read_env_u64(key: &str, default: u64) -> u64 {
+    env::var(key).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+}
+
+fn spawn_child_with_env(
+    exe: &std::path::Path,
+    role: &str,
+    segment: &str,
+    extra_env: &[(&str, String)],
+) -> Child {
+    let mut cmd = Command::new(exe);
+    cmd.arg(role)
         .env("BENCHMARK_SEGMENT_NAME", segment)
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
+        .stderr(Stdio::piped());
+    for (key, val) in extra_env {
+        cmd.env(key, val);
+    }
+    cmd.spawn()
         .unwrap_or_else(|e| panic!("spawn {role}: {e}"))
 }
 
@@ -74,80 +90,72 @@ fn extract_value(output: &str, key: &str) -> f64 {
 }
 
 // ============================================================
-// Producer child
+// Producer child (configurable payload size + message count)
 // ============================================================
 
 fn producer_process() -> Result<(), Box<dyn std::error::Error>> {
     let segment = get_segment_name();
+    let payload_size = read_env_usize("BENCH_PAYLOAD_SIZE", 1024);
+    let num_messages = read_env_u64("BENCH_NUM_MESSAGES", 50_000);
+    let buffer_depth = read_env_usize("BENCH_BUFFER_DEPTH", 1024);
+    let num_consumers = read_env_usize("BENCH_NUM_CONSUMERS", 1);
 
-    // Create framed transport producer (creates underlying ring)
-    let mut producer = FramedTransportProducer::<Frame>::create(&segment, BUFFER_DEPTH)?;
-
-    // Create coordination after ring exists
+    let mut producer = FramedTransportProducer::<Frame>::create(&segment, buffer_depth)?;
     let coord = BenchmarkCoordination::create(&segment)?;
 
-    // Wait for consumer
-    if !coord.wait_for_consumers(1, Duration::from_secs(30)) {
-        return Err("timeout waiting for consumer".into());
+    if !coord.wait_for_consumers(num_consumers, Duration::from_secs(30)) {
+        return Err(format!("timeout waiting for {num_consumers} consumers").into());
     }
 
-    // Trigger consumer discovery for backpressure
     producer.discover_consumers(Duration::from_secs(3));
 
-    // Generate a realistic payload (1KB — fits in one 64KB frame)
-    let payload = vec![42u8; 1024];
+    let payload = vec![42u8; payload_size];
 
-    // Measured phase
     let start = Instant::now();
-    for i in 0..NUM_MESSAGES {
+    for i in 0..num_messages {
         producer.publish(&payload, (i % 256) as u8);
     }
     let elapsed = start.elapsed();
 
-    let throughput = NUM_MESSAGES as f64 / elapsed.as_secs_f64();
-    println!("Throughput: {:.0} msgs/sec", throughput);
+    println!("Throughput: {:.0} msgs/sec", num_messages as f64 / elapsed.as_secs_f64());
     println!("Time: {:.3} seconds", elapsed.as_secs_f64());
 
-    coord.signal_producer_done(NUM_MESSAGES as i64);
-    coord.wait_for_consumers_done(1, Duration::from_secs(30));
-
+    coord.signal_producer_done(num_messages as i64);
+    coord.wait_for_consumers_done(num_consumers, Duration::from_secs(60));
     Ok(())
 }
 
 // ============================================================
-// Consumer child
+// Consumer child (configurable)
 // ============================================================
 
 fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
     let segment = get_segment_name();
+    let buffer_depth = read_env_usize("BENCH_BUFFER_DEPTH", 1024);
+    let num_messages = read_env_u64("BENCH_NUM_MESSAGES", 50_000);
 
     let coord = BenchmarkCoordination::attach_with_timeout(&segment, Duration::from_secs(30))?;
 
     let mut consumer =
-        FramedTransportConsumer::<Frame>::attach(&segment, BUFFER_DEPTH, MyelonWaitStrategy::BusySpin)?;
+        FramedTransportConsumer::<Frame>::attach(&segment, buffer_depth, MyelonWaitStrategy::BusySpin)?;
 
     coord.signal_consumer_ready();
 
     let start = Instant::now();
     let mut consumed = 0u64;
 
-    loop {
+    // Consume exactly num_messages — avoids deadlock from calling
+    // recv_message_blocking after all messages are consumed.
+    while consumed < num_messages {
         let (_kind, _data) = consumer.recv_message_blocking();
         consumed += 1;
-
-        if coord.is_producer_done() && consumed >= coord.events_produced() as u64 {
-            break;
-        }
     }
     let elapsed = start.elapsed();
 
-    let throughput = consumed as f64 / elapsed.as_secs_f64();
-    println!("Throughput: {:.0} msgs/sec", throughput);
-    println!("Time: {:.3} seconds", elapsed.as_secs_f64());
+    println!("Throughput: {:.0} msgs/sec", consumed as f64 / elapsed.as_secs_f64());
     println!("Events: {}", consumed);
 
     coord.signal_consumer_done(consumed as i64);
-
     Ok(())
 }
 
@@ -155,84 +163,143 @@ fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
 // Orchestrator
 // ============================================================
 
-fn run_benchmark(payload_label: &str) -> BenchResult {
-    let segment = get_segment_name();
+fn unique_segment(label: &str) -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+    let name = format!("fr_{}_{}_{}", label, std::process::id() % 10000, ts % 100000);
+    disruptor_mp::portable_shm_segment_name(&name)
+}
+
+fn run_benchmark(
+    label: &str,
+    payload_size: usize,
+    num_messages: u64,
+    buffer_depth: usize,
+    num_consumers: usize,
+) -> BenchResult {
+    let segment = unique_segment(label);
     let exe = env::current_exe().expect("current_exe");
 
-    let producer_child = spawn_child(&exe, "framed_producer", &segment);
-    let consumer_child = spawn_child(&exe, "framed_consumer", &segment);
+    let env_common: Vec<(&str, String)> = vec![
+        ("BENCH_PAYLOAD_SIZE", payload_size.to_string()),
+        ("BENCH_NUM_MESSAGES", num_messages.to_string()),
+        ("BENCH_BUFFER_DEPTH", buffer_depth.to_string()),
+        ("BENCH_NUM_CONSUMERS", num_consumers.to_string()),
+    ];
 
-    let timeout = Duration::from_secs(120);
-    let prod_result = wait_with_output_timeout(producer_child, timeout);
-    let cons_result = wait_with_output_timeout(consumer_child, timeout);
+    let producer = spawn_child_with_env(&exe, "framed_producer", &segment, &env_common);
+    let consumers: Vec<Child> = (0..num_consumers)
+        .map(|_| spawn_child_with_env(&exe, "framed_consumer", &segment, &env_common))
+        .collect();
+
+    let timeout = Duration::from_secs(180);
+    let consumer_outputs: Vec<_> = consumers
+        .into_iter()
+        .map(|c| wait_with_output_timeout(c, timeout))
+        .collect();
+    let prod_result = wait_with_output_timeout(producer, timeout);
 
     let prod_out = match prod_result {
-        Ok(o) => { if !o.stderr.is_empty() { eprintln!("Prod stderr: {}", String::from_utf8_lossy(&o.stderr)); } String::from_utf8_lossy(&o.stdout).to_string() }
-        Err(e) => { eprintln!("Prod error: {e}"); String::new() }
-    };
-    let cons_out = match cons_result {
-        Ok(o) => { if !o.stderr.is_empty() { eprintln!("Cons stderr: {}", String::from_utf8_lossy(&o.stderr)); } String::from_utf8_lossy(&o.stdout).to_string() }
-        Err(e) => { eprintln!("Cons error: {e}"); String::new() }
+        Ok(o) => {
+            if !o.stderr.is_empty() { eprintln!("[{label} prod stderr] {}", String::from_utf8_lossy(&o.stderr)); }
+            String::from_utf8_lossy(&o.stdout).to_string()
+        }
+        Err(e) => { eprintln!("[{label} prod] {e}"); String::new() }
     };
 
     let prod_tp = extract_value(&prod_out, "Throughput");
-    let cons_tp = extract_value(&cons_out, "Throughput");
 
+    let mut total_cons_tp = 0.0;
+    for (i, result) in consumer_outputs.into_iter().enumerate() {
+        match result {
+            Ok(o) => {
+                if !o.stderr.is_empty() { eprintln!("[{label} cons{i} stderr] {}", String::from_utf8_lossy(&o.stderr)); }
+                let stdout = String::from_utf8_lossy(&o.stdout).to_string();
+                total_cons_tp += extract_value(&stdout, "Throughput");
+            }
+            Err(e) => eprintln!("[{label} cons{i}] {e}"),
+        }
+    }
+    let avg_cons_tp = if num_consumers > 0 { total_cons_tp / num_consumers as f64 } else { 0.0 };
+
+    let cons_label = if num_consumers == 1 { "consumer" } else { "avg cons" };
     println!(
-        "  framed_1p1c_{} producer: {} msgs/s  consumer: {} msgs/s",
-        payload_label,
-        format_throughput(prod_tp),
-        format_throughput(cons_tp),
+        "  {:<30} producer: {:>10} msgs/s  {}: {:>10} msgs/s",
+        label, format_throughput(prod_tp), cons_label, format_throughput(avg_cons_tp),
     );
 
-    BenchResult {
-        scenario: format!("framed_1p1c_{payload_label}"),
-        backend: "shm".to_string(),
-        layer: "framed".to_string(),
-        codec: None,
-        wait_strategy: "BusySpin".to_string(),
-        num_consumers: 1,
-        payload_bytes: 1024,
-        events: NUM_MESSAGES as usize,
-        producer_ops_sec: prod_tp,
-        consumer_ops_sec: cons_tp,
-        data_rate_mbps: data_rate_mbps(prod_tp, 1024),
-        latency: None,
-    }
+    reporting::make_result(
+        "framed_shm", label, "shm", "framed", None, "BusySpin",
+        payload_size, buffer_depth, num_messages, 0, num_consumers,
+        prod_tp, avg_cons_tp, None,
+    )
 }
+
+// ============================================================
+// main
+// ============================================================
 
 fn main() {
     let args: Vec<String> = env::args().collect();
 
+    // Child dispatch
     if args.len() > 1 {
         let role = &args[1];
-        if role == "--bench" {
-            // fall through
-        } else {
-            match role.as_str() {
-                "framed_producer" => {
-                    if let Err(e) = producer_process() { eprintln!("Producer failed: {e}"); std::process::exit(1); }
-                    return;
-                }
-                "framed_consumer" => {
-                    if let Err(e) = consumer_process() { eprintln!("Consumer failed: {e}"); std::process::exit(1); }
-                    return;
-                }
-                _ => {}
-            }
+        if role.starts_with("--") { /* fall through */ } else {
+            let result = match role.as_str() {
+                "framed_producer" => producer_process(),
+                "framed_consumer" => consumer_process(),
+                _ => Ok(()),
+            };
+            if let Err(e) = result { eprintln!("{role} failed: {e}"); std::process::exit(1); }
+            return;
         }
     }
 
-    println!("=== Framed Transport SHM Benchmark ===");
-    println!("Frame: {}KB data capacity", FRAME_DATA_BYTES / 1024);
-    println!("Payload: 1KB per message");
-    println!("Buffer: {} frames", BUFFER_DEPTH);
-    println!("Messages: {}", NUM_MESSAGES);
-    println!();
+    let payload_arg = args.windows(2)
+        .find(|w| w[0] == "--payload")
+        .map(|w| w[1].as_str())
+        .unwrap_or("all");
+
+    let json_mode = args.iter().any(|a| a == "--json");
+
+    if !json_mode {
+        println!("=== Framed Transport SHM Benchmark ===");
+        println!("Frame: {}KB data capacity", FRAME_DATA_BYTES / 1024);
+        println!("Buffer: 1024 frames (2048 for fragmented)");
+        println!();
+    }
+
+    // Scenarios from RFC 0013 Section 4.2
+    struct Scenario {
+        label: &'static str,
+        payload: usize,
+        messages: u64,
+        buffer: usize,
+        consumers: usize,
+        tag: &'static str,
+    }
+
+    let scenarios = [
+        Scenario { label: "framed_1p1c_1KB",     payload: 1_024,   messages: 100_000, buffer: 1024, consumers: 1, tag: "1K"   },
+        Scenario { label: "framed_1p1c_32KB",    payload: 32_768,  messages: 50_000,  buffer: 1024, consumers: 1, tag: "32K"  },
+        Scenario { label: "framed_1p1c_64KB",    payload: 65_524,  messages: 50_000,  buffer: 1024, consumers: 1, tag: "64K"  },
+        Scenario { label: "framed_1p1c_128KB",   payload: 131_072, messages: 10_000,  buffer: 2048, consumers: 1, tag: "128K" },
+        Scenario { label: "framed_1p3c_32KB",    payload: 32_768,  messages: 50_000,  buffer: 1024, consumers: 3, tag: "32K_3c" },
+    ];
 
     let mut report = BenchReport::new();
-    report.add(run_benchmark("1KB"));
-    report.print_summary();
+    for s in &scenarios {
+        if payload_arg == "all" || payload_arg == s.tag {
+            report.add(run_benchmark(s.label, s.payload, s.messages, s.buffer, s.consumers));
+        }
+    }
+
+    if json_mode {
+        println!("{}", serde_json::to_string_pretty(&report).expect("serialize"));
+    } else {
+        report.print_summary();
+    }
 
     if let Some(path) = env::var("MYELON_BENCH_JSON_OUT").ok() {
         report.write_json(&path).expect("write JSON");
