@@ -2,6 +2,7 @@
 members = [
   "crates/disruptor-mp",
   "crates/legacy-wip",
+  "crates/myelon-bench",
   "python-surface-archive",
   "crates/dst-fixtures",
 ]

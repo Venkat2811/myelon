@@ -1,0 +1,8 @@
+//! Shared benchmark infrastructure for the Myelon transport stack.
+//!
+//! This crate provides multiprocess coordination, event types, payload
+//! generators, and reporting utilities used by all bench files.
+
+pub mod coordination;
+pub mod events;
+pub mod reporting;
