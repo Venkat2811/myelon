@@ -6,3 +6,8 @@
 pub mod coordination;
 pub mod events;
 pub mod reporting;
+
+pub mod generated {
+    #[path = "bench_payload_generated.rs"]
+    pub mod bench_payload_generated;
+}

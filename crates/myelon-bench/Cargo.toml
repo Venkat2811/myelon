@@ -24,6 +24,9 @@ tabled = "0.20.0"
 clap = { version = "4.0", features = ["derive"] }
 chrono = "0.4"
 num-format = "0.4"
+shared_memory = "0.12"
+libc = "0.2"
+ctrlc = "3.4"
 
 [lib]
 name = "myelon_bench"

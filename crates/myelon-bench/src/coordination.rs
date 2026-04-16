@@ -5,7 +5,6 @@
 //! regardless of the benchmark's transport backend.
 
 use disruptor_mp::lock_free::SharedCursor;
-use disruptor_mp::SharedCursorTrait;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 

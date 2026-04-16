@@ -1,0 +1,15 @@
+namespace myelon.bench;
+
+table TestPayload {
+  id: ulong;
+  token_ids: [uint];
+  block_table: [uint];
+  temperature: float;
+  label: string;
+}
+
+table PayloadBatch {
+  entries: [TestPayload];
+}
+
+root_type PayloadBatch;

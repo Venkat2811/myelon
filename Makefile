@@ -11,7 +11,8 @@ define ROOT_RUN_WITH_TIMEOUT
 endef
 
 .PHONY: \
-	help fmt check build test bench bench-mp \
+	help fmt check build test bench bench-mp bench-matrix bench-matrix-smoke \
+	bench-matrix-raw bench-matrix-framed bench-matrix-codec bench-matrix-wait bench-matrix-competitive bench-matrix-layout \
 	test-rust-fast test-rust-extended test-rust-perf-gate test-rust-manifest \
 	test-py-fast test-py-extended test-py-manifest py-check py-test py-setup \
 	check-layer-boundaries check-layout-refs check-hot-path-ffi \
@@ -31,6 +32,8 @@ help:
 	@echo "  make build               - cargo build --workspace"
 	@echo "  make test                - cargo test --workspace"
 	@echo "  make bench-mp            - run multiprocess benchmark set"
+	@echo "  make bench-matrix        - run implemented myelon-bench matrix targets"
+	@echo "  make bench-matrix-smoke  - run a fast smoke subset of myelon-bench"
 	@echo "  make test-rust-fast      - canonical disruptor-mp Linux Rust lane"
 	@echo "  make test-rust-extended  - disruptor-mp Linux lane + stress/perf smoke"
 	@echo "  make test-rust-perf-gate - live disruptor-mp Linux perf regression gate"
@@ -69,6 +72,36 @@ bench-mp:
 	@$(CARGO) bench -p disruptor-mp --bench ipc_shm_high_load
 	@$(CARGO) bench -p disruptor-mp --bench benchmark_all_wait_strategies_auto_rust
 	@$(CARGO) bench -p disruptor-mp --bench competitive_pingpong
+
+bench-matrix: bench-matrix-raw bench-matrix-framed bench-matrix-codec bench-matrix-wait bench-matrix-competitive bench-matrix-layout
+
+bench-matrix-raw:
+	@$(CARGO) bench -p myelon-bench --bench raw_ring_shm
+	@$(CARGO) bench -p myelon-bench --bench raw_ring_mmap
+
+bench-matrix-framed:
+	@$(CARGO) bench -p myelon-bench --bench framed_shm
+	@$(CARGO) bench -p myelon-bench --bench framed_mmap
+
+bench-matrix-codec:
+	@$(CARGO) bench -p myelon-bench --bench codec_e2e_mmap
+
+bench-matrix-wait:
+	@$(CARGO) bench -p myelon-bench --bench wait_strategy_shm -- quick
+	@$(CARGO) bench -p myelon-bench --bench wait_strategy_mmap -- quick
+
+bench-matrix-competitive:
+	@$(CARGO) bench -p myelon-bench --bench competitive_shm -- --message-size 64 --num-messages 1000 --warmup 100 --no-compare
+
+bench-matrix-layout:
+	@LAYOUT_BENCH_ITERATIONS=5 $(CARGO) bench -p myelon-bench --bench layout_validation
+
+bench-matrix-smoke:
+	@$(CARGO) bench -p myelon-bench --bench raw_ring_shm -- --class message
+	@$(CARGO) bench -p myelon-bench --bench raw_ring_mmap
+	@$(CARGO) bench -p myelon-bench --bench framed_mmap
+	@$(CARGO) bench -p myelon-bench --bench wait_strategy_shm -- quick
+	@$(CARGO) bench -p myelon-bench --bench wait_strategy_mmap -- quick
 
 test-rust-fast:
 	@$(MAKE) test-linux
