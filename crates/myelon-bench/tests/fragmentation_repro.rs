@@ -11,9 +11,11 @@ use std::io::Read as _;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-const FRAME_DATA_BYTES: usize = 64 * 1024 - 12;
+// Use a 4KB frame (not 64KB) so fragmentation happens at smaller payloads,
+// keeping the test fast while still exercising multi-frame reassembly.
+const FRAME_DATA_BYTES: usize = 4 * 1024 - 12;
 type Frame = FixedFrame<FRAME_DATA_BYTES>;
-const BUFFER_DEPTH: usize = 4096;
+const BUFFER_DEPTH: usize = 512;
 
 fn get_segment() -> String {
     if let Ok(name) = env::var("FRAG_SEGMENT") {
@@ -47,14 +49,15 @@ fn test_fragmented_multiprocess_correctness() {
     // producer's backpressure barrier knows about the consumer.
     // The consumer needs time to: start process, attach SHM, create cursor.
     // Then discovery needs 1+ scan intervals (100ms) to find the cursor.
-    std::thread::sleep(Duration::from_millis(500));
+    std::thread::sleep(Duration::from_millis(300));
     assert!(
-        producer.discover_consumers(Duration::from_secs(3)),
+        producer.discover_consumers(Duration::from_secs(1)),
         "producer failed to discover consumer"
     );
 
-    // Create a payload that requires fragmentation: 141KB (> 64KB frame)
-    let payload_size = 141 * 1024;
+    // Payload larger than frame capacity (4084 bytes) to force fragmentation.
+    // 16KB = 4 frames per message.
+    let payload_size = 16 * 1024;
     let payload: Vec<u8> = (0..payload_size).map(|i| (i % 251) as u8).collect();
 
     assert!(
@@ -64,7 +67,10 @@ fn test_fragmented_multiprocess_correctness() {
         FRAME_DATA_BYTES
     );
 
-    let num_messages = 10_000u64;
+    // 500 messages × 16KB = 8MB total. With 4KB frames that's 4 frames per
+    // message = 2000 frames through a 512-slot ring = ~4 ring wraps.
+    // Enough to catch the lapping bug while finishing in seconds.
+    let num_messages = 500u64;
     for i in 0..num_messages {
         producer.publish(&payload, (i % 256) as u8);
     }
@@ -169,7 +175,7 @@ fn frag_consumer_child() {
         }
     }
 
-    let expected_size = 141 * 1024;
+    let expected_size = 16 * 1024;
     let expected: Vec<u8> = (0..expected_size).map(|i| (i % 251) as u8).collect();
     let mut count = 0u64;
 
