@@ -423,6 +423,7 @@ fn main() {
     if args.len() > 1 {
         let role = &args[1];
         if role.starts_with("--") { /* fall through */ } else {
+            let _log = perf_bench::bench_log::BenchLog::default_capacity(role);
             let result = match role.as_str() {
                 "sig_prod"   => signal_producer(),
                 "sig_cons"   => signal_consumer(),

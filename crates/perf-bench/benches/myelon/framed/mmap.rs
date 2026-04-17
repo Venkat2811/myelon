@@ -296,6 +296,7 @@ fn main() {
     if args.len() > 1 {
         let role = &args[1];
         if role.starts_with("--") { /* fall through */ } else {
+            let _log = perf_bench::bench_log::BenchLog::default_capacity(role);
             let result = match role.as_str() {
                 "framed_mmap_producer" => producer_process(),
                 "framed_mmap_consumer" => consumer_process(),

@@ -90,6 +90,11 @@ name = "codec_nofrag_shm"
 path = "benches/myelon/codec/nofrag_shm.rs"
 harness = false
 
+[[bench]]
+name = "myelon_layers"
+path = "benches/sweep/myelon_layers.rs"
+harness = false
+
 # --- cross-cutting ---
 
 [[bench]]

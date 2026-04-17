@@ -777,6 +777,8 @@ fn main() {
     if args.len() > 1 {
         let role = &args[1];
         if role.starts_with("--") { /* fall through */ } else {
+            // Child processes get their own log
+            let mut _log = perf_bench::bench_log::BenchLog::default_capacity(role);
             let result = match role.as_str() {
                 "sig_prod"   => signal_producer(),
                 "sig_cons"   => signal_consumer(),
@@ -802,6 +804,10 @@ fn main() {
             return;
         }
     }
+
+    // Orchestrator log — tracks full benchmark lifecycle
+    let mut bench_log = perf_bench::bench_log::BenchLog::default_capacity("monster_sweep_shm");
+    bench_log.event("orchestrator_start");
 
     let size_arg = args.windows(2)
         .find(|w| w[0] == "--size")
@@ -932,9 +938,12 @@ fn main() {
             tag => sp.tag == tag,
         };
         if run {
+            bench_log.event(&format!("scenario_start: {}", sp.label));
             report.add(run_sweep_point(sp));
+            bench_log.event(&format!("scenario_done: {}", sp.label));
         }
     }
+    bench_log.event_val("scenarios_completed", report.results.len() as u64);
 
     if json_mode {
         println!("{}", serde_json::to_string_pretty(&report).expect("serialize"));

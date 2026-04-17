@@ -48,6 +48,7 @@ struct LayoutRow {
 }
 
 fn main() {
+    let _log = perf_bench::bench_log::BenchLog::default_capacity("layout_validation");
     let mut all_pass = true;
     let mut rows: Vec<LayoutRow> = Vec::new();
 
