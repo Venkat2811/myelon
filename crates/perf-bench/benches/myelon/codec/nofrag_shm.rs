@@ -10,11 +10,11 @@
 //! Single batch: cargo bench -p myelon-bench --bench codec_nofrag_shm -- --batch 256
 
 use disruptor_mp::{build_shared_single_producer, CoordinationMode, SharedDisruptorBuilder, SharedMemoryConfig};
-use myelon_bench::coordination::BenchmarkCoordination;
-use myelon_bench::events::{format_throughput, nanos_now};
-use myelon_bench::generated::bench_payload_generated::myelon::bench as flatbench;
-use myelon_bench::latency::LatencyRecorder;
-use myelon_bench::reporting::{self, BenchReport, BenchResult};
+use perf_bench::coordination::BenchmarkCoordination;
+use perf_bench::events::{format_throughput, nanos_now};
+use perf_bench::generated::bench_payload_generated::myelon::bench as flatbench;
+use perf_bench::latency::LatencyRecorder;
+use perf_bench::reporting::{self, BenchReport, BenchResult};
 use myelon::codec::{Codec, CodecError};
 use std::env;
 use std::hint::black_box;
@@ -191,7 +191,7 @@ fn extract_value(output: &str, key: &str) -> f64 {
     0.0
 }
 
-fn extract_latency_json(output: &str) -> Option<myelon_bench::latency::LatencyStats> {
+fn extract_latency_json(output: &str) -> Option<perf_bench::latency::LatencyStats> {
     for line in output.lines() {
         if let Some(json) = line.strip_prefix("LatencyJSON: ") { return serde_json::from_str(json).ok(); }
     }

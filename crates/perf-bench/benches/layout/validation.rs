@@ -6,12 +6,13 @@ use disruptor_mp::{
     attach_shared_consumer, build_shared_single_producer, MmapConsumer, MmapCursor,
     MmapProducer, MmapTransportLayout, SharedCursor,
 };
-use myelon_bench::events::BenchEvent;
+use perf_bench::events::BenchEvent;
 use myelon::transport::{
     FixedFrame, FramedTransportConsumer, FramedTransportProducer, MmapFramedTransportConsumer,
     MmapFramedTransportProducer, MyelonWaitStrategy,
 };
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use tabled::{Table, Tabled, settings::Style};
 
 const ITERATIONS: usize = 50;
 // SHM ring attach is expensive on macOS (~1.5s per attach) due to
@@ -34,17 +35,34 @@ fn measure_avg_ns<F: FnMut()>(mut f: F, iterations: usize) -> u64 {
     start.elapsed().as_nanos() as u64 / iterations as u64
 }
 
-fn main() {
-    println!("=== Layout Validation Benchmark ===");
-    println!("Iterations per target: {ITERATIONS}");
-    println!();
-    println!(
-        "{:<35} {:>10} {:>10} {:>8}",
-        "Target", "Avg ns/op", "Budget", "Result"
-    );
-    println!("{}", "-".repeat(70));
+#[derive(Tabled)]
+struct LayoutRow {
+    #[tabled(rename = "Target")]
+    target: String,
+    #[tabled(rename = "Avg (ns/op)")]
+    avg_ns: String,
+    #[tabled(rename = "Budget (ns)")]
+    budget: String,
+    #[tabled(rename = "Result")]
+    result: String,
+}
 
+fn main() {
     let mut all_pass = true;
+    let mut rows: Vec<LayoutRow> = Vec::new();
+
+    macro_rules! record {
+        ($name:expr, $avg:expr, $budget:expr) => {{
+            let pass = $avg <= $budget;
+            if !pass { all_pass = false; }
+            rows.push(LayoutRow {
+                target: $name.to_string(),
+                avg_ns: format!("{}", $avg),
+                budget: format!("{}", $budget),
+                result: if pass { "PASS".into() } else { "FAIL".into() },
+            });
+        }};
+    }
 
     // SHM ring attach
     {
@@ -59,12 +77,7 @@ fn main() {
                 .expect("attach");
         }, ITERATIONS);
 
-        let pass = avg_ns <= BUDGET_NS_SHM;
-        if !pass { all_pass = false; }
-        println!(
-            "{:<35} {:>10} {:>10} {:>8}",
-            "shm-ring-attach", avg_ns, BUDGET_NS_SHM, if pass { "PASS" } else { "FAIL" }
-        );
+        record!("shm-ring-attach", avg_ns, BUDGET_NS_SHM);
     }
 
     // SHM cursor attach
@@ -79,17 +92,7 @@ fn main() {
             ITERATIONS,
         );
 
-        let pass = avg_ns <= BUDGET_NS_CURSOR;
-        if !pass {
-            all_pass = false;
-        }
-        println!(
-            "{:<35} {:>10} {:>10} {:>8}",
-            "shm-cursor-attach",
-            avg_ns,
-            BUDGET_NS_CURSOR,
-            if pass { "PASS" } else { "FAIL" }
-        );
+        record!("shm-cursor-attach", avg_ns, BUDGET_NS_CURSOR);
     }
 
     // mmap ring create+attach
@@ -109,12 +112,7 @@ fn main() {
                 .expect("attach mmap");
         }, ITERATIONS);
 
-        let pass = avg_ns <= BUDGET_NS_MMAP;
-        if !pass { all_pass = false; }
-        println!(
-            "{:<35} {:>10} {:>10} {:>8}",
-            "mmap-ring-attach", avg_ns, BUDGET_NS_MMAP, if pass { "PASS" } else { "FAIL" }
-        );
+        record!("mmap-ring-attach", avg_ns, BUDGET_NS_MMAP);
 
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -138,17 +136,7 @@ fn main() {
             ITERATIONS,
         );
 
-        let pass = avg_ns <= BUDGET_NS_CURSOR;
-        if !pass {
-            all_pass = false;
-        }
-        println!(
-            "{:<35} {:>10} {:>10} {:>8}",
-            "mmap-cursor-attach",
-            avg_ns,
-            BUDGET_NS_CURSOR,
-            if pass { "PASS" } else { "FAIL" }
-        );
+        record!("mmap-cursor-attach", avg_ns, BUDGET_NS_CURSOR);
 
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -165,12 +153,7 @@ fn main() {
             ).expect("attach framed");
         }, ITERATIONS);
 
-        let pass = avg_ns <= BUDGET_NS_FRAMED;
-        if !pass { all_pass = false; }
-        println!(
-            "{:<35} {:>10} {:>10} {:>8}",
-            "framed-shm-consumer-attach", avg_ns, BUDGET_NS_FRAMED, if pass { "PASS" } else { "FAIL" }
-        );
+        record!("framed-shm-consumer-attach", avg_ns, BUDGET_NS_FRAMED);
     }
 
     // Framed mmap consumer attach
@@ -196,22 +179,14 @@ fn main() {
             ITERATIONS,
         );
 
-        let pass = avg_ns <= BUDGET_NS_FRAMED;
-        if !pass {
-            all_pass = false;
-        }
-        println!(
-            "{:<35} {:>10} {:>10} {:>8}",
-            "framed-mmap-consumer-attach",
-            avg_ns,
-            BUDGET_NS_FRAMED,
-            if pass { "PASS" } else { "FAIL" }
-        );
+        record!("framed-mmap-consumer-attach", avg_ns, BUDGET_NS_FRAMED);
 
         let _ = std::fs::remove_dir_all(&root);
     }
 
-    println!();
+    println!("=== Layout Validation Benchmark ===");
+    println!("Iterations per target: {ITERATIONS}\n");
+    println!("{}", Table::new(rows).with(Style::modern()));
     if all_pass {
         println!("All targets PASS.");
     } else {

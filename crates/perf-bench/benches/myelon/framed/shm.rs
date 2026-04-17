@@ -8,9 +8,9 @@
 //! Run: cargo bench -p myelon-bench --bench framed_shm
 //! Single payload: cargo bench -p myelon-bench --bench framed_shm -- --payload 128K
 
-use myelon_bench::coordination::BenchmarkCoordination;
-use myelon_bench::events::format_throughput;
-use myelon_bench::reporting::{self, BenchReport, BenchResult};
+use perf_bench::coordination::BenchmarkCoordination;
+use perf_bench::events::format_throughput;
+use perf_bench::reporting::{self, BenchReport, BenchResult};
 use myelon::transport::{
     FixedFrame, FramedTransportConsumer, FramedTransportProducer, MyelonWaitStrategy,
 };

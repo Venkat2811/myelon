@@ -1,17 +1,23 @@
-//! End-to-end Codec benchmark over mmap typed transport.
+//! End-to-end Codec benchmark over SHM typed transport.
+//!
+//! Measures: struct -> Codec::encode -> TypedTransport publish -> ring ->
+//!           TypedTransport consume -> Codec::decode -> struct access.
+//!
+//! This bench intentionally uses `TypedProducer` / `TypedConsumer` so it
+//! measures the RFC 0012 API surface, not ad-hoc encode/decode calls.
 
-use myelon_bench::events::format_throughput;
-use myelon_bench::generated::bench_payload_generated::myelon::bench as flatbench;
-use myelon_bench::reporting::{self, BenchReport, BenchResult};
+use perf_bench::coordination::BenchmarkCoordination;
+use perf_bench::events::format_throughput;
+use perf_bench::generated::bench_payload_generated::myelon::bench as flatbench;
+use perf_bench::reporting::{self, BenchReport, BenchResult};
 use myelon::codec::{Codec, CodecError};
-use myelon::typed_transport::{MmapTypedConsumer, MmapTypedProducer};
-use myelon::transport::{FixedFrame, MmapFramedTransportConsumer, MmapFramedTransportProducer, MyelonWaitStrategy};
+use myelon::typed_transport::{TypedConsumer, TypedProducer};
+use myelon::transport::{FixedFrame, FramedTransportProducer, MyelonWaitStrategy};
 use std::env;
 use std::hint::black_box;
 use std::io::Read as _;
-use std::path::PathBuf;
 use std::process::{Child, Command, Output, Stdio};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 const FRAME_DATA_BYTES: usize = 64 * 1024 - 12;
 type Frame = FixedFrame<FRAME_DATA_BYTES>;
@@ -139,26 +145,16 @@ impl Codec for FlatbufBatch {
     }
 }
 
-fn unique_root() -> PathBuf {
-    let ts = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    env::temp_dir().join(format!("myelon_codec_mmap_{}_{}", std::process::id(), ts))
-}
-
-fn unique_segment() -> String {
-    let ts = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    format!("codec_{}_{}", std::process::id(), ts)
+fn get_segment_name() -> String {
+    if let Ok(name) = env::var("BENCHMARK_SEGMENT_NAME") {
+        return name;
+    }
+    disruptor_mp::portable_shm_segment_name("cdshm")
 }
 
 fn spawn_child(
     exe: &std::path::Path,
     role: &str,
-    root: &str,
     segment: &str,
     codec: &str,
     batch_size: usize,
@@ -167,8 +163,7 @@ fn spawn_child(
 ) -> Child {
     let mut cmd = Command::new(exe);
     cmd.arg(role)
-        .env("MMAP_ROOT", root)
-        .env("MMAP_SEGMENT", segment)
+        .env("BENCHMARK_SEGMENT_NAME", segment)
         .env("BENCH_CODEC", codec)
         .env("BENCH_BATCH_SIZE", batch_size.to_string())
         .env("BENCH_MESSAGES", messages.to_string())
@@ -236,7 +231,7 @@ fn extract_events(output: &str) -> u64 {
     0
 }
 
-fn read_env() -> (String, usize, u64, disruptor_mp::MmapTransportLayout, String) {
+fn read_codec_env() -> (String, usize, u64, String) {
     let codec = env::var("BENCH_CODEC").expect("BENCH_CODEC");
     let batch_size = env::var("BENCH_BATCH_SIZE")
         .expect("BENCH_BATCH_SIZE")
@@ -246,11 +241,8 @@ fn read_env() -> (String, usize, u64, disruptor_mp::MmapTransportLayout, String)
         .expect("BENCH_MESSAGES")
         .parse()
         .expect("message count");
-    let root = env::var("MMAP_ROOT").expect("MMAP_ROOT");
-    let segment = env::var("MMAP_SEGMENT").expect("MMAP_SEGMENT");
-    let layout = disruptor_mp::MmapTransportLayout::new(PathBuf::from(root), segment.clone())
-        .expect("mmap layout");
-    (codec, batch_size, messages, layout, segment)
+    let segment = get_segment_name();
+    (codec, batch_size, messages, segment)
 }
 
 fn payload_bytes(codec: &str, payloads: &[TestPayload]) -> usize {
@@ -273,15 +265,18 @@ fn payload_bytes(codec: &str, payloads: &[TestPayload]) -> usize {
 }
 
 fn producer_process() -> Result<(), Box<dyn std::error::Error>> {
-    let (codec, batch_size, messages, layout, _segment) = read_env();
+    let (codec, batch_size, messages, segment) = read_codec_env();
     let phase_timing = env::var("BENCH_PHASE_TIMING").ok().map_or(false, |v| v == "1");
     let payloads = make_payloads(batch_size);
 
     if phase_timing {
-        let mut producer = MmapFramedTransportProducer::<Frame>::create(layout, BUFFER_DEPTH)?;
-        if !producer.raw().wait_for_consumers_ready(1, Duration::from_secs(30)) {
+        // Phase timing: use FramedTransportProducer directly to time encode vs transport
+        let mut producer = FramedTransportProducer::<Frame>::create(&segment, BUFFER_DEPTH)?;
+        let coord = BenchmarkCoordination::create(&segment)?;
+        if !coord.wait_for_consumers(1, Duration::from_secs(30)) {
             return Err("timeout waiting for consumer".into());
         }
+        producer.discover_consumers(Duration::from_secs(3));
 
         let mut encode_ns = 0u64;
         let mut transport_ns = 0u64;
@@ -312,50 +307,64 @@ fn producer_process() -> Result<(), Box<dyn std::error::Error>> {
         println!("Throughput: {:.0} msgs/sec", messages as f64 / elapsed.as_secs_f64());
         println!("EncodeAvgUs: {:.1}", encode_ns as f64 / messages as f64 / 1000.0);
         println!("TransportWriteAvgUs: {:.1}", transport_ns as f64 / messages as f64 / 1000.0);
-
-        let last_sequence = producer.raw().last_published_sequence();
-        producer.wait_until_consumed(last_sequence, Duration::from_secs(30), disruptor_mp::AutoWaitStrategy::BusySpin);
+        coord.signal_producer_done(messages as i64);
+        coord.wait_for_consumers_done(1, Duration::from_secs(30));
     } else {
-        let mut producer = MmapTypedProducer::<Frame>::create(layout, BUFFER_DEPTH)?;
-        if !producer.raw().wait_for_consumers_ready(1, Duration::from_secs(30)) {
+        let mut producer = TypedProducer::<Frame>::create(&segment, BUFFER_DEPTH)?;
+        let coord = BenchmarkCoordination::create(&segment)?;
+        if !coord.wait_for_consumers(1, Duration::from_secs(30)) {
             return Err("timeout waiting for consumer".into());
         }
+        producer.discover_consumers(Duration::from_secs(3));
 
         let start = Instant::now();
         match codec.as_str() {
-            "bincode" => { let p = BincodeBatch(payloads); for i in 0..messages { producer.publish(&p, (i % 256) as u8)?; } }
-            "rkyv" => { let p = RkyvBatch(payloads); for i in 0..messages { producer.publish(&p, (i % 256) as u8)?; } }
-            "flatbuf" => { let p = FlatbufBatch(payloads); for i in 0..messages { producer.publish(&p, (i % 256) as u8)?; } }
+            "bincode" => {
+                let payload = BincodeBatch(payloads);
+                for i in 0..messages { producer.publish(&payload, (i % 256) as u8)?; }
+            }
+            "rkyv" => {
+                let payload = RkyvBatch(payloads);
+                for i in 0..messages { producer.publish(&payload, (i % 256) as u8)?; }
+            }
+            "flatbuf" => {
+                let payload = FlatbufBatch(payloads);
+                for i in 0..messages { producer.publish(&payload, (i % 256) as u8)?; }
+            }
             other => return Err(format!("unknown codec: {other}").into()),
         }
         let elapsed = start.elapsed();
         println!("Throughput: {:.0} msgs/sec", messages as f64 / elapsed.as_secs_f64());
-
-        let last_sequence = producer.raw().raw().last_published_sequence();
-        producer.raw().wait_until_consumed(last_sequence, Duration::from_secs(30), disruptor_mp::AutoWaitStrategy::BusySpin);
+        println!("Time: {:.3} seconds", elapsed.as_secs_f64());
+        coord.signal_producer_done(messages as i64);
+        coord.wait_for_consumers_done(1, Duration::from_secs(30));
     }
     Ok(())
 }
 
 fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
-    let (codec, _batch_size, messages, layout, _segment) = read_env();
+    let (codec, _batch_size, messages, segment) = read_codec_env();
     let phase_timing = env::var("BENCH_PHASE_TIMING").ok().map_or(false, |v| v == "1");
-    let consumer_id = format!("c{}", std::process::id());
+    let coord = BenchmarkCoordination::attach_with_timeout(&segment, Duration::from_secs(30))?;
 
     if phase_timing {
+        // Phase timing: use FramedTransportConsumer directly to time transport vs decode
+        use myelon::transport::FramedTransportConsumer;
         let deadline = Instant::now() + Duration::from_secs(15);
         let mut consumer = loop {
-            match MmapFramedTransportConsumer::<Frame>::attach(layout.clone(), BUFFER_DEPTH, &consumer_id, MyelonWaitStrategy::BusySpin) {
+            match FramedTransportConsumer::<Frame>::attach(&segment, BUFFER_DEPTH, MyelonWaitStrategy::BusySpin) {
                 Ok(c) => break c,
                 Err(_) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(25)),
                 Err(e) => return Err(format!("consumer attach failed: {e}").into()),
             }
         };
+        coord.signal_consumer_ready();
 
         let mut recv_ns = 0u64;
         let mut decode_ns = 0u64;
         let start = Instant::now();
         let mut consumed = 0u64;
+
         while consumed < messages {
             let t0 = Instant::now();
             let (_kind, raw_bytes) = consumer.recv_message_blocking();
@@ -371,23 +380,29 @@ fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
             decode_ns += (t2 - t1).as_nanos() as u64;
             consumed += 1;
         }
+
         let elapsed = start.elapsed();
         println!("Throughput: {:.0} msgs/sec", consumed as f64 / elapsed.as_secs_f64());
         println!("Events: {}", consumed);
         println!("TransportReadAvgUs: {:.1}", recv_ns as f64 / consumed as f64 / 1000.0);
         println!("DecodeAvgUs: {:.1}", decode_ns as f64 / consumed as f64 / 1000.0);
+        coord.signal_consumer_done(consumed as i64);
     } else {
         let deadline = Instant::now() + Duration::from_secs(15);
         let mut consumer = loop {
-            match MmapTypedConsumer::<Frame>::attach(layout.clone(), BUFFER_DEPTH, &consumer_id, MyelonWaitStrategy::BusySpin) {
+            match TypedConsumer::<Frame>::attach(&segment, BUFFER_DEPTH, MyelonWaitStrategy::BusySpin) {
                 Ok(c) => break c,
                 Err(_) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(25)),
                 Err(e) => return Err(format!("consumer attach failed: {e}").into()),
             }
         };
+        coord.signal_consumer_ready();
 
         let start = Instant::now();
         let mut consumed = 0u64;
+
+        // Count-based termination: consume exactly `messages` to avoid deadlock
+        // on recv_message_blocking after all messages consumed.
         while consumed < messages {
             match codec.as_str() {
                 "bincode" => { let (_, b): (u8, BincodeBatch) = consumer.recv()?; black_box(b.0.len()); }
@@ -397,66 +412,53 @@ fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
             }
             consumed += 1;
         }
+
         let elapsed = start.elapsed();
         println!("Throughput: {:.0} msgs/sec", consumed as f64 / elapsed.as_secs_f64());
         println!("Events: {}", consumed);
+        coord.signal_consumer_done(consumed as i64);
     }
     Ok(())
 }
 
+fn unique_segment(label: &str) -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+    let name = format!("cd_{}_{}_{}", label, std::process::id() % 10000, ts % 100000);
+    disruptor_mp::portable_shm_segment_name(&name)
+}
+
 fn run_codec_bench(codec: &str, batch_size: usize, messages: u64, phase_timing: bool) -> BenchResult {
-    let root = unique_root();
-    let segment = unique_segment();
-    let root_str = root.display().to_string();
+    let segment = unique_segment(&format!("{codec}_{batch_size}"));
     let exe = env::current_exe().expect("current_exe");
     let payloads = make_payloads(batch_size);
     let encoded_bytes = payload_bytes(codec, &payloads);
 
-    let producer =
-        spawn_child(&exe, "codec_producer", &root_str, &segment, codec, batch_size, messages, phase_timing);
-    let consumer =
-        spawn_child(&exe, "codec_consumer", &root_str, &segment, codec, batch_size, messages, phase_timing);
+    let producer = spawn_child(&exe, "codec_producer", &segment, codec, batch_size, messages, phase_timing);
+    let consumer = spawn_child(&exe, "codec_consumer", &segment, codec, batch_size, messages, phase_timing);
 
     let timeout = Duration::from_secs(180);
-    let prod_out = wait_timeout(producer, timeout);
     let cons_out = wait_timeout(consumer, timeout);
+    let prod_out = wait_timeout(producer, timeout);
 
     let prod_str = match prod_out {
         Ok(o) => {
-            if !o.stderr.is_empty() {
-                eprintln!(
-                    "Prod stderr [{codec}/{batch_size}]: {}",
-                    String::from_utf8_lossy(&o.stderr)
-                );
-            }
+            if !o.stderr.is_empty() { eprintln!("[{codec}/{batch_size} prod stderr] {}", String::from_utf8_lossy(&o.stderr)); }
             String::from_utf8_lossy(&o.stdout).to_string()
         }
-        Err(e) => {
-            eprintln!("Prod error [{codec}/{batch_size}]: {e}");
-            String::new()
-        }
+        Err(e) => { eprintln!("[{codec}/{batch_size} prod] {e}"); String::new() }
     };
     let cons_str = match cons_out {
         Ok(o) => {
-            if !o.stderr.is_empty() {
-                eprintln!(
-                    "Cons stderr [{codec}/{batch_size}]: {}",
-                    String::from_utf8_lossy(&o.stderr)
-                );
-            }
+            if !o.stderr.is_empty() { eprintln!("[{codec}/{batch_size} cons stderr] {}", String::from_utf8_lossy(&o.stderr)); }
             String::from_utf8_lossy(&o.stdout).to_string()
         }
-        Err(e) => {
-            eprintln!("Cons error [{codec}/{batch_size}]: {e}");
-            String::new()
-        }
+        Err(e) => { eprintln!("[{codec}/{batch_size} cons] {e}"); String::new() }
     };
 
     let prod_tp = extract_value(&prod_str, "Throughput");
     let cons_tp = extract_value(&cons_str, "Throughput");
     let consumed = extract_events(&cons_str);
-
-    let _ = std::fs::remove_dir_all(&root);
 
     if phase_timing {
         let encode_us = extract_value(&prod_str, "EncodeAvgUs");
@@ -476,9 +478,9 @@ fn run_codec_bench(codec: &str, batch_size: usize, messages: u64, phase_timing: 
     }
 
     reporting::make_result(
-        "codec_e2e_mmap",
+        "codec_e2e_shm",
         &format!("codec_e2e_{batch_size}seq_{codec}"),
-        "mmap",
+        "shm",
         "typed",
         Some(codec),
         "BusySpin",
@@ -518,12 +520,13 @@ fn main() {
         .find(|w| w[0] == "--mode")
         .map(|w| w[1].as_str())
         .unwrap_or("throughput");
+
     let phase_timing = mode == "phase_timing";
     let json_mode = args.iter().any(|a| a == "--json");
 
     if !json_mode {
-        println!("=== Codec E2E MMAP Benchmark ===");
-        println!("Transport: TypedTransport over file-backed mmap");
+        println!("=== Codec E2E SHM Benchmark ===");
+        println!("Transport: TypedTransport over SHM");
         println!("Mode: {}", if phase_timing { "phase_timing (encode/transport/decode)" } else { "throughput" });
         println!("Payload: Vec<TestPayload> with Sequence-like Vec fields");
         println!();

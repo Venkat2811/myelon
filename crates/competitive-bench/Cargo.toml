@@ -1,0 +1,30 @@
+[package]
+name = "competitive-bench"
+version = "0.1.0"
+edition = "2021"
+description = "Competitive IPC benchmark suite — disruptor-mp vs crossbar, photon-ring, shmipc, Aeron, ZMQ"
+license = "MIT"
+publish = false
+
+[dependencies]
+# Our transport
+disruptor_mp = { package = "disruptor-mp", path = "../disruptor-mp" }
+
+# Benchmark infrastructure (shared with perf-bench)
+hdrhistogram = "7.5"
+tabled = "0.20.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+chrono = "0.4"
+
+# Competitors (will be enabled as git submodules are added)
+# crossbar = { path = "submodules/crossbar" }
+# photon-ring = { path = "submodules/photon-ring" }
+
+[lib]
+name = "competitive_bench"
+
+[[bench]]
+name = "pingpong_disruptor"
+path = "benches/pingpong_disruptor.rs"
+harness = false

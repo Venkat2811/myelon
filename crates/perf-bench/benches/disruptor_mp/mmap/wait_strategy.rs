@@ -1,7 +1,7 @@
 //! mmap wait strategy benchmark modeled after the battle-tested SHM matrix.
 
-use myelon_bench::events::format_throughput;
-use myelon_bench::reporting::{self, BenchReport, BenchResult};
+use perf_bench::events::format_throughput;
+use perf_bench::reporting::{self, BenchReport, BenchResult};
 use std::env;
 use std::io::Read as _;
 use std::path::PathBuf;
@@ -322,7 +322,10 @@ fn main() {
     let args: Vec<String> = env::args().collect();
 
     if args.len() > 1 {
-        match args[1].as_str() {
+        let role = &args[1];
+        if role.starts_with("--") { /* fall through to orchestrator */ }
+        else {
+        match role.as_str() {
             "mmap_wait_producer" => {
                 if let Err(error) = producer_process() {
                     eprintln!("mmap_wait_producer failed: {error}");
@@ -339,15 +342,16 @@ fn main() {
             }
             _ => {}
         }
+        } // else block
     }
 
     let json_mode = args.iter().any(|arg| arg == "--json");
-    let mode = args
-        .iter()
-        .skip(1)
-        .find(|arg| arg.as_str() != "--json")
-        .map(String::as_str)
-        .unwrap_or("quick");
+    let mode_owned = env::var("BENCH_MODE").ok()
+        .or_else(|| args.iter().skip(1)
+            .find(|arg| !arg.starts_with("--") && arg.as_str() != "wait_strategy_mmap")
+            .cloned())
+        .unwrap_or_else(|| "quick".into());
+    let mode = mode_owned.as_str();
 
     let scenarios: Vec<(usize, &'static str)> = match mode {
         "quick" => vec![(1, "BusySpin")],
@@ -392,6 +396,15 @@ fn main() {
         report.print_summary();
     }
 
+    if let Some(path) = args.windows(2).find(|w| w[0] == "--json-out").map(|w| w[1].clone()) {
+        report.write_json(&path).expect("write JSON");
+    }
+    if let Some(path) = args.windows(2).find(|w| w[0] == "--csv-out").map(|w| w[1].clone()) {
+        report.write_csv(&path).expect("write CSV");
+    }
+    if let Some(path) = args.windows(2).find(|w| w[0] == "--md-out").map(|w| w[1].clone()) {
+        report.write_markdown(&path).expect("write markdown");
+    }
     if let Some(path) = env::var("MYELON_BENCH_JSON_OUT").ok() {
         report.write_json(&path).expect("write json report");
     }

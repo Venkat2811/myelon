@@ -1,7 +1,7 @@
 //! FramedTransport benchmark over mmap backend.
 
-use myelon_bench::events::format_throughput;
-use myelon_bench::reporting::{self, BenchReport, BenchResult};
+use perf_bench::events::format_throughput;
+use perf_bench::reporting::{self, BenchReport, BenchResult};
 use myelon::transport::{
     FixedFrame, MmapFramedTransportConsumer, MmapFramedTransportProducer, MyelonWaitStrategy,
 };

@@ -9,9 +9,9 @@
 //! Signal only: cargo bench -p myelon-bench --bench raw_ring_mmap -- --class signal
 
 use disruptor_mp::{AutoWaitStrategy, MmapConsumer, MmapProducer, MmapTransportLayout};
-use myelon_bench::events::{format_throughput, nanos_now};
-use myelon_bench::latency::LatencyRecorder;
-use myelon_bench::reporting::{self, BenchReport, BenchResult};
+use perf_bench::events::{format_throughput, nanos_now};
+use perf_bench::latency::LatencyRecorder;
+use perf_bench::reporting::{self, BenchReport, BenchResult};
 use std::env;
 use std::io::Read as _;
 use std::path::PathBuf;
@@ -387,7 +387,7 @@ fn multi_message_consumer() -> Result<(), Box<dyn std::error::Error>> {
 // Orchestrator
 // ============================================================
 
-fn extract_latency_json(output: &str) -> Option<myelon_bench::latency::LatencyStats> {
+fn extract_latency_json(output: &str) -> Option<perf_bench::latency::LatencyStats> {
     for line in output.lines() {
         if let Some(json) = line.strip_prefix("LatencyJSON: ") {
             return serde_json::from_str(json).ok();
@@ -484,7 +484,7 @@ fn run_multi_message(num_consumers: usize, buffer: usize, events: u64, warmup: u
     let prod_tp = extract_value(&prod_out, "Throughput");
 
     let mut total_cons_tp = 0.0;
-    let mut latency: Option<myelon_bench::latency::LatencyStats> = None;
+    let mut latency: Option<perf_bench::latency::LatencyStats> = None;
     for (i, result) in consumer_outputs.into_iter().enumerate() {
         match result {
             Ok(o) => {

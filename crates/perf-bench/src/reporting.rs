@@ -331,6 +331,99 @@ impl Default for BenchReport {
     }
 }
 
+/// Build a CO latency matrix: rows = payload sizes, columns = rate groups (each spanning P50/P90/P99/P99.9).
+/// Uses `tabled::Builder` + `Span::column(4)` for multi-column rate headers.
+/// Returns None if no CO results exist.
+pub fn build_co_matrix(results: &[BenchResult], use_markdown: bool) -> Option<String> {
+    use tabled::builder::Builder;
+    use tabled::settings::{object::Cell, Alignment, Span, Style};
+
+    let co_results: Vec<&BenchResult> = results.iter()
+        .filter(|r| r.measurement_mode.starts_with("co_aware") && r.latency.is_some())
+        .collect();
+
+    if co_results.is_empty() { return None; }
+
+    // Collect unique rates and sizes (sorted)
+    let rates: Vec<u64> = co_results.iter()
+        .filter_map(|r| r.measurement_mode.strip_prefix("co_aware@").and_then(|s| s.parse().ok()))
+        .collect::<std::collections::BTreeSet<_>>().into_iter().collect();
+    let sizes: Vec<usize> = co_results.iter()
+        .map(|r| r.config.message_size_bytes)
+        .collect::<std::collections::BTreeSet<_>>().into_iter().collect();
+
+    let fmt_rate = |r: u64| -> String {
+        if r >= 1_000_000 { format!("{}M/s", r / 1_000_000) } else { format!("{}K/s", r / 1000) }
+    };
+    let fmt_size = |b: usize| -> String {
+        if b >= 1_048_576 { format!("{}MB", b / 1_048_576) }
+        else if b >= 1024 { format!("{}KB", b / 1024) }
+        else { format!("{}B", b) }
+    };
+
+    let mut builder = Builder::default();
+
+    // Row 0: rate group headers — each spans 4 sub-columns
+    let mut header0 = vec!["Size".to_string()];
+    for rate in &rates {
+        header0.push(fmt_rate(*rate));
+        header0.push(String::new());
+        header0.push(String::new());
+        header0.push(String::new());
+    }
+    builder.push_record(header0);
+
+    // Row 1: percentile sub-headers
+    let mut header1 = vec![String::new()];
+    for _ in &rates {
+        header1.push("P50".into());
+        header1.push("P90".into());
+        header1.push("P99".into());
+        header1.push("P99.9".into());
+    }
+    builder.push_record(header1);
+
+    // Data rows — one per payload size
+    for sz in &sizes {
+        let mut row = vec![fmt_size(*sz)];
+        for rate in &rates {
+            let entry = co_results.iter().find(|r| {
+                r.config.message_size_bytes == *sz &&
+                r.measurement_mode == format!("co_aware@{}", rate)
+            });
+            if let Some(r) = entry {
+                let l = r.latency.as_ref().unwrap();
+                let p99 = l.p99_ns;
+                let indicator = if p99 < 1_000 { "✓" } else if p99 < 10_000_000 { "△" } else { "✗" };
+                row.push(latency::format_ns(l.p50_ns));
+                row.push(latency::format_ns(l.p90_ns));
+                row.push(format!("{}{}", latency::format_ns(l.p99_ns), indicator));
+                row.push(latency::format_ns(l.p999_ns));
+            } else {
+                row.extend(["-".into(), "-".into(), "-".into(), "-".into()]);
+            }
+        }
+        builder.push_record(row);
+    }
+
+    let mut table = builder.build();
+
+    // Apply spans: each rate header in row 0 spans 4 columns
+    for (i, _) in rates.iter().enumerate() {
+        let col = 1 + i * 4;
+        table.modify(Cell::new(0, col), Span::column(4));
+        table.modify(Cell::new(0, col), Alignment::center());
+    }
+
+    if use_markdown {
+        table.with(Style::markdown());
+    } else {
+        table.with(Style::modern());
+    }
+
+    Some(table.to_string())
+}
+
 /// Helper to build a BenchResult with common defaults.
 pub fn make_result(
     bench_name: &str,
@@ -410,7 +503,7 @@ mod tests {
             25_000_000.0, 25_000_000.0, None,
         ));
         let dir = std::env::temp_dir();
-        let path = dir.join("myelon_bench_test.csv");
+        let path = dir.join("perf_bench_test.csv");
         report.write_csv(path.to_str().unwrap()).unwrap();
         let csv = std::fs::read_to_string(&path).unwrap();
         assert!(csv.contains("test_scenario"));

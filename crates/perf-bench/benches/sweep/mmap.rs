@@ -7,9 +7,10 @@
 //! Quick: cargo bench -p myelon-bench --bench monster_sweep_mmap -- --quick
 
 use disruptor_mp::{AutoWaitStrategy, MmapConsumer, MmapProducer, MmapTransportLayout};
-use myelon_bench::events::{format_throughput, nanos_now, BenchEvent};
-use myelon_bench::latency::LatencyRecorder;
-use myelon_bench::reporting::{self, BenchReport, BenchResult};
+use perf_bench::events::{format_throughput, nanos_now, BenchEvent};
+use perf_bench::latency;
+use perf_bench::latency::LatencyRecorder;
+use perf_bench::reporting::{self, BenchReport, BenchResult};
 use std::env;
 use std::hint::black_box;
 use std::io::Read as _;
@@ -101,7 +102,7 @@ fn extract_value(output: &str, key: &str) -> f64 {
     0.0
 }
 
-fn extract_latency_json(output: &str) -> Option<myelon_bench::latency::LatencyStats> {
+fn extract_latency_json(output: &str) -> Option<perf_bench::latency::LatencyStats> {
     for line in output.lines() {
         if let Some(json) = line.strip_prefix("LatencyJSON: ") { return serde_json::from_str(json).ok(); }
     }
@@ -303,11 +304,117 @@ fn run_sweep_point(sp: &SweepPoint) -> BenchResult {
         format_throughput(prod_tp), format_throughput(cons_tp), bw_gbs, lat_str,
     );
 
-    reporting::make_result(
+    let mut result = reporting::make_result(
         "monster_sweep_mmap", &format!("sweep_{}", sp.tag), "mmap", "raw_ring",
         None, "BusySpin", sp.size_bytes, sp.buffer, sp.events, sp.events / 100, 1,
         prod_tp, cons_tp, latency,
-    )
+    );
+    if sp.target_rate > 0 {
+        result.measurement_mode = format!("co_aware@{}", sp.target_rate);
+    }
+    result
+}
+
+fn write_sweep_markdown(report: &reporting::BenchReport, path: &str) -> std::io::Result<()> {
+    use tabled::{Table, Tabled, settings::Style};
+
+    let hw_bw: f64 = 300.0;
+    let mut md = String::new();
+
+    md.push_str("# Disruptor-MP Monster Sweep — MMAP Backend\n\n");
+    md.push_str(&format!("- **CPU**: {}\n", report.metadata.cpu));
+    md.push_str(&format!("- **Platform**: {}\n", report.metadata.platform));
+    md.push_str("- **Memory**: 96GB unified, 300 GB/s bandwidth\n");
+    if let Some(ref c) = report.metadata.git_commit { md.push_str(&format!("- **Git**: `{}`\n", c)); }
+    md.push_str(&format!("- **Timestamp**: {}\n", report.metadata.timestamp));
+    md.push_str("- **Config**: Full payload fill (producer) + checksum (consumer)\n\n");
+
+    // Throughput
+    {
+        #[derive(Tabled)]
+        struct TputRow {
+            #[tabled(rename = "Payload")] payload: String,
+            #[tabled(rename = "Total Memory")] total_mem: String,
+            #[tabled(rename = "Events")] events: String,
+            #[tabled(rename = "Producer (ops/s)")] prod: String,
+            #[tabled(rename = "Consumer (ops/s)")] cons: String,
+            #[tabled(rename = "Data Rate (MB/s)")] data_rate: String,
+            #[tabled(rename = "BW (GB/s)")] bw: String,
+            #[tabled(rename = "% HW Limit")] pct: String,
+            #[tabled(rename = "P50")] p50: String,
+            #[tabled(rename = "P99")] p99: String,
+            #[tabled(rename = " ")] status: String,
+        }
+        let rows: Vec<TputRow> = report.results.iter()
+            .filter(|r| !r.measurement_mode.starts_with("co_aware"))
+            .map(|r| {
+                let sz = r.config.message_size_bytes;
+                let rb = sz as u64 * r.config.buffer_depth as u64;
+                let rl = if rb >= 1024*1024*1024 { format!("{}GB", rb/(1024*1024*1024)) } else { format!("{}MB", rb/(1024*1024)) };
+                let bw = r.results.consumer_throughput_ops_sec * sz as f64 / 1e9;
+                let dr = r.results.consumer_throughput_ops_sec * sz as f64 / 1e6;
+                let pct = bw / hw_bw * 100.0;
+                let is_sig = r.scenario.contains("SIG");
+                TputRow {
+                    payload: if is_sig { "signal".into() } else { format_size(sz) },
+                    total_mem: rl, events: format_events(r.config.num_messages),
+                    prod: format_throughput(r.results.producer_throughput_ops_sec),
+                    cons: format_throughput(r.results.consumer_throughput_ops_sec),
+                    data_rate: format!("{:.0}", dr), bw: format!("{:.1}", bw),
+                    pct: if is_sig { "seq-ctr".into() } else { format!("{:.1}%", pct) },
+                    p50: r.latency.as_ref().map(|l| latency::format_ns(l.p50_ns)).unwrap_or("-".into()),
+                    p99: r.latency.as_ref().map(|l| latency::format_ns(l.p99_ns)).unwrap_or("-".into()),
+                    status: if is_sig || pct > 10.0 { "✓".into() } else if pct > 1.0 { "△".into() } else { "✗".into() },
+                }
+            }).collect();
+        md.push_str("## Throughput Sweep (1p1c)\n\n");
+        md.push_str(&Table::new(rows).with(Style::markdown()).to_string());
+        md.push_str("\n\nLegend: ✓ = >10% BW efficiency | △ = >1% | ✗ = <1%\n\n");
+    }
+
+    // CO Latency Matrix
+    if let Some(matrix) = reporting::build_co_matrix(&report.results, true) {
+        md.push_str("## Coordinated Omission Latency Matrix\n\n");
+        md.push_str(&matrix);
+        md.push_str("\n\nLegend: ✓ P99 < 1us (Excellent) | △ P99 < 10ms (Good) | ✗ P99 >= 10ms (Saturated)\n\n");
+    }
+
+    // Summary
+    md.push_str("## Performance Summary\n\n");
+    if let Some(s) = report.results.iter().find(|r| r.scenario.contains("SIG")) {
+        md.push_str(&format!("- **Signal ceiling**: {} ops/s\n", format_throughput(s.results.consumer_throughput_ops_sec)));
+    }
+    let peak = report.results.iter()
+        .filter(|r| !r.measurement_mode.starts_with("co_aware"))
+        .map(|r| (r.results.consumer_throughput_ops_sec * r.config.message_size_bytes as f64 / 1e9, r.config.message_size_bytes))
+        .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+    if let Some((bw, sz)) = peak {
+        md.push_str(&format!("- **Peak bandwidth**: {:.1} GB/s @ {} ({:.1}% of {} GB/s HW limit)\n", bw, format_size(sz), bw/hw_bw*100.0, hw_bw as u64));
+    }
+    let best_co = report.results.iter()
+        .filter(|r| r.measurement_mode.starts_with("co_aware") && r.latency.is_some())
+        .min_by_key(|r| r.latency.as_ref().unwrap().p99_ns);
+    if let Some(co) = best_co {
+        let l = co.latency.as_ref().unwrap();
+        let rate = co.measurement_mode.strip_prefix("co_aware@").and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
+        md.push_str(&format!("- **Best CO P99**: {} @ {} ({}K ops/s)\n", latency::format_ns(l.p99_ns), format_size(co.config.message_size_bytes), rate/1000));
+    }
+    md.push_str("\n## Legend\n\n");
+    md.push_str("- ✓ = P99 < 1us (Excellent)\n- △ = P99 < 10ms (Good)\n- ✗ = P99 >= 10ms (Saturated)\n");
+
+    std::fs::write(path, md)
+}
+
+fn format_size(bytes: usize) -> String {
+    if bytes >= 1_048_576 { format!("{}MB", bytes / 1_048_576) }
+    else if bytes >= 1024 { format!("{}KB", bytes / 1024) }
+    else { format!("{}B", bytes) }
+}
+
+fn format_events(n: u64) -> String {
+    if n >= 1_000_000 { format!("{}M", n / 1_000_000) }
+    else if n >= 1_000 { format!("{}K", n / 1_000) }
+    else { format!("{}", n) }
 }
 
 fn main() {
@@ -421,7 +528,7 @@ fn main() {
         report.write_csv(&path).expect("write CSV"); eprintln!("CSV written to {path}");
     }
     if let Some(path) = args.windows(2).find(|w| w[0] == "--md-out").map(|w| w[1].clone()) {
-        report.write_markdown(&path).expect("write markdown"); eprintln!("Markdown written to {path}");
+        write_sweep_markdown(&report, &path).expect("write markdown"); eprintln!("Markdown written to {path}");
     }
     if let Some(path) = env::var("MYELON_BENCH_JSON_OUT").ok() { report.write_json(&path).expect("write JSON"); }
 }

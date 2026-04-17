@@ -1,4 +1,4 @@
-#[path = "../../disruptor-mp/benches/ipc/competitive/benchmark_pingpong.rs"]
+#[path = "../../../../disruptor-mp/benches/ipc/competitive/benchmark_pingpong.rs"]
 mod battle_tested_competitive_pingpong;
 
 fn main() {
