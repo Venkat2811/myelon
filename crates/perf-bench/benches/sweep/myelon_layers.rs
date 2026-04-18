@@ -98,6 +98,125 @@ type Ev4K = BenchEvent<4080>;
 type Ev16K = BenchEvent<{ 16 * 1024 - 16 }>;
 type Ev64K = BenchEvent<{ 64 * 1024 - 16 }>;
 
+// Slots sized for rkyv encoded output (no framing, slot = message)
+// batch=2 ≈ 1.2KB, batch=8 ≈ 4.7KB, batch=28 ≈ 16.4KB, batch=110 ≈ 64KB
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RkyvSlot2K { len: u32, _pad: u32, data: [u8; 2048 - 8] }
+impl Default for RkyvSlot2K { fn default() -> Self { Self { len: 0, _pad: 0, data: [0; 2048 - 8] } } }
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RkyvSlot8K { len: u32, _pad: u32, data: [u8; 8192 - 8] }
+impl Default for RkyvSlot8K { fn default() -> Self { Self { len: 0, _pad: 0, data: [0; 8192 - 8] } } }
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RkyvSlot32K { len: u32, _pad: u32, data: [u8; 32768 - 8] }
+impl Default for RkyvSlot32K { fn default() -> Self { Self { len: 0, _pad: 0, data: [0; 32768 - 8] } } }
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RkyvSlot128K { len: u32, _pad: u32, data: [u8; 131072 - 8] }
+impl Default for RkyvSlot128K { fn default() -> Self { Self { len: 0, _pad: 0, data: [0; 131072 - 8] } } }
+
+// ============================================================
+// rkyv nofrag: raw ring slot = encoded message, no framing
+// ============================================================
+
+macro_rules! rkyv_nofrag_impl {
+    ($slot:ty, $data_len:expr, $prod_fn:ident, $cons_fn:ident) => {
+        fn $prod_fn() -> Result<(), Box<dyn std::error::Error>> {
+            let segment = env::var("BENCH_SEGMENT").expect("BENCH_SEGMENT");
+            let buffer = read_env_usize("BENCH_BUFFER", 16384);
+            let events = read_env_u64("BENCH_EVENTS", 100_000);
+            let batch_size = read_env_usize("BENCH_BATCH_SIZE", 8);
+            let payloads = make_payloads(batch_size);
+            let encoded = rkyv::to_bytes::<rkyv::rancor::Error>(&payloads).map_err(|e| format!("{e}"))?;
+
+            let mut producer = build_shared_single_producer::<$slot>(&segment, buffer)
+                .enable_discovery(1).with_coordination(CoordinationMode::Immediate)
+                .build_producer(|| <$slot>::default())?;
+            let coord = BenchmarkCoordination::create(&segment)?;
+            if !coord.wait_for_consumers(1, Duration::from_secs(30)) { return Err("timeout".into()); }
+            for _ in 0..20 { let _ = producer.min_gating_sequence(); std::thread::sleep(Duration::from_millis(2)); }
+
+            let start = Instant::now();
+            for _i in 0..events {
+                let enc = rkyv::to_bytes::<rkyv::rancor::Error>(&payloads).unwrap();
+                let enc_bytes = enc.as_ref();
+                producer.publish(|slot| {
+                    slot.len = enc_bytes.len() as u32;
+                    slot.data[..enc_bytes.len()].copy_from_slice(enc_bytes);
+                });
+            }
+            let elapsed = start.elapsed();
+            println!("Throughput: {:.0}", events as f64 / elapsed.as_secs_f64());
+            coord.signal_producer_done(events as i64);
+            coord.wait_for_consumers_done(1, Duration::from_secs(60));
+            Ok(())
+        }
+
+        fn $cons_fn() -> Result<(), Box<dyn std::error::Error>> {
+            let segment = env::var("BENCH_SEGMENT").expect("BENCH_SEGMENT");
+            let buffer = read_env_usize("BENCH_BUFFER", 16384);
+            let events = read_env_u64("BENCH_EVENTS", 100_000);
+            let coord = BenchmarkCoordination::attach_with_timeout(&segment, Duration::from_secs(30))?;
+            let config = SharedMemoryConfig { name: segment, buffer_size: buffer,
+                element_size: std::mem::size_of::<$slot>(), create: false };
+            let mut consumer = SharedDisruptorBuilder::<$slot>::new(config).build_consumer()?;
+            coord.signal_consumer_ready();
+
+            // Wait for first message (exclude discovery delay)
+            let mut consumed = 0u64;
+            while consumed == 0 {
+                consumer.process_available(|slot, _seq| {
+                    let len = slot.len as usize;
+                    let bytes = &slot.data[..len];
+                    // Zero-copy access: pointer cast into ring slot data — NO deserialize
+                    let archived = unsafe { rkyv::access_unchecked::<rkyv::Archived<Vec<TestPayload>>>(bytes) };
+                    let mut sum = 0u64;
+                    for entry in archived.iter() {
+                        sum = sum.wrapping_add(entry.id.into());
+                        for tid in entry.token_ids.iter() { sum = sum.wrapping_add(u32::from(*tid) as u64); }
+                        for bt in entry.block_table.iter() { sum = sum.wrapping_add(u32::from(*bt) as u64); }
+                    }
+                    black_box(sum);
+                    consumed += 1;
+                });
+                std::hint::spin_loop();
+            }
+
+            let start = Instant::now();
+            while consumed < events {
+                consumer.process_available(|slot, _seq| {
+                    let len = slot.len as usize;
+                    let bytes = &slot.data[..len];
+                    let archived = unsafe { rkyv::access_unchecked::<rkyv::Archived<Vec<TestPayload>>>(bytes) };
+                    let mut sum = 0u64;
+                    for entry in archived.iter() {
+                        sum = sum.wrapping_add(entry.id.into());
+                        for tid in entry.token_ids.iter() { sum = sum.wrapping_add(u32::from(*tid) as u64); }
+                        for bt in entry.block_table.iter() { sum = sum.wrapping_add(u32::from(*bt) as u64); }
+                    }
+                    black_box(sum);
+                    consumed += 1;
+                });
+                if consumed < events { std::hint::spin_loop(); }
+            }
+            let elapsed = start.elapsed();
+            println!("Throughput: {:.0}", (consumed - 1) as f64 / elapsed.as_secs_f64());
+            coord.signal_consumer_done(consumed as i64);
+            Ok(())
+        }
+    };
+}
+
+rkyv_nofrag_impl!(RkyvSlot2K, 2040, rkyv_nf_prod_2k, rkyv_nf_cons_2k);
+rkyv_nofrag_impl!(RkyvSlot8K, 8184, rkyv_nf_prod_8k, rkyv_nf_cons_8k);
+rkyv_nofrag_impl!(RkyvSlot32K, 32760, rkyv_nf_prod_32k, rkyv_nf_cons_32k);
+rkyv_nofrag_impl!(RkyvSlot128K, 131064, rkyv_nf_prod_128k, rkyv_nf_cons_128k);
+
 // ============================================================
 // Helpers
 // ============================================================
@@ -445,10 +564,14 @@ fn rkyv_zero_copy_consumer() -> Result<(), Box<dyn std::error::Error>> {
                 // access_unchecked bypasses validation for benchmarking the zero-copy path.
                 Ok(unsafe { rkyv::access_unchecked::<rkyv::Archived<Vec<TestPayload>>>(bytes) })
             })() {
-                black_box(archived.len());
+                // Read ALL archived data — equivalent work to raw_ring's checksum
+                let mut sum = 0u64;
                 for entry in archived.iter() {
-                    black_box(entry.token_ids.len());
+                    sum = sum.wrapping_add(entry.id.into());
+                    for tid in entry.token_ids.iter() { sum = sum.wrapping_add(u32::from(*tid) as u64); }
+                    for bt in entry.block_table.iter() { sum = sum.wrapping_add(u32::from(*bt) as u64); }
                 }
+                black_box(sum);
                 consumed += 1;
             }
         });
@@ -465,10 +588,14 @@ fn rkyv_zero_copy_consumer() -> Result<(), Box<dyn std::error::Error>> {
                 // access_unchecked bypasses validation for benchmarking the zero-copy path.
                 Ok(unsafe { rkyv::access_unchecked::<rkyv::Archived<Vec<TestPayload>>>(bytes) })
             })() {
-                black_box(archived.len());
+                // Read ALL archived data — equivalent work to raw_ring's checksum
+                let mut sum = 0u64;
                 for entry in archived.iter() {
-                    black_box(entry.token_ids.len());
+                    sum = sum.wrapping_add(entry.id.into());
+                    for tid in entry.token_ids.iter() { sum = sum.wrapping_add(u32::from(*tid) as u64); }
+                    for bt in entry.block_table.iter() { sum = sum.wrapping_add(u32::from(*bt) as u64); }
                 }
+                black_box(sum);
                 consumed += 1;
             }
         });
@@ -634,6 +761,10 @@ fn main() {
                 "rs_framed_prod_32k" => rs_framed_prod_32k(), "rs_framed_cons_32k" => rs_framed_cons_32k(),
                 "codec_prod" => codec_producer(), "codec_cons" => codec_consumer(),
                 "rkyv_zc_cons" => rkyv_zero_copy_consumer(),
+                "rkyv_nf_prod_2k" => rkyv_nf_prod_2k(), "rkyv_nf_cons_2k" => rkyv_nf_cons_2k(),
+                "rkyv_nf_prod_8k" => rkyv_nf_prod_8k(), "rkyv_nf_cons_8k" => rkyv_nf_cons_8k(),
+                "rkyv_nf_prod_32k" => rkyv_nf_prod_32k(), "rkyv_nf_cons_32k" => rkyv_nf_cons_32k(),
+                "rkyv_nf_prod_128k" => rkyv_nf_prod_128k(), "rkyv_nf_cons_128k" => rkyv_nf_cons_128k(),
                 _ => Ok(()),
             };
             if let Err(e) = result { eprintln!("{role} failed: {e}"); std::process::exit(1); }
@@ -654,11 +785,14 @@ fn main() {
     // Test at 4 payload sizes
     struct SizeConfig { tag: &'static str, payload: usize, events: u64, buffer: usize, raw_prod: &'static str, raw_cons: &'static str, batch: usize }
 
+    // FAIR COMPARISON: batch size calibrated so encoded output ≈ target payload.
+    // All layers at each row use the SAME ring depth.
+    // Per-payload rkyv ≈ 585 bytes. batch=2→1.1KB, 8→4.7KB, 28→16KB, 110→64KB.
     let sizes = [
-        SizeConfig { tag: "1KB",  payload: 1024,  events: 200_000, buffer: 131_072, raw_prod: "raw_prod_1k",  raw_cons: "raw_cons_1k",  batch: 8 },
-        SizeConfig { tag: "4KB",  payload: 4096,  events: 100_000, buffer: 65_536,  raw_prod: "raw_prod_4k",  raw_cons: "raw_cons_4k",  batch: 8 },
-        SizeConfig { tag: "16KB", payload: 16384, events: 50_000,  buffer: 32_768,  raw_prod: "raw_prod_16k", raw_cons: "raw_cons_16k", batch: 64 },
-        SizeConfig { tag: "64KB", payload: 65536, events: 20_000,  buffer: 16_384,  raw_prod: "raw_prod_64k", raw_cons: "raw_cons_64k", batch: 64 },
+        SizeConfig { tag: "1KB",  payload: 1024,  events: 200_000, buffer: 16_384, raw_prod: "raw_prod_1k",  raw_cons: "raw_cons_1k",  batch: 2 },
+        SizeConfig { tag: "4KB",  payload: 4096,  events: 100_000, buffer: 16_384, raw_prod: "raw_prod_4k",  raw_cons: "raw_cons_4k",  batch: 8 },
+        SizeConfig { tag: "16KB", payload: 16384, events: 50_000,  buffer: 16_384, raw_prod: "raw_prod_16k", raw_cons: "raw_cons_16k", batch: 28 },
+        SizeConfig { tag: "64KB", payload: 65536, events: 20_000,  buffer: 16_384, raw_prod: "raw_prod_64k", raw_cons: "raw_cons_64k", batch: 110 },
     ];
 
     for s in &sizes {
@@ -671,12 +805,12 @@ fn main() {
         all_results.push(raw);
 
         // Framed (blocking recv — baseline)
-        let framed = run_framed(s.tag, s.payload, s.events, 1024);
+        let framed = run_framed(s.tag, s.payload, s.events, s.buffer);
         println!("  framed:       prod={} cons={}", format_throughput(framed.prod_ops), format_throughput(framed.cons_ops));
         all_results.push(framed);
 
         // Framed BATCH recv (process_available_messages)
-        let framed_batch = run_framed_batch(s.tag, s.payload, s.events, 1024);
+        let framed_batch = run_framed_batch(s.tag, s.payload, s.events, s.buffer);
         println!("  framed_batch: prod={} cons={}", format_throughput(framed_batch.prod_ops), format_throughput(framed_batch.cons_ops));
         all_results.push(framed_batch);
 
@@ -694,12 +828,12 @@ fn main() {
         }
 
         // rkyv
-        let rkyv = run_codec(s.tag, "rkyv", s.batch, s.events, 1024);
+        let rkyv = run_codec(s.tag, "rkyv", s.batch, s.events, s.buffer);
         println!("  rkyv:      prod={} cons={}", format_throughput(rkyv.prod_ops), format_throughput(rkyv.cons_ops));
         all_results.push(rkyv);
 
         // bincode
-        let bincode = run_codec(s.tag, "bincode", s.batch, s.events, 1024);
+        let bincode = run_codec(s.tag, "bincode", s.batch, s.events, s.buffer);
         println!("  bincode:      prod={} cons={}", format_throughput(bincode.prod_ops), format_throughput(bincode.cons_ops));
         all_results.push(bincode);
 
@@ -709,10 +843,10 @@ fn main() {
             let exe = env::current_exe().expect("exe");
             let mut prod_cmd = Command::new(&exe);
             prod_cmd.arg("codec_prod").env("BENCH_SEGMENT", &segment).env("BENCH_EVENTS", s.events.to_string())
-                .env("BENCH_BUFFER", "1024").env("BENCH_CODEC", "rkyv").env("BENCH_BATCH_SIZE", s.batch.to_string())
+                .env("BENCH_BUFFER", s.buffer.to_string()).env("BENCH_CODEC", "rkyv").env("BENCH_BATCH_SIZE", s.batch.to_string())
                 .stdout(Stdio::piped()).stderr(Stdio::piped());
             let producer = prod_cmd.spawn().expect("spawn rkyv_zc prod");
-            let consumer = spawn_child(&exe, "rkyv_zc_cons", &segment, s.events, 1024);
+            let consumer = spawn_child(&exe, "rkyv_zc_cons", &segment, s.events, s.buffer);
             let timeout = Duration::from_secs(300);
             let cons_out = wait_timeout(consumer, timeout);
             let prod_out = wait_timeout(producer, timeout);
@@ -722,6 +856,37 @@ fn main() {
         };
         println!("  rkyv_zc:      prod={} cons={}", format_throughput(rkyv_zc.prod_ops), format_throughput(rkyv_zc.cons_ops));
         all_results.push(rkyv_zc);
+
+        // rkyv NOFRAG zero-copy: slot = encoded payload, NO framing, NO 64KB waste
+        let (nf_prod, nf_cons) = match s.tag {
+            "1KB"  => ("rkyv_nf_prod_2k", "rkyv_nf_cons_2k"),
+            "4KB"  => ("rkyv_nf_prod_8k", "rkyv_nf_cons_8k"),
+            "16KB" => ("rkyv_nf_prod_32k", "rkyv_nf_cons_32k"),
+            "64KB" => ("rkyv_nf_prod_128k", "rkyv_nf_cons_128k"),
+            _ => ("rkyv_nf_prod_8k", "rkyv_nf_cons_8k"),
+        };
+        // Must pass BENCH_BATCH_SIZE so producer encodes the right amount of data
+        let rkyv_nf = {
+            let segment = unique_segment(&format!("rkyv_nf_{}", s.tag));
+            let exe = env::current_exe().expect("exe");
+            let mut prod_cmd = Command::new(&exe);
+            prod_cmd.arg(nf_prod).env("BENCH_SEGMENT", &segment)
+                .env("BENCH_EVENTS", s.events.to_string())
+                .env("BENCH_BUFFER", s.buffer.to_string())
+                .env("BENCH_BATCH_SIZE", s.batch.to_string())
+                .stdout(Stdio::piped()).stderr(Stdio::piped());
+            let producer = prod_cmd.spawn().expect("spawn nf prod");
+            let consumer = spawn_child(&exe, nf_cons, &segment, s.events, s.buffer);
+            let timeout = Duration::from_secs(300);
+            let cons_out = wait_timeout(consumer, timeout);
+            let prod_out = wait_timeout(producer, timeout);
+            let prod_ops = prod_out.ok().map(|o| extract_value(&String::from_utf8_lossy(&o.stdout), "Throughput")).unwrap_or(0.0);
+            let cons_ops = cons_out.ok().map(|o| extract_value(&String::from_utf8_lossy(&o.stdout), "Throughput")).unwrap_or(0.0);
+            LayerResult { layer: "rkyv_nofrag", payload_label: s.tag.to_string(), prod_ops, cons_ops }
+        };
+        let rkyv_nf = LayerResult { layer: "rkyv_nofrag", payload_label: rkyv_nf.payload_label, prod_ops: rkyv_nf.prod_ops, cons_ops: rkyv_nf.cons_ops };
+        println!("  rkyv_nofrag:  prod={} cons={}", format_throughput(rkyv_nf.prod_ops), format_throughput(rkyv_nf.cons_ops));
+        all_results.push(rkyv_nf);
 
         bench_log.event(&format!("size_done: {}", s.tag));
     }

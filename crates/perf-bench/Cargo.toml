@@ -98,6 +98,11 @@ harness = false
 # --- cross-cutting ---
 
 [[bench]]
+name = "nofrag_all"
+path = "benches/sweep/nofrag_all.rs"
+harness = false
+
+[[bench]]
 name = "monster_sweep_shm"
 path = "benches/sweep/shm.rs"
 harness = false
