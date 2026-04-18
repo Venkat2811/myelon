@@ -30,8 +30,10 @@ Boundary rules and enforced checks live in the workspace book.
 
 ## One-Command Workflows
 
-- Fast smoke (command wiring + crate boundary checks):
+- Fast benchmark smoke (~60s):
   - `make smoke`
+- Workspace wiring + crate boundary checks:
+  - `make workspace-smoke`
 - Rust-tier orchestration (format/lint/tests/bench+example compile checks):
   - `make orchestrate-rust`
 - Python-tier orchestration:

@@ -439,8 +439,10 @@ fn run_automated_test() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Check results - with broadcast semantics, all consumers should succeed
-    let all_success =
-        producer_result.status.success() && consumer_results.iter().all(|result| result.status.success());
+    let all_success = producer_result.status.success()
+        && consumer_results
+            .iter()
+            .all(|result| result.status.success());
 
     if all_success {
         println!("Automated shared disruptor test PASSED!");

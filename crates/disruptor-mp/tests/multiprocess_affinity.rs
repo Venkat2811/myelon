@@ -1,6 +1,8 @@
 #![cfg(not(target_os = "linux"))]
 
-use disruptor_mp::{attach_shared_consumer, build_shared_single_producer, portable_shm_segment_name};
+use disruptor_mp::{
+    attach_shared_consumer, build_shared_single_producer, portable_shm_segment_name,
+};
 use std::sync::{Mutex, MutexGuard};
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -50,13 +52,12 @@ impl Drop for AffinityEnvGuard {
 }
 
 #[test]
-fn builder_process_core_requests_do_not_break_manual_bringup_on_non_linux()
--> Result<(), Box<dyn std::error::Error>> {
+fn builder_process_core_requests_do_not_break_manual_bringup_on_non_linux(
+) -> Result<(), Box<dyn std::error::Error>> {
     let name = unique_name("afman");
-    let _producer =
-        build_shared_single_producer::<Event>(&name, 64)
-            .with_process_core(0)
-            .build_producer(Event::default)?;
+    let _producer = build_shared_single_producer::<Event>(&name, 64)
+        .with_process_core(0)
+        .build_producer(Event::default)?;
     let _consumer = attach_shared_consumer::<Event>(&name, 64)
         .with_process_core(1)
         .build_consumer()?;
@@ -65,13 +66,12 @@ fn builder_process_core_requests_do_not_break_manual_bringup_on_non_linux()
 }
 
 #[test]
-fn builder_affinity_requests_do_not_break_auto_consumer_bringup_on_non_linux()
--> Result<(), Box<dyn std::error::Error>> {
+fn builder_affinity_requests_do_not_break_auto_consumer_bringup_on_non_linux(
+) -> Result<(), Box<dyn std::error::Error>> {
     let name = unique_name("afauto");
-    let _producer =
-        build_shared_single_producer::<Event>(&name, 64)
-            .with_process_core(0)
-            .build_producer(Event::default)?;
+    let _producer = build_shared_single_producer::<Event>(&name, 64)
+        .with_process_core(0)
+        .build_producer(Event::default)?;
     let _consumer = attach_shared_consumer::<Event>(&name, 64)
         .with_process_core(1)
         .with_consumer_core(2)
@@ -83,8 +83,8 @@ fn builder_affinity_requests_do_not_break_auto_consumer_bringup_on_non_linux()
 }
 
 #[test]
-fn env_affinity_requests_do_not_break_bringup_on_non_linux()
--> Result<(), Box<dyn std::error::Error>> {
+fn env_affinity_requests_do_not_break_bringup_on_non_linux(
+) -> Result<(), Box<dyn std::error::Error>> {
     let _env = AffinityEnvGuard::set(&[
         ("DISRUPTOR_MP_PRODUCER_CORE", "3"),
         ("DISRUPTOR_MP_CONSUMER_CORE", "4"),
@@ -92,11 +92,13 @@ fn env_affinity_requests_do_not_break_bringup_on_non_linux()
     ]);
 
     let name = unique_name("afenv");
-    let _producer = build_shared_single_producer::<Event>(&name, 64).build_producer(Event::default)?;
-    let _consumer = attach_shared_consumer::<Event>(&name, 64)
-        .handle_events_with(|event, _sequence, _end_of_batch| {
+    let _producer =
+        build_shared_single_producer::<Event>(&name, 64).build_producer(Event::default)?;
+    let _consumer = attach_shared_consumer::<Event>(&name, 64).handle_events_with(
+        |event, _sequence, _end_of_batch| {
             let _ = event.value;
-        })?;
+        },
+    )?;
 
     Ok(())
 }

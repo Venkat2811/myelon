@@ -35,7 +35,9 @@ const LOG_DIR: &str = "/tmp/perf_bench_logs";
 
 /// Check if logging is enabled (default: yes, disable with PERF_BENCH_LOG=0).
 pub fn is_enabled() -> bool {
-    std::env::var("PERF_BENCH_LOG").map(|v| v != "0").unwrap_or(true)
+    std::env::var("PERF_BENCH_LOG")
+        .map(|v| v != "0")
+        .unwrap_or(true)
 }
 
 /// Pre-allocated log buffer for zero-overhead lifecycle logging.
@@ -93,7 +95,9 @@ impl BenchLog {
     /// Safe to call inside timed sections — no syscalls, no locks.
     #[inline]
     pub fn event(&mut self, msg: &str) {
-        if !self.auto_flush { return; }
+        if !self.auto_flush {
+            return;
+        }
         let ts = crate::events::nanos_now();
         let _ = writeln!(
             &mut self.buf,
@@ -107,7 +111,9 @@ impl BenchLog {
     /// No-op if logging is disabled.
     #[inline]
     pub fn event_val(&mut self, msg: &str, val: u64) {
-        if !self.auto_flush { return; }
+        if !self.auto_flush {
+            return;
+        }
         let ts = crate::events::nanos_now();
         let _ = writeln!(
             &mut self.buf,
@@ -153,15 +159,22 @@ impl BenchLog {
     /// Generate the auto-flush file path.
     fn auto_log_path(&self) -> std::path::PathBuf {
         use std::time::{SystemTime, UNIX_EPOCH};
-        let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-        std::path::PathBuf::from(LOG_DIR)
-            .join(format!("{}_{}_{}_{}.jsonl", self.role, self.pid, ts, self.count))
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        std::path::PathBuf::from(LOG_DIR).join(format!(
+            "{}_{}_{}_{}.jsonl",
+            self.role, self.pid, ts, self.count
+        ))
     }
 }
 
 impl Drop for BenchLog {
     fn drop(&mut self) {
-        if !self.auto_flush || self.count == 0 { return; }
+        if !self.auto_flush || self.count == 0 {
+            return;
+        }
         self.event("log_end");
         let path = self.auto_log_path();
         if let Err(e) = std::fs::create_dir_all(LOG_DIR) {
@@ -251,7 +264,11 @@ mod tests {
         }
         let elapsed = start.elapsed();
         let ns_per_entry = elapsed.as_nanos() / 100_000;
-        assert!(ns_per_entry < 200, "overhead too high: {}ns/entry", ns_per_entry);
+        assert!(
+            ns_per_entry < 200,
+            "overhead too high: {}ns/entry",
+            ns_per_entry
+        );
         log.auto_flush = false;
     }
 

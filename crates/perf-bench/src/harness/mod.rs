@@ -15,7 +15,11 @@ pub mod runner;
 pub mod r#trait;
 
 // Re-export commonly used types
-pub use env_config::{read_env_bool, read_env_string, read_env_u64, read_env_usize};
+pub use env_config::{
+    apply_timeout_arg, bench_timeout_duration, bench_timeout_secs, bench_timeout_secs_or,
+    check_deadline, read_env_bool, read_env_string, read_env_u64, read_env_usize, spin_deadline,
+    spin_deadline_or,
+};
 pub use naming::{
     mmap_layout_from_env, segment_from_env, unique_mmap_root, unique_mmap_segment,
     unique_shm_segment,

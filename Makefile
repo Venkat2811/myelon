@@ -1,4 +1,5 @@
 CARGO ?= cargo
+PERF_BENCH_MAKE := $(MAKE) -C crates/perf-bench
 ROOT_TIMEOUT_BIN := $(shell if command -v timeout >/dev/null 2>&1; then printf '%s' timeout; elif command -v gtimeout >/dev/null 2>&1; then printf '%s' gtimeout; fi)
 ROOT_EXAMPLE_TIMEOUT ?= 60
 
@@ -13,6 +14,7 @@ endef
 .PHONY: \
 	help fmt check build test bench bench-mp bench-matrix bench-matrix-smoke \
 	bench-matrix-raw bench-matrix-framed bench-matrix-codec bench-matrix-wait bench-matrix-competitive bench-matrix-layout \
+	workspace-smoke competitive myelon-sweep all-multi results \
 	test-rust-fast test-rust-extended test-rust-perf-gate test-rust-manifest \
 	test-py-fast test-py-extended test-py-manifest py-check py-test py-setup \
 	check-layer-boundaries check-layout-refs check-hot-path-ffi \
@@ -22,7 +24,8 @@ endef
 
 help:
 	@echo "myelon workspace commands"
-	@echo "  make smoke               - fast wiring check for rust+python tiers"
+	@echo "  make smoke               - perf-bench smoke lane (~60s)"
+	@echo "  make workspace-smoke     - fast wiring check for rust+python tiers"
 	@echo "  make orchestrate-rust    - rust-tier CI-style workflow"
 	@echo "  make orchestrate-python  - python-tier workflow"
 	@echo "  make orchestrate-all     - rust + python workflows"
@@ -32,8 +35,12 @@ help:
 	@echo "  make build               - cargo build --workspace"
 	@echo "  make test                - cargo test --workspace"
 	@echo "  make bench-mp            - run multiprocess benchmark set"
-	@echo "  make bench-matrix        - run implemented myelon-bench matrix targets"
-	@echo "  make bench-matrix-smoke  - run a fast smoke subset of myelon-bench"
+	@echo "  make bench-matrix        - run perf-bench matrix targets"
+	@echo "  make bench-matrix-smoke  - run perf-bench smoke subset"
+	@echo "  make competitive         - run competitive ping-pong benches"
+	@echo "  make myelon-sweep        - run myelon layer + nofrag sweeps"
+	@echo "  make all-multi           - run multi-consumer coverage benches"
+	@echo "  make results             - write benchmark JSON/CSV/MD artifacts"
 	@echo "  make test-rust-fast      - canonical disruptor-mp Linux Rust lane"
 	@echo "  make test-rust-extended  - disruptor-mp Linux lane + stress/perf smoke"
 	@echo "  make test-rust-perf-gate - live disruptor-mp Linux perf regression gate"
@@ -73,35 +80,41 @@ bench-mp:
 	@$(CARGO) bench -p disruptor-mp --bench benchmark_all_wait_strategies_auto_rust
 	@$(CARGO) bench -p disruptor-mp --bench competitive_pingpong
 
-bench-matrix: bench-matrix-raw bench-matrix-framed bench-matrix-codec bench-matrix-wait bench-matrix-competitive bench-matrix-layout
+bench-matrix:
+	@$(PERF_BENCH_MAKE) all
 
 bench-matrix-raw:
-	@$(CARGO) bench -p myelon-bench --bench raw_ring_shm
-	@$(CARGO) bench -p myelon-bench --bench raw_ring_mmap
+	@$(PERF_BENCH_MAKE) raw
 
 bench-matrix-framed:
-	@$(CARGO) bench -p myelon-bench --bench framed_shm
-	@$(CARGO) bench -p myelon-bench --bench framed_mmap
+	@$(PERF_BENCH_MAKE) framed
 
 bench-matrix-codec:
-	@$(CARGO) bench -p myelon-bench --bench codec_e2e_mmap
+	@$(PERF_BENCH_MAKE) codec
 
 bench-matrix-wait:
-	@$(CARGO) bench -p myelon-bench --bench wait_strategy_shm -- quick
-	@$(CARGO) bench -p myelon-bench --bench wait_strategy_mmap -- quick
+	@$(PERF_BENCH_MAKE) wait
 
 bench-matrix-competitive:
-	@$(CARGO) bench -p myelon-bench --bench competitive_shm -- --message-size 64 --num-messages 1000 --warmup 100 --no-compare
+	@$(PERF_BENCH_MAKE) competitive
 
 bench-matrix-layout:
-	@LAYOUT_BENCH_ITERATIONS=5 $(CARGO) bench -p myelon-bench --bench layout_validation
+	@$(PERF_BENCH_MAKE) layout
 
 bench-matrix-smoke:
-	@$(CARGO) bench -p myelon-bench --bench raw_ring_shm -- --class message
-	@$(CARGO) bench -p myelon-bench --bench raw_ring_mmap
-	@$(CARGO) bench -p myelon-bench --bench framed_mmap
-	@$(CARGO) bench -p myelon-bench --bench wait_strategy_shm -- quick
-	@$(CARGO) bench -p myelon-bench --bench wait_strategy_mmap -- quick
+	@$(PERF_BENCH_MAKE) smoke
+
+competitive:
+	@$(PERF_BENCH_MAKE) competitive
+
+myelon-sweep:
+	@$(PERF_BENCH_MAKE) myelon-sweep
+
+all-multi:
+	@$(PERF_BENCH_MAKE) all-multi
+
+results:
+	@$(PERF_BENCH_MAKE) results
 
 test-rust-fast:
 	@$(MAKE) test-linux
@@ -165,6 +178,9 @@ validate-ci-workflows:
 	@bash scripts/validate_ci_workflows.sh
 
 smoke:
+	@$(PERF_BENCH_MAKE) smoke
+
+workspace-smoke:
 	@$(MAKE) check-layer-boundaries
 	@$(MAKE) check-layout-refs
 	@$(MAKE) check-hot-path-ffi

@@ -50,10 +50,7 @@ impl BenchmarkCoordination {
 
     /// Attach with bounded timeout retry (for child processes that may start
     /// before the parent has finished creating coordination cursors).
-    pub fn attach_with_timeout(
-        prefix: &str,
-        timeout: Duration,
-    ) -> Result<Self, String> {
+    pub fn attach_with_timeout(prefix: &str, timeout: Duration) -> Result<Self, String> {
         let start = Instant::now();
         let sleep = Duration::from_millis(25);
         let mut attempt = 0u32;
@@ -267,25 +264,40 @@ impl UnifiedCoordination {
             .create()?;
 
         let data = shmem.as_ptr() as *mut CoordinationData;
-        unsafe { std::ptr::write(data, CoordinationData::default()); }
+        unsafe {
+            std::ptr::write(data, CoordinationData::default());
+        }
 
-        Ok(Self { _shmem: shmem, data, is_owner: true })
+        Ok(Self {
+            _shmem: shmem,
+            data,
+            is_owner: true,
+        })
     }
 
     /// Attach to existing coordination segment (non-owner).
     pub fn attach(name: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let shmem = shared_memory::ShmemConf::new().os_id(name).open()?;
         let data = shmem.as_ptr() as *mut CoordinationData;
-        Ok(Self { _shmem: shmem, data, is_owner: false })
+        Ok(Self {
+            _shmem: shmem,
+            data,
+            is_owner: false,
+        })
     }
 
     /// Attach with retry (for child processes).
-    pub fn attach_with_timeout(name: &str, timeout: Duration) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn attach_with_timeout(
+        name: &str,
+        timeout: Duration,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let deadline = Instant::now() + timeout;
         loop {
             match Self::attach(name) {
                 Ok(c) => return Ok(c),
-                Err(_) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(25)),
+                Err(_) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(25))
+                }
                 Err(e) => return Err(e),
             }
         }
@@ -298,7 +310,9 @@ impl UnifiedCoordination {
     pub fn wait_for_producer_ready(&self, timeout: Duration) -> bool {
         let start = Instant::now();
         while self.data().producer_ready.load(Ordering::Acquire) == 0 {
-            if start.elapsed() > timeout { return false; }
+            if start.elapsed() > timeout {
+                return false;
+            }
             std::hint::spin_loop();
         }
         true
@@ -307,7 +321,9 @@ impl UnifiedCoordination {
     pub fn wait_for_echo_ready(&self, timeout: Duration) -> bool {
         let start = Instant::now();
         while self.data().echo_ready.load(Ordering::Acquire) == 0 {
-            if start.elapsed() > timeout { return false; }
+            if start.elapsed() > timeout {
+                return false;
+            }
             std::hint::spin_loop();
         }
         true
@@ -316,7 +332,9 @@ impl UnifiedCoordination {
     pub fn wait_for_consumer_attached(&self, timeout: Duration) -> bool {
         let start = Instant::now();
         while self.data().consumer_attached.load(Ordering::Acquire) == 0 {
-            if start.elapsed() > timeout { return false; }
+            if start.elapsed() > timeout {
+                return false;
+            }
             std::hint::spin_loop();
         }
         true

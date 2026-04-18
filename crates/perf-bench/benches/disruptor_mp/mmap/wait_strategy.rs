@@ -102,6 +102,7 @@ fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
     let mut start: Option<Instant> = None;
     let mut consumed = 0u64;
     let mut checksum = 0u64;
+    let deadline = harness::spin_deadline();
     while consumed < NUM_EVENTS {
         if let Some((_seq, event)) = consumer.try_consume_next() {
             if start.is_none() {
@@ -112,6 +113,7 @@ fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
             checksum = checksum.wrapping_add(payload_sum as u64);
             consumed += 1;
         } else {
+            harness::check_deadline(deadline, "wait_strategy_mmap consumer_process");
             apply_wait_strategy(&wait_strategy);
         }
     }

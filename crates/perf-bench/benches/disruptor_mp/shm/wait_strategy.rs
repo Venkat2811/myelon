@@ -97,6 +97,7 @@ fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
     let mut consumed = 0u64;
     let mut start: Option<Instant> = None;
     let mut checksum = 0u64;
+    let deadline = harness::spin_deadline();
 
     while consumed < NUM_EVENTS {
         consumer.process_available(|e, _s| {
@@ -109,6 +110,7 @@ fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
             consumed += 1;
         });
         if consumed < NUM_EVENTS {
+            harness::check_deadline(deadline, "wait_strategy_shm consumer_process");
             match wait_strategy.as_str() {
                 "BusySpin" => {}
                 "BusySpinWithSpinLoopHint" => std::hint::spin_loop(),

@@ -30,8 +30,8 @@ fn test_fragmented_multiprocess_correctness() {
     let exe = env::current_exe().expect("current_exe");
 
     // Create producer (creates ring)
-    let mut producer = FramedTransportProducer::<Frame>::create(&segment, BUFFER_DEPTH)
-        .expect("create producer");
+    let mut producer =
+        FramedTransportProducer::<Frame>::create(&segment, BUFFER_DEPTH).expect("create producer");
 
     // Spawn consumer child
     let child = Command::new(&exe)
@@ -84,9 +84,7 @@ fn test_fragmented_multiprocess_correctness() {
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     if !output.status.success() {
-        panic!(
-            "Consumer child failed!\nstdout:\n{stdout}\nstderr:\n{stderr}"
-        );
+        panic!("Consumer child failed!\nstdout:\n{stdout}\nstderr:\n{stderr}");
     }
 
     assert!(
@@ -102,7 +100,9 @@ fn frag_consumer_child() {
 
     // Retry attach — use raw consumer for frame-level debugging
     use disruptor_mp::{SharedDisruptorBuilder, SharedMemoryConfig};
-    use myelon::transport::{FrameMeta, FramedTransportFrame, frame_flags, is_single_frame, is_last_frame};
+    use myelon::transport::{
+        frame_flags, is_last_frame, is_single_frame, FrameMeta, FramedTransportFrame,
+    };
 
     let config = SharedMemoryConfig {
         name: segment.clone(),
@@ -115,7 +115,11 @@ fn frag_consumer_child() {
     let mut raw_consumer = loop {
         match SharedDisruptorBuilder::<Frame>::new(config.clone()).build_consumer() {
             Ok(c) => {
-                eprintln!("Consumer attached, current_sequence={}, consumer_id={}", c.current_sequence(), c.consumer_id());
+                eprintln!(
+                    "Consumer attached, current_sequence={}, consumer_id={}",
+                    c.current_sequence(),
+                    c.consumer_id()
+                );
                 break c;
             }
             Err(e) if Instant::now() < deadline => {
@@ -126,7 +130,10 @@ fn frag_consumer_child() {
     };
 
     // Manual recv_framed_message with logging
-    fn recv_debug(raw_consumer: &mut disruptor_mp::SharedConsumer<Frame>, msg_count: u64) -> (u8, Vec<u8>) {
+    fn recv_debug(
+        raw_consumer: &mut disruptor_mp::SharedConsumer<Frame>,
+        msg_count: u64,
+    ) -> (u8, Vec<u8>) {
         let (_, first_frame) = raw_consumer.consume_next();
         let first = first_frame.frame_meta();
 
@@ -134,8 +141,16 @@ fn frag_consumer_child() {
         if msg_count <= 10100 {
             eprintln!(
                 "  [msg {}] frame0: flags={:#04b} kind={} msg_id={} len={}{}",
-                msg_count, first.flags, first.kind, first.msg_id, first.len,
-                if !is_first_flag { " *** NOT FIRST ***" } else { "" }
+                msg_count,
+                first.flags,
+                first.kind,
+                first.msg_id,
+                first.len,
+                if !is_first_flag {
+                    " *** NOT FIRST ***"
+                } else {
+                    ""
+                }
             );
         }
 

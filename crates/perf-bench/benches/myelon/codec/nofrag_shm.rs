@@ -25,6 +25,31 @@ use std::env;
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
+const DISCOVERY_SCAN_SLEEP: Duration = Duration::from_millis(150);
+
+fn discovery_scan_rounds(num_consumers: usize) -> usize {
+    if num_consumers > 1 {
+        8 + num_consumers
+    } else {
+        8
+    }
+}
+
+fn warm_discovery_scans<F>(mut scan: F, rounds: usize)
+where
+    F: FnMut() -> i64,
+{
+    for _ in 0..rounds {
+        let _ = scan();
+        std::thread::sleep(DISCOVERY_SCAN_SLEEP);
+    }
+}
+
+fn scaled_buffer_depth(base_buffer: usize, consumers: usize) -> usize {
+    let min_depth = consumers.next_power_of_two().max(1) * 256;
+    base_buffer.max(min_depth).next_power_of_two()
+}
+
 // ============================================================
 // Slot types — each sized to fit the encoded payload with margin
 // ============================================================
@@ -95,33 +120,51 @@ macro_rules! impl_nofrag_bench {
             let batch_size = harness::read_env_usize("BENCH_BATCH_SIZE", 8);
             let messages = harness::read_env_u64("BENCH_MESSAGES", 50_000);
             let buffer_depth = harness::read_env_usize("BENCH_BUFFER_DEPTH", 4096);
+            let num_consumers = harness::read_env_usize("BENCH_NUM_CONSUMERS", 1);
+            let target_rate = harness::read_env_u64("BENCH_TARGET_RATE", 0);
 
             let payloads = make_payloads(batch_size);
 
             let mut producer = build_shared_single_producer::<$slot_type>(&segment, buffer_depth)
-                .enable_discovery(1)
+                .enable_discovery(num_consumers)
                 .with_coordination(CoordinationMode::Immediate)
                 .build_producer(|| <$slot_type>::default())?;
 
             let coord = BenchmarkCoordination::create(&segment)?;
-            if !coord.wait_for_consumers(1, Duration::from_secs(30)) {
-                return Err("timeout waiting for consumer".into());
+            if !coord.wait_for_consumers(num_consumers, Duration::from_secs(30)) {
+                return Err(format!("timeout waiting for {num_consumers} consumers").into());
             }
-            for _ in 0..20 {
-                let _ = producer.min_gating_sequence();
-                std::thread::sleep(Duration::from_millis(2));
-            }
+            warm_discovery_scans(
+                || producer.min_gating_sequence(),
+                discovery_scan_rounds(num_consumers),
+            );
 
             let mut encode_ns = 0u64;
             let mut transport_ns = 0u64;
+            let base_ns = nanos_now();
+            let interval_ns = if target_rate > 0 {
+                1_000_000_000u64 / target_rate
+            } else {
+                0
+            };
 
             macro_rules! run_loop {
                 ($batch:expr) => {
-                    for _ in 0..messages {
+                    for i in 0..messages {
+                        let intended_ns = if target_rate > 0 {
+                            Some(base_ns.saturating_add(i.saturating_mul(interval_ns)))
+                        } else {
+                            None
+                        };
                         let t0 = Instant::now();
                         let encoded = $batch.encode()?;
                         let encoded_bytes: &[u8] = encoded.as_ref();
                         let t1 = Instant::now();
+                        if let Some(intended_ns) = intended_ns {
+                            while nanos_now() < intended_ns {
+                                std::hint::spin_loop();
+                            }
+                        }
                         let len = encoded_bytes.len();
                         assert!(
                             len <= $slot_data_len,
@@ -131,7 +174,7 @@ macro_rules! impl_nofrag_bench {
                         );
                         producer.publish(|slot| {
                             slot.len = len as u32;
-                            slot.timestamp = nanos_now();
+                            slot.timestamp = intended_ns.unwrap_or_else(nanos_now);
                             slot.data[..len].copy_from_slice(encoded_bytes);
                         });
                         let t2 = Instant::now();
@@ -172,7 +215,7 @@ macro_rules! impl_nofrag_bench {
             });
             println!("{}", serde_json::to_string(&output)?);
             coord.signal_producer_done(messages as i64);
-            coord.wait_for_consumers_done(1, Duration::from_secs(60));
+            coord.wait_for_consumers_done(num_consumers, Duration::from_secs(60));
             Ok(())
         }
 
@@ -198,6 +241,7 @@ macro_rules! impl_nofrag_bench {
             let mut latency = LatencyRecorder::default_range();
             let mut decode_ns = 0u64;
             let start = Instant::now();
+            let deadline = harness::spin_deadline();
             let mut consumed = 0u64;
             let mut checksum = 0u64;
 
@@ -232,6 +276,10 @@ macro_rules! impl_nofrag_bench {
                     consumed += 1;
                 });
                 if consumed < messages {
+                    harness::check_deadline(
+                        deadline,
+                        concat!(stringify!($consumer_fn), " measured"),
+                    );
                     std::hint::spin_loop();
                 }
             }
@@ -284,6 +332,8 @@ struct Scenario {
     batch_size: usize,
     messages: u64,
     buffer_depth: usize,
+    consumers: usize,
+    target_rate: u64,
 }
 
 impl Scenario {
@@ -312,6 +362,24 @@ impl Scenario {
             _ => panic!("unsupported batch size: {}", self.batch_size),
         }
     }
+
+    fn avg_decode_us(&self, consumers: &[ConsumerOutput]) -> f64 {
+        if consumers.is_empty() {
+            return 0.0;
+        }
+        consumers
+            .iter()
+            .map(|consumer| {
+                consumer
+                    .phase_timing
+                    .as_ref()
+                    .and_then(|timing| timing.decode_avg_ns)
+                    .unwrap_or(0.0)
+            })
+            .sum::<f64>()
+            / consumers.len() as f64
+            / 1000.0
+    }
 }
 
 impl IpcBenchmark for Scenario {
@@ -320,7 +388,10 @@ impl IpcBenchmark for Scenario {
     }
 
     fn scenario_name(&self) -> String {
-        format!("nofrag_{}seq_{}", self.batch_size, self.codec)
+        format!(
+            "nofrag_1p{}c_{}seq_{}",
+            self.consumers, self.batch_size, self.codec
+        )
     }
 
     fn backend(&self) -> &str {
@@ -348,7 +419,7 @@ impl IpcBenchmark for Scenario {
     }
 
     fn num_consumers(&self) -> usize {
-        1
+        self.consumers
     }
 
     fn throughput_unit(&self) -> &str {
@@ -359,26 +430,42 @@ impl IpcBenchmark for Scenario {
         format!("{}/{} prod", self.codec, self.batch_size)
     }
 
-    fn consumer_label(&self, _consumer_id: usize) -> String {
-        format!("{}/{} cons", self.codec, self.batch_size)
+    fn consumer_label(&self, consumer_id: usize) -> String {
+        format!("{}/{} cons{consumer_id}", self.codec, self.batch_size)
     }
 
     fn launch(&self, exe: &std::path::Path) -> Result<ScenarioChildren, harness::BenchError> {
         let segment =
             harness::unique_shm_segment(&format!("nf_{}_{}", self.codec, self.batch_size));
         let envs = vec![
+            ("BENCH_TARGET_RATE", self.target_rate.to_string()),
             ("BENCHMARK_SEGMENT_NAME", segment.clone()),
             ("BENCH_CODEC", self.codec.to_string()),
             ("BENCH_BATCH_SIZE", self.batch_size.to_string()),
             ("BENCH_MESSAGES", self.messages.to_string()),
             ("BENCH_BUFFER_DEPTH", self.buffer_depth.to_string()),
+            ("BENCH_NUM_CONSUMERS", self.consumers.to_string()),
         ];
 
         let producer = harness::spawn_child(exe, self.producer_role(), &envs);
-        let mut consumer_envs = envs.clone();
-        consumer_envs.push(("BENCH_CONSUMER_ID", "0".to_string()));
-        let consumer = harness::spawn_child(exe, self.consumer_role(), &consumer_envs);
-        Ok(ScenarioChildren::new(producer, vec![consumer]))
+        let consumers = (0..self.consumers)
+            .map(|consumer_id| {
+                let mut consumer_envs = envs.clone();
+                consumer_envs.push(("BENCH_CONSUMER_ID", consumer_id.to_string()));
+                harness::spawn_child(exe, self.consumer_role(), &consumer_envs)
+            })
+            .collect();
+        Ok(ScenarioChildren::new(producer, consumers))
+    }
+
+    fn aggregate_latency(
+        &self,
+        consumers: &[ConsumerOutput],
+    ) -> Option<perf_bench::latency::LatencyStats> {
+        consumers
+            .iter()
+            .filter_map(|entry| entry.latency.clone())
+            .max_by_key(|stats| stats.p99_ns)
     }
 
     fn print_summary_with_metrics(
@@ -387,32 +474,41 @@ impl IpcBenchmark for Scenario {
         consumers: &[ConsumerOutput],
         latency: Option<&perf_bench::latency::LatencyStats>,
     ) {
-        let consumer = consumers.first().expect("consumer metrics");
         let prod_timing = producer
             .phase_timing
             .as_ref()
             .expect("producer phase timing missing");
-        let cons_timing = consumer
-            .phase_timing
-            .as_ref()
-            .expect("consumer phase timing missing");
         let encode_us = prod_timing.encode_avg_ns.unwrap_or(0.0) / 1000.0;
         let write_us = prod_timing.transport_write_avg_ns.unwrap_or(0.0) / 1000.0;
-        let decode_us = cons_timing.decode_avg_ns.unwrap_or(0.0) / 1000.0;
+        let decode_us = self.avg_decode_us(consumers);
         let lat_str = latency
             .map(|stats| stats.summary())
             .unwrap_or_else(|| "-".to_string());
+        let avg_consumer_ops = self.average_consumer_ops(consumers);
+        let consumer_label = if self.consumers == 1 {
+            "cons"
+        } else {
+            "avg cons"
+        };
+        let mode_label = if self.target_rate > 0 {
+            format!("CO@{}", format_throughput(self.target_rate as f64))
+        } else {
+            "tput".to_string()
+        };
 
         println!(
-            "  {:<8} batch={:<3} slot={:>4}KB  enc: {:>6.1}μs  write: {:>6.1}μs  dec: {:>6.1}μs  | prod: {:>8}  cons: {:>8}  {}",
+            "  {:<8} mode={:<10} cons={:<2} batch={:<3} slot={:>4}KB  enc: {:>6.1}μs  write: {:>6.1}μs  dec: {:>6.1}μs  | prod: {:>8}  {}: {:>8}  {}",
             self.codec,
+            mode_label,
+            self.consumers,
             self.batch_size,
             self.slot_bytes() / 1024,
             encode_us,
             write_us,
             decode_us,
             format_throughput(producer.throughput_ops_sec),
-            format_throughput(consumer.throughput_ops_sec),
+            consumer_label,
+            format_throughput(avg_consumer_ops),
             lat_str,
         );
     }
@@ -423,8 +519,7 @@ impl IpcBenchmark for Scenario {
         consumers: &[ConsumerOutput],
         latency: Option<perf_bench::latency::LatencyStats>,
     ) -> reporting::BenchResult {
-        let consumer = consumers.first().expect("consumer metrics");
-        reporting::make_result(
+        let mut result = reporting::make_result(
             "codec_nofrag_shm",
             &self.scenario_name(),
             "shm",
@@ -435,11 +530,15 @@ impl IpcBenchmark for Scenario {
             self.buffer_depth,
             self.messages,
             0,
-            1,
+            self.consumers,
             producer.throughput_ops_sec,
-            consumer.throughput_ops_sec,
+            self.average_consumer_ops(consumers),
             latency,
-        )
+        );
+        if self.target_rate > 0 {
+            result.measurement_mode = format!("co_aware@{}", self.target_rate);
+        }
+        result
     }
 }
 
@@ -464,17 +563,57 @@ impl harness::BenchHarness for CodecNoFragShmBench {
     }
 
     fn run_orchestrator(&self, args: &[String]) -> harness::BenchRunResult {
+        let codec_arg = args
+            .windows(2)
+            .find(|w| w[0] == "--codec")
+            .map(|w| w[1].as_str())
+            .unwrap_or("all");
         let batch_arg = args
             .windows(2)
             .find(|w| w[0] == "--batch")
             .map(|w| w[1].as_str())
             .unwrap_or("all");
+        let consumers_arg = args
+            .windows(2)
+            .find(|w| w[0] == "--consumers")
+            .map(|w| w[1].as_str())
+            .unwrap_or("all");
+        let mode = args
+            .windows(2)
+            .find(|w| w[0] == "--mode")
+            .map(|w| w[1].as_str())
+            .unwrap_or("throughput");
+        let target_rate = args
+            .windows(2)
+            .find(|w| w[0] == "--target-rate")
+            .map(|w| w[1].parse::<u64>().expect("target rate"));
+        if !matches!(mode, "throughput" | "co") {
+            return Err(format!("unsupported mode: {mode}").into());
+        }
+        if mode == "co" && target_rate.is_none() {
+            return Err("--mode co requires --target-rate".into());
+        }
+        if mode != "co" && target_rate.is_some() {
+            return Err("--target-rate requires --mode co".into());
+        }
+        let target_rate = target_rate.unwrap_or(0);
         let output_args = reporting::ReportOutputArgs::from_args(args);
 
         if !output_args.json_mode {
             println!("=== Codec No-Frag SHM Benchmark ===");
             println!("Transport: raw disruptor ring (slot sized to payload, ZERO fragmentation)");
             println!("This is the production-representative number.");
+            println!(
+                "Mode: {}",
+                if target_rate > 0 {
+                    "co_aware"
+                } else {
+                    "throughput"
+                }
+            );
+            if target_rate > 0 {
+                println!("Target rate: {} ops/s", target_rate);
+            }
             println!();
         }
 
@@ -483,20 +622,33 @@ impl harness::BenchHarness for CodecNoFragShmBench {
             (64, 50_000, 4096),
             (256, 20_000, 2048),
         ];
+        let consumer_counts = [1usize, 2, 4, 6, 8, 12];
 
         let mut report = BenchReport::new();
         for (batch_size, messages, buffer_depth) in scenarios {
             if batch_arg == "all" || batch_arg.parse::<usize>().ok() == Some(batch_size) {
-                for codec in ["bincode", "rkyv", "flatbuf"] {
-                    report.add(
-                        Scenario {
-                            codec,
-                            batch_size,
-                            messages,
-                            buffer_depth,
+                for consumers in consumer_counts {
+                    let consumers_match = consumers_arg == "all"
+                        || consumers_arg.parse::<usize>().ok() == Some(consumers);
+                    if !consumers_match {
+                        continue;
+                    }
+                    for codec in ["bincode", "rkyv", "flatbuf"] {
+                        if codec_arg != "all" && codec_arg != codec {
+                            continue;
                         }
-                        .run_benchmark()?,
-                    );
+                        report.add(
+                            Scenario {
+                                codec,
+                                batch_size,
+                                messages,
+                                buffer_depth: scaled_buffer_depth(buffer_depth, consumers),
+                                consumers,
+                                target_rate,
+                            }
+                            .run_benchmark()?,
+                        );
+                    }
                 }
             }
         }

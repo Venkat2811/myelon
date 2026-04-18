@@ -22,12 +22,37 @@ use perf_bench::coordination::BenchmarkCoordination;
 use perf_bench::events::{format_throughput, nanos_now, BenchEvent};
 use perf_bench::harness::{
     self, read_env_u64, read_env_usize, segment_from_env, spawn_child, unique_shm_segment,
-    ConsumerOutput, ProducerOutput,
+    ConsumerOutput, IpcBenchmark, ProducerOutput, ScenarioChildren,
 };
-use std::env;
+use perf_bench::reporting::{self, LayerComparisonEntry};
 use std::hint::black_box;
 use std::time::{Duration, Instant};
-use tabled::{settings::Style, Table, Tabled};
+
+const DISCOVERY_SCAN_SLEEP: Duration = Duration::from_millis(150);
+
+fn discovery_scan_rounds(num_consumers: usize) -> usize {
+    if num_consumers > 1 {
+        8 + num_consumers
+    } else {
+        8
+    }
+}
+
+fn warm_discovery_scans<F>(mut scan: F, rounds: usize)
+where
+    F: FnMut() -> i64,
+{
+    for _ in 0..rounds {
+        let _ = scan();
+        std::thread::sleep(DISCOVERY_SCAN_SLEEP);
+    }
+}
+
+fn find_flag_value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
+    args.windows(2)
+        .find(|window| window[0] == flag)
+        .map(|window| window[1].as_str())
+}
 
 const FRAME_DATA_BYTES: usize = 64 * 1024 - 12;
 type Frame = FixedFrame<FRAME_DATA_BYTES>;
@@ -127,20 +152,21 @@ macro_rules! rkyv_nofrag_impl {
             let buffer = read_env_usize("BENCH_BUFFER", 16384);
             let events = read_env_u64("BENCH_EVENTS", 100_000);
             let batch_size = read_env_usize("BENCH_BATCH_SIZE", 8);
+            let num_consumers = read_env_usize("BENCH_CONSUMERS", 1);
             let payloads = make_payloads(batch_size);
 
             let mut producer = build_shared_single_producer::<$slot>(&segment, buffer)
-                .enable_discovery(1)
+                .enable_discovery(num_consumers)
                 .with_coordination(CoordinationMode::Immediate)
                 .build_producer(|| <$slot>::default())?;
             let coord = BenchmarkCoordination::create(&segment)?;
-            if !coord.wait_for_consumers(1, Duration::from_secs(30)) {
-                return Err("timeout".into());
+            if !coord.wait_for_consumers(num_consumers, Duration::from_secs(30)) {
+                return Err(format!("timeout waiting for {num_consumers} consumers").into());
             }
-            for _ in 0..20 {
-                let _ = producer.min_gating_sequence();
-                std::thread::sleep(Duration::from_millis(2));
-            }
+            warm_discovery_scans(
+                || producer.min_gating_sequence(),
+                discovery_scan_rounds(num_consumers),
+            );
 
             let start = Instant::now();
             for _i in 0..events {
@@ -156,7 +182,7 @@ macro_rules! rkyv_nofrag_impl {
                 ProducerOutput::from_elapsed(events, elapsed, std::mem::size_of::<$slot>());
             println!("{}", serde_json::to_string(&output)?);
             coord.signal_producer_done(events as i64);
-            coord.wait_for_consumers_done(1, Duration::from_secs(60));
+            coord.wait_for_consumers_done(num_consumers, Duration::from_secs(60));
             Ok(())
         }
 
@@ -175,6 +201,7 @@ macro_rules! rkyv_nofrag_impl {
             };
             let mut consumer = SharedDisruptorBuilder::<$slot>::new(config).build_consumer()?;
             coord.signal_consumer_ready();
+            let deadline = harness::spin_deadline();
             let mut consumed = 0u64;
             let mut start: Option<Instant> = None;
             let mut checksum = 0u64;
@@ -191,6 +218,7 @@ macro_rules! rkyv_nofrag_impl {
                     consumed += 1;
                 });
                 if consumed < events {
+                    harness::check_deadline(deadline, concat!(stringify!($cons_fn), " measured"));
                     std::hint::spin_loop();
                 }
             }
@@ -224,18 +252,19 @@ macro_rules! raw_impl {
             let segment = segment_from_env("BENCHMARK_SEGMENT_NAME");
             let buffer = read_env_usize("BENCH_BUFFER", 4096);
             let events = read_env_u64("BENCH_EVENTS", 100_000);
+            let num_consumers = read_env_usize("BENCH_CONSUMERS", 1);
             let mut producer = build_shared_single_producer::<$ev>(&segment, buffer)
-                .enable_discovery(1)
+                .enable_discovery(num_consumers)
                 .with_coordination(CoordinationMode::Immediate)
                 .build_producer(|| <$ev>::default())?;
             let coord = BenchmarkCoordination::create(&segment)?;
-            if !coord.wait_for_consumers(1, Duration::from_secs(30)) {
-                return Err("timeout".into());
+            if !coord.wait_for_consumers(num_consumers, Duration::from_secs(30)) {
+                return Err(format!("timeout waiting for {num_consumers} consumers").into());
             }
-            for _ in 0..20 {
-                let _ = producer.min_gating_sequence();
-                std::thread::sleep(Duration::from_millis(2));
-            }
+            warm_discovery_scans(
+                || producer.min_gating_sequence(),
+                discovery_scan_rounds(num_consumers),
+            );
             let start = Instant::now();
             for i in 0..events {
                 producer.publish(|s| {
@@ -248,7 +277,7 @@ macro_rules! raw_impl {
             let output = ProducerOutput::from_elapsed(events, elapsed, std::mem::size_of::<$ev>());
             println!("{}", serde_json::to_string(&output)?);
             coord.signal_producer_done(events as i64);
-            coord.wait_for_consumers_done(1, Duration::from_secs(60));
+            coord.wait_for_consumers_done(num_consumers, Duration::from_secs(60));
             Ok(())
         }
         fn $cons_fn() -> Result<(), Box<dyn std::error::Error>> {
@@ -312,10 +341,12 @@ fn framed_producer() -> Result<(), Box<dyn std::error::Error>> {
     let buffer = read_env_usize("BENCH_BUFFER", 1024);
     let events = read_env_u64("BENCH_EVENTS", 50_000);
     let payload_size = read_env_usize("BENCH_PAYLOAD_SIZE", 1024);
-    let mut producer = FramedTransportProducer::<Frame>::create(&segment, buffer)?;
+    let num_consumers = read_env_usize("BENCH_CONSUMERS", 1);
+    let mut producer =
+        FramedTransportProducer::<Frame>::create_with_consumers(&segment, buffer, num_consumers)?;
     let coord = BenchmarkCoordination::create(&segment)?;
-    if !coord.wait_for_consumers(1, Duration::from_secs(30)) {
-        return Err("timeout".into());
+    if !coord.wait_for_consumers(num_consumers, Duration::from_secs(30)) {
+        return Err(format!("timeout waiting for {num_consumers} consumers").into());
     }
     producer.discover_consumers(Duration::from_secs(3));
     let payload = vec![42u8; payload_size];
@@ -327,7 +358,7 @@ fn framed_producer() -> Result<(), Box<dyn std::error::Error>> {
     let output = ProducerOutput::from_elapsed(events, elapsed, payload_size);
     println!("{}", serde_json::to_string(&output)?);
     coord.signal_producer_done(events as i64);
-    coord.wait_for_consumers_done(1, Duration::from_secs(60));
+    coord.wait_for_consumers_done(num_consumers, Duration::from_secs(60));
     Ok(())
 }
 
@@ -373,10 +404,15 @@ macro_rules! rightsized_framed_impl {
             let buffer = read_env_usize("BENCH_BUFFER", 4096);
             let events = read_env_u64("BENCH_EVENTS", 100_000);
             let payload_size = read_env_usize("BENCH_PAYLOAD_SIZE", 1024);
-            let mut producer = FramedTransportProducer::<$frame>::create(&segment, buffer)?;
+            let num_consumers = read_env_usize("BENCH_CONSUMERS", 1);
+            let mut producer = FramedTransportProducer::<$frame>::create_with_consumers(
+                &segment,
+                buffer,
+                num_consumers,
+            )?;
             let coord = BenchmarkCoordination::create(&segment)?;
-            if !coord.wait_for_consumers(1, Duration::from_secs(30)) {
-                return Err("timeout".into());
+            if !coord.wait_for_consumers(num_consumers, Duration::from_secs(30)) {
+                return Err(format!("timeout waiting for {num_consumers} consumers").into());
             }
             producer.discover_consumers(Duration::from_secs(3));
             let payload = vec![42u8; payload_size];
@@ -388,7 +424,7 @@ macro_rules! rightsized_framed_impl {
             let output = ProducerOutput::from_elapsed(events, elapsed, payload_size);
             println!("{}", serde_json::to_string(&output)?);
             coord.signal_producer_done(events as i64);
-            coord.wait_for_consumers_done(1, Duration::from_secs(60));
+            coord.wait_for_consumers_done(num_consumers, Duration::from_secs(60));
             Ok(())
         }
         fn $cons_fn() -> Result<(), Box<dyn std::error::Error>> {
@@ -407,6 +443,7 @@ macro_rules! rightsized_framed_impl {
             )?;
             let mut reassembly = ReassemblyBuffer::new(256 * 1024);
             coord.signal_consumer_ready();
+            let deadline = harness::spin_deadline();
             let mut consumed = 0u64;
             let mut start: Option<Instant> = None;
             let mut checksum = 0u64;
@@ -421,6 +458,7 @@ macro_rules! rightsized_framed_impl {
                     consumed += 1;
                 });
                 if consumed < events {
+                    harness::check_deadline(deadline, concat!(stringify!($cons_fn), " measured"));
                     std::hint::spin_loop();
                 }
             }
@@ -460,6 +498,7 @@ fn framed_batch_consumer() -> Result<(), Box<dyn std::error::Error>> {
         FramedTransportConsumer::<Frame>::attach(&segment, buffer, MyelonWaitStrategy::BusySpin)?;
     let mut reassembly = ReassemblyBuffer::new(256 * 1024);
     coord.signal_consumer_ready();
+    let deadline = harness::spin_deadline();
     let mut consumed = 0u64;
     let mut start: Option<Instant> = None;
     let mut checksum = 0u64;
@@ -474,6 +513,7 @@ fn framed_batch_consumer() -> Result<(), Box<dyn std::error::Error>> {
             consumed += 1;
         });
         if consumed < events {
+            harness::check_deadline(deadline, "framed_batch_consumer measured");
             std::hint::spin_loop();
         }
     }
@@ -489,170 +529,148 @@ fn framed_batch_consumer() -> Result<(), Box<dyn std::error::Error>> {
 // Orchestrator
 // ============================================================
 
-struct LayerResult {
+struct LayerScenario {
     layer: &'static str,
-    payload_label: String,
-    prod_ops: f64,
-    cons_ops: f64,
+    segment_prefix: &'static str,
+    size_tag: &'static str,
+    payload_size: usize,
+    events: u64,
+    buffer: usize,
+    consumers: usize,
+    prod_role: &'static str,
+    cons_role: &'static str,
+    envs: Vec<(&'static str, String)>,
 }
 
-fn run_layer_pair(
+impl IpcBenchmark for LayerScenario {
+    fn bench_name(&self) -> &str {
+        "myelon_layers"
+    }
+
+    fn scenario_name(&self) -> String {
+        format!("{}_{}_1p{}c", self.layer, self.size_tag, self.consumers)
+    }
+
+    fn backend(&self) -> &str {
+        "shm"
+    }
+
+    fn layer(&self) -> &str {
+        self.layer
+    }
+
+    fn message_size_bytes(&self) -> usize {
+        self.payload_size
+    }
+
+    fn buffer_depth(&self) -> usize {
+        self.buffer
+    }
+
+    fn num_messages(&self) -> u64 {
+        self.events
+    }
+
+    fn num_consumers(&self) -> usize {
+        self.consumers
+    }
+
+    fn timeout(&self) -> Duration {
+        harness::bench_timeout_duration(300)
+    }
+
+    fn print_summary_with_metrics(
+        &self,
+        _producer: &harness::ProducerOutput,
+        _consumers: &[harness::ConsumerOutput],
+        _latency: Option<&perf_bench::latency::LatencyStats>,
+    ) {
+    }
+
+    fn launch(&self, exe: &std::path::Path) -> Result<ScenarioChildren, harness::BenchError> {
+        let segment = unique_shm_segment(&format!("{}_{}", self.segment_prefix, self.size_tag));
+        let mut producer_envs = self.envs.clone();
+        producer_envs.push(("BENCHMARK_SEGMENT_NAME", segment.clone()));
+        producer_envs.push(("BENCH_CONSUMERS", self.consumers.to_string()));
+        let producer = spawn_child(exe, self.prod_role, &producer_envs);
+
+        let consumers = (0..self.consumers)
+            .map(|consumer_id| {
+                let mut consumer_envs = producer_envs.clone();
+                consumer_envs.push(("BENCH_CONSUMER_ID", consumer_id.to_string()));
+                spawn_child(exe, self.cons_role, &consumer_envs)
+            })
+            .collect();
+
+        Ok(ScenarioChildren::new(producer, consumers))
+    }
+}
+
+impl LayerScenario {
+    fn run(&self) -> Result<(reporting::BenchResult, LayerComparisonEntry), harness::BenchError> {
+        let result = self.run_benchmark()?;
+        let entry = LayerComparisonEntry {
+            layer: self.layer.to_string(),
+            payload_label: self.size_tag.to_string(),
+            consumers: self.consumers,
+            prod_ops: result.results.producer_throughput_ops_sec,
+            cons_ops: result.results.consumer_throughput_ops_sec,
+        };
+        Ok((result, entry))
+    }
+}
+
+fn raw_scenario(
+    size_tag: &'static str,
+    payload_size: usize,
+    prod_role: &'static str,
+    cons_role: &'static str,
+    events: u64,
+    buffer: usize,
+) -> LayerScenario {
+    LayerScenario {
+        layer: "raw_ring",
+        segment_prefix: "ml_raw",
+        size_tag,
+        payload_size,
+        events,
+        buffer,
+        consumers: 1,
+        prod_role,
+        cons_role,
+        envs: vec![
+            ("BENCH_EVENTS", events.to_string()),
+            ("BENCH_BUFFER", buffer.to_string()),
+        ],
+    }
+}
+
+fn framed_scenario(
     layer: &'static str,
-    segment_prefix: &str,
-    size_tag: &str,
-    prod_role: &str,
-    cons_role: &str,
-    mut envs: Vec<(&str, String)>,
-) -> LayerResult {
-    let segment = unique_shm_segment(&format!("{segment_prefix}_{size_tag}"));
-    envs.push(("BENCHMARK_SEGMENT_NAME", segment));
-
-    let exe = env::current_exe().expect("exe");
-    let producer = spawn_child(&exe, prod_role, &envs);
-
-    let mut consumer_envs = envs.clone();
-    consumer_envs.push(("BENCH_CONSUMER_ID", "0".to_string()));
-    let consumer = spawn_child(&exe, cons_role, &consumer_envs);
-
-    let timeout = Duration::from_secs(300);
-    let cons = harness::collect_child_output("cons", consumer, timeout);
-    let prod = harness::collect_child_output("prod", producer, timeout);
-    let prod_metrics: ProducerOutput = harness::parse_child_metrics("producer", &prod);
-    let cons_metrics: ConsumerOutput = harness::parse_child_metrics("consumer", &cons);
-
-    LayerResult {
+    segment_prefix: &'static str,
+    size_tag: &'static str,
+    payload_size: usize,
+    events: u64,
+    buffer: usize,
+    prod_role: &'static str,
+    cons_role: &'static str,
+) -> LayerScenario {
+    LayerScenario {
         layer,
-        payload_label: size_tag.to_string(),
-        prod_ops: prod_metrics.throughput_ops_sec,
-        cons_ops: cons_metrics.throughput_ops_sec,
-    }
-}
-
-fn run_raw(
-    size_tag: &str,
-    prod_role: &str,
-    cons_role: &str,
-    events: u64,
-    buffer: usize,
-) -> LayerResult {
-    run_layer_pair(
-        "raw_ring",
-        "ml_raw",
+        segment_prefix,
         size_tag,
+        payload_size,
+        events,
+        buffer,
+        consumers: 1,
         prod_role,
         cons_role,
-        vec![
-            ("BENCH_EVENTS", events.to_string()),
-            ("BENCH_BUFFER", buffer.to_string()),
-        ],
-    )
-}
-
-fn run_framed(size_tag: &str, payload_size: usize, events: u64, buffer: usize) -> LayerResult {
-    run_layer_pair(
-        "framed",
-        "ml_frm",
-        size_tag,
-        "framed_prod",
-        "framed_cons",
-        vec![
+        envs: vec![
             ("BENCH_EVENTS", events.to_string()),
             ("BENCH_BUFFER", buffer.to_string()),
             ("BENCH_PAYLOAD_SIZE", payload_size.to_string()),
         ],
-    )
-}
-
-fn run_framed_batch(
-    size_tag: &str,
-    payload_size: usize,
-    events: u64,
-    buffer: usize,
-) -> LayerResult {
-    run_layer_pair(
-        "framed_batch",
-        "ml_frmb",
-        size_tag,
-        "framed_prod",
-        "framed_batch_cons",
-        vec![
-            ("BENCH_EVENTS", events.to_string()),
-            ("BENCH_BUFFER", buffer.to_string()),
-            ("BENCH_PAYLOAD_SIZE", payload_size.to_string()),
-        ],
-    )
-}
-
-fn run_rightsized_framed(
-    size_tag: &str,
-    payload_size: usize,
-    events: u64,
-    buffer: usize,
-    prod_role: &str,
-    cons_role: &str,
-) -> LayerResult {
-    run_layer_pair(
-        "framed_right",
-        "ml_rsf",
-        size_tag,
-        prod_role,
-        cons_role,
-        vec![
-            ("BENCH_EVENTS", events.to_string()),
-            ("BENCH_BUFFER", buffer.to_string()),
-            ("BENCH_PAYLOAD_SIZE", payload_size.to_string()),
-        ],
-    )
-}
-
-// ============================================================
-// Display
-// ============================================================
-
-fn print_layer_comparison(results: &[LayerResult]) {
-    #[derive(Tabled)]
-    struct Row {
-        #[tabled(rename = "Payload")]
-        payload: String,
-        #[tabled(rename = "Layer")]
-        layer: String,
-        #[tabled(rename = "Producer\n(ops/s)")]
-        prod: String,
-        #[tabled(rename = "Consumer\n(ops/s)")]
-        cons: String,
-        #[tabled(rename = "% of Raw\nRing")]
-        pct: String,
     }
-
-    // Find raw ring baseline per payload size
-    let raw_baseline = |tag: &str| -> f64 {
-        results
-            .iter()
-            .find(|r| r.layer == "raw_ring" && r.payload_label == tag)
-            .map(|r| r.cons_ops)
-            .unwrap_or(1.0)
-    };
-
-    let rows: Vec<Row> = results
-        .iter()
-        .map(|r| {
-            let baseline = raw_baseline(&r.payload_label);
-            let pct = r.cons_ops / baseline * 100.0;
-            Row {
-                payload: r.payload_label.clone(),
-                layer: r.layer.to_string(),
-                prod: format_throughput(r.prod_ops),
-                cons: format_throughput(r.cons_ops),
-                pct: if r.layer == "raw_ring" {
-                    "100%".into()
-                } else {
-                    format!("{:.0}%", pct)
-                },
-            }
-        })
-        .collect();
-
-    println!("\n{}", Table::new(rows).with(Style::modern()));
 }
 
 // ============================================================
@@ -698,16 +716,23 @@ impl harness::BenchHarness for MyelonLayersBench {
         CHILD_ROLES
     }
 
-    fn run_orchestrator(&self, _args: &[String]) -> harness::BenchRunResult {
+    fn run_orchestrator(&self, args: &[String]) -> harness::BenchRunResult {
         let mut bench_log = perf_bench::bench_log::BenchLog::default_capacity("myelon_layers");
         bench_log.event("start");
+        let output_args = reporting::ReportOutputArgs::from_args(args);
+        let consumers_arg = find_flag_value(args, "--consumers").unwrap_or("all");
+        let size_arg = find_flag_value(args, "--size").unwrap_or("all");
+        let layer_arg = find_flag_value(args, "--layer").unwrap_or("all");
 
-        println!("=== Myelon Layer Overhead Sweep ===");
-        println!("Compares raw disruptor ring vs FramedTransport vs TypedTransport+codec");
-        println!("Full payload fill + consumer read. SHM backend.");
-        println!();
+        if !output_args.json_mode {
+            println!("=== Myelon Layer Overhead Sweep ===");
+            println!("Compares raw disruptor ring vs FramedTransport vs TypedTransport+codec");
+            println!("Full payload fill + consumer read. SHM backend.");
+            println!();
+        }
 
         let mut all_results = Vec::new();
+        let mut report = reporting::BenchReport::new();
 
         struct SizeConfig {
             tag: &'static str,
@@ -757,82 +782,137 @@ impl harness::BenchHarness for MyelonLayersBench {
                 batch: 110,
             },
         ];
+        let consumer_counts = [1usize, 2, 4, 6, 8, 12];
+
+        macro_rules! run_layer {
+            ($scenario:expr, $label:expr, $consumers:expr) => {{
+                let (bench_result, entry) = ($scenario).run()?;
+                if !output_args.json_mode {
+                    println!(
+                        "  {:<14} 1p{}c prod={} cons={}",
+                        $label,
+                        $consumers,
+                        format_throughput(entry.prod_ops),
+                        format_throughput(entry.cons_ops)
+                    );
+                }
+                report.add(bench_result);
+                all_results.push(entry);
+            }};
+        }
 
         for s in &sizes {
+            if size_arg != "all" && size_arg != s.tag {
+                continue;
+            }
             bench_log.event(&format!("size_start: {}", s.tag));
-            println!("--- {} ---", s.tag);
-
-            let raw = run_raw(s.tag, s.raw_prod, s.raw_cons, s.events, s.buffer);
-            println!(
-                "  raw_ring:  prod={} cons={}",
-                format_throughput(raw.prod_ops),
-                format_throughput(raw.cons_ops)
-            );
-            all_results.push(raw);
-
-            let framed = run_framed(s.tag, s.payload, s.events, s.buffer);
-            println!(
-                "  framed:       prod={} cons={}",
-                format_throughput(framed.prod_ops),
-                format_throughput(framed.cons_ops)
-            );
-            all_results.push(framed);
-
-            let framed_batch = run_framed_batch(s.tag, s.payload, s.events, s.buffer);
-            println!(
-                "  framed_batch: prod={} cons={}",
-                format_throughput(framed_batch.prod_ops),
-                format_throughput(framed_batch.cons_ops)
-            );
-            all_results.push(framed_batch);
-
-            let (rs_prod, rs_cons, rs_buf) = match s.tag {
-                "1KB" => ("rs_framed_prod_2k", "rs_framed_cons_2k", 65_536usize),
-                "4KB" => ("rs_framed_prod_8k", "rs_framed_cons_8k", 32_768),
-                "16KB" => ("rs_framed_prod_32k", "rs_framed_cons_32k", 16_384),
-                _ => ("rs_framed_prod_2k", "rs_framed_cons_2k", 65_536),
-            };
-            if s.tag != "64KB" {
-                let rs_framed =
-                    run_rightsized_framed(s.tag, s.payload, s.events, rs_buf, rs_prod, rs_cons);
-                println!(
-                    "  framed_right: prod={} cons={}",
-                    format_throughput(rs_framed.prod_ops),
-                    format_throughput(rs_framed.cons_ops)
-                );
-                all_results.push(rs_framed);
+            if !output_args.json_mode {
+                println!("--- {} ---", s.tag);
             }
 
-            let (nf_prod, nf_cons) = match s.tag {
-                "1KB" => ("rkyv_nf_prod_2k", "rkyv_nf_cons_2k"),
-                "4KB" => ("rkyv_nf_prod_8k", "rkyv_nf_cons_8k"),
-                "16KB" => ("rkyv_nf_prod_32k", "rkyv_nf_cons_32k"),
-                "64KB" => ("rkyv_nf_prod_128k", "rkyv_nf_cons_128k"),
-                _ => ("rkyv_nf_prod_8k", "rkyv_nf_cons_8k"),
-            };
-            let rkyv_nf = run_layer_pair(
-                "rkyv_nofrag",
-                "ml_rkyv_nf",
-                s.tag,
-                nf_prod,
-                nf_cons,
-                vec![
-                    ("BENCH_EVENTS", s.events.to_string()),
-                    ("BENCH_BUFFER", s.buffer.to_string()),
-                    ("BENCH_BATCH_SIZE", s.batch.to_string()),
-                ],
-            );
-            println!(
-                "  rkyv_nofrag:  prod={} cons={}",
-                format_throughput(rkyv_nf.prod_ops),
-                format_throughput(rkyv_nf.cons_ops)
-            );
-            all_results.push(rkyv_nf);
+            for consumers in consumer_counts {
+                let consumers_match = consumers_arg == "all"
+                    || consumers_arg.parse::<usize>().ok() == Some(consumers);
+                if !consumers_match {
+                    continue;
+                }
+
+                if layer_arg == "all" || layer_arg == "raw_ring" {
+                    let mut scenario =
+                        raw_scenario(s.tag, s.payload, s.raw_prod, s.raw_cons, s.events, s.buffer);
+                    scenario.consumers = consumers;
+                    run_layer!(scenario, "raw_ring:", consumers);
+                }
+
+                if layer_arg == "all" || layer_arg == "framed" {
+                    let mut scenario = framed_scenario(
+                        "framed",
+                        "ml_frm",
+                        s.tag,
+                        s.payload,
+                        s.events,
+                        s.buffer,
+                        "framed_prod",
+                        "framed_cons",
+                    );
+                    scenario.consumers = consumers;
+                    run_layer!(scenario, "framed:", consumers);
+                }
+
+                if layer_arg == "all" || layer_arg == "framed_batch" {
+                    let mut scenario = framed_scenario(
+                        "framed_batch",
+                        "ml_frmb",
+                        s.tag,
+                        s.payload,
+                        s.events,
+                        s.buffer,
+                        "framed_prod",
+                        "framed_batch_cons",
+                    );
+                    scenario.consumers = consumers;
+                    run_layer!(scenario, "framed_batch:", consumers);
+                }
+
+                let (rs_prod, rs_cons, rs_buf) = match s.tag {
+                    "1KB" => ("rs_framed_prod_2k", "rs_framed_cons_2k", 65_536usize),
+                    "4KB" => ("rs_framed_prod_8k", "rs_framed_cons_8k", 32_768),
+                    "16KB" => ("rs_framed_prod_32k", "rs_framed_cons_32k", 16_384),
+                    _ => ("rs_framed_prod_2k", "rs_framed_cons_2k", 65_536),
+                };
+                if s.tag != "64KB" && (layer_arg == "all" || layer_arg == "framed_right") {
+                    let mut scenario = framed_scenario(
+                        "framed_right",
+                        "ml_rsf",
+                        s.tag,
+                        s.payload,
+                        s.events,
+                        rs_buf,
+                        rs_prod,
+                        rs_cons,
+                    );
+                    scenario.consumers = consumers;
+                    run_layer!(scenario, "framed_right:", consumers);
+                }
+
+                if layer_arg == "all" || layer_arg == "rkyv_nofrag" {
+                    let (nf_prod, nf_cons) = match s.tag {
+                        "1KB" => ("rkyv_nf_prod_2k", "rkyv_nf_cons_2k"),
+                        "4KB" => ("rkyv_nf_prod_8k", "rkyv_nf_cons_8k"),
+                        "16KB" => ("rkyv_nf_prod_32k", "rkyv_nf_cons_32k"),
+                        "64KB" => ("rkyv_nf_prod_128k", "rkyv_nf_cons_128k"),
+                        _ => ("rkyv_nf_prod_8k", "rkyv_nf_cons_8k"),
+                    };
+                    run_layer!(
+                        LayerScenario {
+                            layer: "rkyv_nofrag",
+                            segment_prefix: "ml_rkyv_nf",
+                            size_tag: s.tag,
+                            payload_size: s.payload,
+                            events: s.events,
+                            buffer: s.buffer,
+                            consumers,
+                            prod_role: nf_prod,
+                            cons_role: nf_cons,
+                            envs: vec![
+                                ("BENCH_EVENTS", s.events.to_string()),
+                                ("BENCH_BUFFER", s.buffer.to_string()),
+                                ("BENCH_BATCH_SIZE", s.batch.to_string()),
+                            ],
+                        },
+                        "rkyv_nofrag:",
+                        consumers
+                    );
+                }
+            }
 
             bench_log.event(&format!("size_done: {}", s.tag));
         }
 
-        print_layer_comparison(&all_results);
+        if !output_args.json_mode {
+            reporting::print_layer_comparison(&all_results);
+        }
+        reporting::emit_report(&report, &output_args, None, None, None);
         bench_log.event_val("total_scenarios", all_results.len() as u64);
         Ok(())
     }

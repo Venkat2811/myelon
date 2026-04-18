@@ -17,6 +17,8 @@ use std::env;
 use std::process::Child;
 use std::time::{Duration, Instant};
 
+const SIGNAL_MULTI_EVENTS: u64 = 1_000_000;
+
 // ============================================================
 // Event types (identical to raw_ring_shm)
 // ============================================================
@@ -90,6 +92,7 @@ fn message_producer() -> Result<(), Box<dyn std::error::Error>> {
     let layout = child_layout();
     let buffer_size: usize = env::var("MMAP_BUFFER_SIZE")?.parse()?;
     let num_events: u64 = env::var("MMAP_EVENTS")?.parse()?;
+    let target_rate = harness::read_env_u64("MMAP_TARGET_RATE", 0);
     const WARMUP: u64 = 1_000;
 
     layout.ensure_directories()?;
@@ -111,12 +114,28 @@ fn message_producer() -> Result<(), Box<dyn std::error::Error>> {
 
     // Measured — identical work to SHM message class, absolute timestamps
     let start = Instant::now();
-    for i in 0..num_events {
-        producer.publish(|e| {
-            e.id = WARMUP + i;
-            e.timestamp = nanos_now();
-            e.payload = [((WARMUP + i) % 256) as u8; 128];
-        });
+    if target_rate > 0 {
+        let interval_ns = 1_000_000_000u64 / target_rate;
+        let base_ns = nanos_now();
+        for i in 0..num_events {
+            let intended_ns = base_ns.saturating_add(i.saturating_mul(interval_ns));
+            while nanos_now() < intended_ns {
+                std::hint::spin_loop();
+            }
+            producer.publish(|e| {
+                e.id = WARMUP + i;
+                e.timestamp = intended_ns;
+                e.payload = [((WARMUP + i) % 256) as u8; 128];
+            });
+        }
+    } else {
+        for i in 0..num_events {
+            producer.publish(|e| {
+                e.id = WARMUP + i;
+                e.timestamp = nanos_now();
+                e.payload = [((WARMUP + i) % 256) as u8; 128];
+            });
+        }
     }
     let elapsed = start.elapsed();
 
@@ -154,11 +173,13 @@ fn message_consumer() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Warmup
+    let deadline = harness::spin_deadline();
     let mut warmup = 0u64;
     while warmup < WARMUP {
         if consumer.try_consume_next().is_some() {
             warmup += 1;
         } else {
+            harness::check_deadline(deadline, "raw_ring_mmap message_consumer warmup");
             std::hint::spin_loop();
         }
     }
@@ -176,6 +197,7 @@ fn message_consumer() -> Result<(), Box<dyn std::error::Error>> {
                 latency.record_delta(event.timestamp, nanos_now());
             }
         } else {
+            harness::check_deadline(deadline, "raw_ring_mmap message_consumer measured");
             std::hint::spin_loop();
         }
     }
@@ -270,23 +292,124 @@ fn signal_consumer() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
+    let deadline = harness::spin_deadline();
     let mut warmup = 0u64;
     while warmup < WARMUP {
         if consumer.try_consume_next().is_some() {
             warmup += 1;
         } else {
+            harness::check_deadline(deadline, "raw_ring_mmap signal_consumer warmup");
             std::hint::spin_loop();
         }
     }
 
     let start = Instant::now();
     let mut consumed = 0u64;
-    let mut checksum = 0u64;
+    let checksum = 0u64; // Signal class: no payload work — measures pure disruptor ceiling
     while consumed < num_events {
-        if let Some((_seq, event)) = consumer.try_consume_next() {
-            checksum = checksum.wrapping_add(event.data);
+        if let Some((_seq, _event)) = consumer.try_consume_next() {
             consumed += 1;
         } else {
+            harness::check_deadline(deadline, "raw_ring_mmap signal_consumer measured");
+            std::hint::spin_loop();
+        }
+    }
+    let elapsed = start.elapsed();
+
+    let output = harness::ConsumerOutput::from_elapsed(
+        consumer_id,
+        consumed,
+        elapsed,
+        std::mem::size_of::<SignalEvent>(),
+        checksum,
+    );
+    println!("{}", serde_json::to_string(&output)?);
+    Ok(())
+}
+
+fn multi_signal_producer() -> Result<(), Box<dyn std::error::Error>> {
+    let layout = child_layout();
+    let buffer_size: usize = env::var("MMAP_BUFFER_SIZE")?.parse()?;
+    let num_events: u64 = env::var("MMAP_EVENTS")?.parse()?;
+    let num_consumers = harness::read_env_usize("MMAP_NUM_CONSUMERS", 2);
+    const WARMUP: u64 = 100_000;
+
+    layout.ensure_directories()?;
+    let mut producer =
+        MmapProducer::<SignalEvent>::create(layout, buffer_size, SignalEvent::default)?;
+
+    if !producer.wait_for_consumers_ready(num_consumers as i64, Duration::from_secs(60)) {
+        return Err(format!("Timeout waiting for {num_consumers} consumers").into());
+    }
+
+    for i in 0..WARMUP {
+        producer.publish(|s| {
+            s.sequence = i;
+            s.data = i.wrapping_mul(0x9E3779B97F4A7C15);
+        });
+    }
+
+    let start = Instant::now();
+    for i in 0..num_events {
+        producer.publish(|s| {
+            s.sequence = WARMUP + i;
+            s.data = (WARMUP + i).wrapping_mul(0x9E3779B97F4A7C15);
+        });
+    }
+    let elapsed = start.elapsed();
+
+    let output = harness::ProducerOutput::from_elapsed(
+        num_events,
+        elapsed,
+        std::mem::size_of::<SignalEvent>(),
+    );
+    println!("{}", serde_json::to_string(&output)?);
+
+    let last_seq = (WARMUP + num_events - 1) as i64;
+    producer.wait_until_consumed_with_strategy(
+        last_seq,
+        Duration::from_secs(90),
+        AutoWaitStrategy::BusySpin,
+    );
+    Ok(())
+}
+
+fn multi_signal_consumer() -> Result<(), Box<dyn std::error::Error>> {
+    let layout = child_layout();
+    let buffer_size: usize = env::var("MMAP_BUFFER_SIZE")?.parse()?;
+    let num_events: u64 = env::var("MMAP_EVENTS")?.parse()?;
+    let consumer_id = harness::read_env_usize("MMAP_CONSUMER_ID", 0);
+    let consumer_name = format!("c{}", consumer_id);
+    const WARMUP: u64 = 100_000;
+
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let mut consumer = loop {
+        match MmapConsumer::<SignalEvent>::attach(layout.clone(), buffer_size, &consumer_name) {
+            Ok(c) => break c,
+            Err(_) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(25)),
+            Err(e) => return Err(format!("attach failed: {e}").into()),
+        }
+    };
+
+    let deadline = harness::spin_deadline();
+    let mut warmup = 0u64;
+    while warmup < WARMUP {
+        if consumer.try_consume_next().is_some() {
+            warmup += 1;
+        } else {
+            harness::check_deadline(deadline, "raw_ring_mmap multi_signal_consumer warmup");
+            std::hint::spin_loop();
+        }
+    }
+
+    let start = Instant::now();
+    let mut consumed = 0u64;
+    let checksum = 0u64;
+    while consumed < num_events {
+        if let Some((_seq, _event)) = consumer.try_consume_next() {
+            consumed += 1;
+        } else {
+            harness::check_deadline(deadline, "raw_ring_mmap multi_signal_consumer measured");
             std::hint::spin_loop();
         }
     }
@@ -312,6 +435,7 @@ fn multi_message_producer() -> Result<(), Box<dyn std::error::Error>> {
     let buffer_size: usize = env::var("MMAP_BUFFER_SIZE")?.parse()?;
     let num_events: u64 = env::var("MMAP_EVENTS")?.parse()?;
     let num_consumers = harness::read_env_usize("MMAP_NUM_CONSUMERS", 3);
+    let target_rate = harness::read_env_u64("MMAP_TARGET_RATE", 0);
     const WARMUP: u64 = 1_000;
 
     layout.ensure_directories()?;
@@ -331,12 +455,28 @@ fn multi_message_producer() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let start = Instant::now();
-    for i in 0..num_events {
-        producer.publish(|e| {
-            e.id = WARMUP + i;
-            e.timestamp = nanos_now();
-            e.payload = [((WARMUP + i) % 256) as u8; 128];
-        });
+    if target_rate > 0 {
+        let interval_ns = 1_000_000_000u64 / target_rate;
+        let base_ns = nanos_now();
+        for i in 0..num_events {
+            let intended_ns = base_ns.saturating_add(i.saturating_mul(interval_ns));
+            while nanos_now() < intended_ns {
+                std::hint::spin_loop();
+            }
+            producer.publish(|e| {
+                e.id = WARMUP + i;
+                e.timestamp = intended_ns;
+                e.payload = [((WARMUP + i) % 256) as u8; 128];
+            });
+        }
+    } else {
+        for i in 0..num_events {
+            producer.publish(|e| {
+                e.id = WARMUP + i;
+                e.timestamp = nanos_now();
+                e.payload = [((WARMUP + i) % 256) as u8; 128];
+            });
+        }
     }
     let elapsed = start.elapsed();
 
@@ -374,11 +514,13 @@ fn multi_message_consumer() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
+    let deadline = harness::spin_deadline();
     let mut warmup_count = 0u64;
     while warmup_count < WARMUP {
         if consumer.try_consume_next().is_some() {
             warmup_count += 1;
         } else {
+            harness::check_deadline(deadline, "raw_ring_mmap multi_message_consumer warmup");
             std::hint::spin_loop();
         }
     }
@@ -401,6 +543,7 @@ fn multi_message_consumer() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         } else {
+            harness::check_deadline(deadline, "raw_ring_mmap multi_message_consumer measured");
             std::hint::spin_loop();
         }
     }
@@ -444,6 +587,7 @@ struct Scenario {
     warmup: u64,
     consumers: usize,
     record_latency: bool,
+    target_rate: u64,
 }
 
 impl IpcBenchmark for Scenario {
@@ -485,9 +629,9 @@ impl IpcBenchmark for Scenario {
 
     fn timeout(&self) -> Duration {
         if self.consumers > 1 {
-            Duration::from_secs(180)
+            harness::bench_timeout_duration(180)
         } else {
-            Duration::from_secs(120)
+            harness::bench_timeout_duration(120)
         }
     }
 
@@ -511,8 +655,13 @@ impl IpcBenchmark for Scenario {
             harness::unique_mmap_segment(self.label)
         };
         let root_str = root.display().to_string();
-        let extra_env: Vec<(&str, String)> =
-            vec![("MMAP_NUM_CONSUMERS", self.consumers.to_string())];
+        let extra_env: Vec<(&str, String)> = {
+            let mut envs = vec![("MMAP_NUM_CONSUMERS", self.consumers.to_string())];
+            if self.target_rate > 0 {
+                envs.push(("MMAP_TARGET_RATE", self.target_rate.to_string()));
+            }
+            envs
+        };
 
         let producer = spawn_mmap_child_with_env(
             exe,
@@ -527,7 +676,7 @@ impl IpcBenchmark for Scenario {
         let consumers = (0..self.consumers)
             .map(|consumer_id| {
                 let mut env = extra_env.clone();
-                if self.record_latency {
+                if self.record_latency || self.target_rate > 0 {
                     env.push(("MMAP_RECORD_LATENCY", "1".to_string()));
                 }
                 env.push(("MMAP_CONSUMER_ID", consumer_id.to_string()));
@@ -545,6 +694,44 @@ impl IpcBenchmark for Scenario {
 
         Ok(ScenarioChildren::new(producer, consumers).with_cleanup_path(root))
     }
+
+    fn aggregate_latency(
+        &self,
+        consumers: &[harness::ConsumerOutput],
+    ) -> Option<perf_bench::latency::LatencyStats> {
+        consumers
+            .iter()
+            .filter_map(|entry| entry.latency.clone())
+            .max_by_key(|stats| stats.p99_ns)
+    }
+
+    fn build_result_with_metrics(
+        &self,
+        producer: &harness::ProducerOutput,
+        consumers: &[harness::ConsumerOutput],
+        latency: Option<perf_bench::latency::LatencyStats>,
+    ) -> reporting::BenchResult {
+        let mut result = reporting::make_result(
+            self.bench_name(),
+            &self.scenario_name(),
+            self.backend(),
+            self.layer(),
+            self.codec(),
+            self.wait_strategy(),
+            self.message_size_bytes(),
+            self.buffer_depth(),
+            self.num_messages(),
+            self.warmup_messages(),
+            self.num_consumers(),
+            producer.throughput_ops_sec,
+            self.average_consumer_ops(consumers),
+            latency,
+        );
+        if self.target_rate > 0 {
+            result.measurement_mode = format!("co_aware@{}", self.target_rate);
+        }
+        result
+    }
 }
 
 const CHILD_ROLES: &[harness::ChildRole] = &[
@@ -552,6 +739,8 @@ const CHILD_ROLES: &[harness::ChildRole] = &[
     harness::ChildRole::new("mmap_msg_consumer", message_consumer),
     harness::ChildRole::new("mmap_sig_producer", signal_producer),
     harness::ChildRole::new("mmap_sig_consumer", signal_consumer),
+    harness::ChildRole::new("mmap_multi_sig_producer", multi_signal_producer),
+    harness::ChildRole::new("mmap_multi_sig_consumer", multi_signal_consumer),
     harness::ChildRole::new("mmap_multi_msg_producer", multi_message_producer),
     harness::ChildRole::new("mmap_multi_msg_consumer", multi_message_consumer),
 ];
@@ -573,19 +762,55 @@ impl harness::BenchHarness for RawRingMmapBench {
             .find(|w| w[0] == "--class")
             .map(|w| w[1].as_str())
             .unwrap_or("all");
+        let mode = args
+            .windows(2)
+            .find(|w| w[0] == "--mode")
+            .map(|w| w[1].as_str())
+            .unwrap_or("throughput");
         let consumers_arg = args
             .windows(2)
             .find(|w| w[0] == "--consumers")
             .map(|w| w[1].as_str())
             .unwrap_or("all");
+        let target_rate = args
+            .windows(2)
+            .find(|w| w[0] == "--target-rate")
+            .map(|w| w[1].parse::<u64>().expect("target rate"));
+        if !matches!(mode, "throughput" | "co") {
+            return Err(format!("unsupported mode: {mode}").into());
+        }
+        if mode == "co" && target_rate.is_none() {
+            return Err("--mode co requires --target-rate".into());
+        }
+        if mode != "co" && target_rate.is_some() {
+            return Err("--target-rate requires --mode co".into());
+        }
+        if mode == "co" && class == "signal" {
+            return Err("CO mode is only supported for --class message".into());
+        }
+        let target_rate = target_rate.unwrap_or(0);
         let output_args = reporting::ReportOutputArgs::from_args(args);
 
         let run_message = class == "all" || class == "message";
-        let run_signal = class == "all" || class == "signal";
+        let run_signal = mode != "co" && (class == "all" || class == "signal");
 
         if !output_args.json_mode {
             println!("=== Raw Ring MMAP Benchmark ===");
             println!("Backend: file-backed mmap");
+            println!(
+                "Mode: {}",
+                if target_rate > 0 {
+                    "co_aware"
+                } else {
+                    "throughput"
+                }
+            );
+            if target_rate > 0 {
+                println!("Target rate: {} ops/s", target_rate);
+                if class == "all" {
+                    println!("CO mode applies only to message-class scenarios; signal scenarios are skipped.");
+                }
+            }
             if run_message {
                 println!(
                     "Message class: {}B event, full 128B payload fill + timestamp",
@@ -613,6 +838,19 @@ impl harness::BenchHarness for RawRingMmapBench {
                 warmup: 1_000,
                 consumers: 1,
                 record_latency: true,
+                target_rate: 0,
+            },
+            Scenario {
+                label: "message_1p2c_144B",
+                producer_role: "mmap_multi_msg_producer",
+                consumer_role: "mmap_multi_msg_consumer",
+                event_bytes: std::mem::size_of::<MessageEvent>(),
+                events: 100_000,
+                buffer: 1024,
+                warmup: 1_000,
+                consumers: 2,
+                record_latency: true,
+                target_rate: 0,
             },
             Scenario {
                 label: "message_1p3c_144B",
@@ -624,6 +862,31 @@ impl harness::BenchHarness for RawRingMmapBench {
                 warmup: 1_000,
                 consumers: 3,
                 record_latency: true,
+                target_rate: 0,
+            },
+            Scenario {
+                label: "message_1p4c_144B",
+                producer_role: "mmap_multi_msg_producer",
+                consumer_role: "mmap_multi_msg_consumer",
+                event_bytes: std::mem::size_of::<MessageEvent>(),
+                events: 100_000,
+                buffer: 2048,
+                warmup: 1_000,
+                consumers: 4,
+                record_latency: true,
+                target_rate: 0,
+            },
+            Scenario {
+                label: "message_1p6c_144B",
+                producer_role: "mmap_multi_msg_producer",
+                consumer_role: "mmap_multi_msg_consumer",
+                event_bytes: std::mem::size_of::<MessageEvent>(),
+                events: 100_000,
+                buffer: 4096,
+                warmup: 1_000,
+                consumers: 6,
+                record_latency: false,
+                target_rate: 0,
             },
             Scenario {
                 label: "message_1p8c_144B",
@@ -635,6 +898,7 @@ impl harness::BenchHarness for RawRingMmapBench {
                 warmup: 1_000,
                 consumers: 8,
                 record_latency: false,
+                target_rate: 0,
             },
             Scenario {
                 label: "message_1p12c_144B",
@@ -646,6 +910,7 @@ impl harness::BenchHarness for RawRingMmapBench {
                 warmup: 1_000,
                 consumers: 12,
                 record_latency: false,
+                target_rate: 0,
             },
             Scenario {
                 label: "signal_1p1c_64B",
@@ -657,15 +922,79 @@ impl harness::BenchHarness for RawRingMmapBench {
                 warmup: 100_000,
                 consumers: 1,
                 record_latency: false,
+                target_rate: 0,
+            },
+            Scenario {
+                label: "signal_1p2c_64B",
+                producer_role: "mmap_multi_sig_producer",
+                consumer_role: "mmap_multi_sig_consumer",
+                event_bytes: std::mem::size_of::<SignalEvent>(),
+                events: SIGNAL_MULTI_EVENTS,
+                buffer: 65_536,
+                warmup: 100_000,
+                consumers: 2,
+                record_latency: false,
+                target_rate: 0,
+            },
+            Scenario {
+                label: "signal_1p4c_64B",
+                producer_role: "mmap_multi_sig_producer",
+                consumer_role: "mmap_multi_sig_consumer",
+                event_bytes: std::mem::size_of::<SignalEvent>(),
+                events: SIGNAL_MULTI_EVENTS,
+                buffer: 65_536,
+                warmup: 100_000,
+                consumers: 4,
+                record_latency: false,
+                target_rate: 0,
+            },
+            Scenario {
+                label: "signal_1p6c_64B",
+                producer_role: "mmap_multi_sig_producer",
+                consumer_role: "mmap_multi_sig_consumer",
+                event_bytes: std::mem::size_of::<SignalEvent>(),
+                events: SIGNAL_MULTI_EVENTS,
+                buffer: 65_536,
+                warmup: 100_000,
+                consumers: 6,
+                record_latency: false,
+                target_rate: 0,
+            },
+            Scenario {
+                label: "signal_1p8c_64B",
+                producer_role: "mmap_multi_sig_producer",
+                consumer_role: "mmap_multi_sig_consumer",
+                event_bytes: std::mem::size_of::<SignalEvent>(),
+                events: SIGNAL_MULTI_EVENTS,
+                buffer: 65_536,
+                warmup: 100_000,
+                consumers: 8,
+                record_latency: false,
+                target_rate: 0,
+            },
+            Scenario {
+                label: "signal_1p12c_64B",
+                producer_role: "mmap_multi_sig_producer",
+                consumer_role: "mmap_multi_sig_consumer",
+                event_bytes: std::mem::size_of::<SignalEvent>(),
+                events: SIGNAL_MULTI_EVENTS,
+                buffer: 65_536,
+                warmup: 100_000,
+                consumers: 12,
+                record_latency: false,
+                target_rate: 0,
             },
         ];
 
         let mut report = BenchReport::new();
-        for scenario in scenarios {
+        for mut scenario in scenarios {
             let is_message = scenario.label.starts_with("message_");
             let should_run = (is_message && run_message) || (!is_message && run_signal);
             let consumer_matches = consumers_arg == "all"
                 || consumers_arg.parse::<usize>().ok() == Some(scenario.consumers);
+            if mode == "co" && is_message {
+                scenario.target_rate = target_rate;
+            }
             if should_run && (scenario.consumers == 1 || consumer_matches) {
                 report.add(scenario.run_benchmark()?);
             }

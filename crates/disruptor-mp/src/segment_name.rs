@@ -44,9 +44,8 @@ pub fn portable_shm_segment_name(prefix: &str) -> String {
         .unwrap_or(0);
     let pid_seed = u64::from(std::process::id());
     let counter_seed = NEXT_SEGMENT_SUFFIX.fetch_add(1, Ordering::Relaxed);
-    let suffix_seed =
-        (time_seed ^ pid_seed.rotate_left(13) ^ counter_seed.rotate_left(27))
-            % PORTABLE_SHM_SEGMENT_SUFFIX_MODULUS;
+    let suffix_seed = (time_seed ^ pid_seed.rotate_left(13) ^ counter_seed.rotate_left(27))
+        % PORTABLE_SHM_SEGMENT_SUFFIX_MODULUS;
     let suffix = encode_base36(suffix_seed, PORTABLE_SHM_SEGMENT_SUFFIX_LEN);
     let name = format!("{short_prefix}{suffix}");
 

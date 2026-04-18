@@ -16,14 +16,45 @@ use perf_bench::coordination::BenchmarkCoordination;
 use perf_bench::events::{format_throughput, nanos_now, BenchEvent};
 use perf_bench::harness::{
     self, read_env_u64, read_env_usize, spawn_child, unique_mmap_root, unique_shm_segment,
-    ConsumerOutput, ProducerOutput,
+    ConsumerOutput, IpcBenchmark, ProducerOutput, ScenarioChildren,
 };
 use perf_bench::latency::LatencyRecorder;
+use perf_bench::reporting::{self, NofragMatrixEntry};
 use std::env;
 use std::hint::black_box;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
-use tabled::{settings::Style, Table, Tabled};
+
+const DISCOVERY_SCAN_SLEEP: Duration = Duration::from_millis(150);
+
+fn discovery_scan_rounds(num_consumers: usize) -> usize {
+    if num_consumers > 1 {
+        8 + num_consumers
+    } else {
+        8
+    }
+}
+
+fn warm_discovery_scans<F>(mut scan: F, rounds: usize)
+where
+    F: FnMut() -> i64,
+{
+    for _ in 0..rounds {
+        let _ = scan();
+        std::thread::sleep(DISCOVERY_SCAN_SLEEP);
+    }
+}
+
+fn scaled_buffer_depth(base_buffer: usize, consumers: usize) -> usize {
+    let min_depth = consumers.next_power_of_two().max(1) * 256;
+    base_buffer.max(min_depth).next_power_of_two()
+}
+
+fn find_flag_value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
+    args.windows(2)
+        .find(|window| window[0] == flag)
+        .map(|window| window[1].as_str())
+}
 
 // ============================================================
 // Slot types (right-sized, no framing)
@@ -122,19 +153,20 @@ macro_rules! shm_nofrag_impl {
             let buf = read_env_usize("BENCH_BUFFER", 16384);
             let events = read_env_u64("BENCH_EVENTS", 100_000);
             let batch = read_env_usize("BENCH_BATCH_SIZE", 8);
+            let num_consumers = read_env_usize("BENCH_CONSUMERS", 1);
             let payloads = make_payloads(batch);
             let mut producer = build_shared_single_producer::<$slot>(&seg, buf)
-                .enable_discovery(1)
+                .enable_discovery(num_consumers)
                 .with_coordination(CoordinationMode::Immediate)
                 .build_producer(|| <$slot>::default())?;
             let coord = BenchmarkCoordination::create(&seg)?;
-            if !coord.wait_for_consumers(1, Duration::from_secs(30)) {
-                return Err("timeout".into());
+            if !coord.wait_for_consumers(num_consumers, Duration::from_secs(30)) {
+                return Err(format!("timeout waiting for {num_consumers} consumers").into());
             }
-            for _ in 0..20 {
-                let _ = producer.min_gating_sequence();
-                std::thread::sleep(Duration::from_millis(2));
-            }
+            warm_discovery_scans(
+                || producer.min_gating_sequence(),
+                discovery_scan_rounds(num_consumers),
+            );
             let start = Instant::now();
             for _ in 0..events {
                 let enc = $encode_fn(&payloads);
@@ -149,7 +181,7 @@ macro_rules! shm_nofrag_impl {
                 ProducerOutput::from_elapsed(events, elapsed, std::mem::size_of::<$slot>());
             println!("{}", serde_json::to_string(&output)?);
             coord.signal_producer_done(events as i64);
-            coord.wait_for_consumers_done(1, Duration::from_secs(60));
+            coord.wait_for_consumers_done(num_consumers, Duration::from_secs(60));
             Ok(())
         }
 
@@ -167,6 +199,7 @@ macro_rules! shm_nofrag_impl {
             };
             let mut consumer = SharedDisruptorBuilder::<$slot>::new(config).build_consumer()?;
             coord.signal_consumer_ready();
+            let deadline = harness::spin_deadline();
             let mut consumed = 0u64;
             let mut start: Option<Instant> = None;
             let mut latency = LatencyRecorder::default_range();
@@ -183,6 +216,7 @@ macro_rules! shm_nofrag_impl {
                     consumed += 1;
                 });
                 if consumed < events {
+                    harness::check_deadline(deadline, concat!(stringify!($cons), " measured"));
                     std::hint::spin_loop();
                 }
             }
@@ -277,18 +311,19 @@ macro_rules! raw_shm_impl {
             let seg = env::var("BENCH_SEGMENT").expect("BENCH_SEGMENT");
             let buf = read_env_usize("BENCH_BUFFER", 16384);
             let events = read_env_u64("BENCH_EVENTS", 100_000);
+            let num_consumers = read_env_usize("BENCH_CONSUMERS", 1);
             let mut producer = build_shared_single_producer::<$ev>(&seg, buf)
-                .enable_discovery(1)
+                .enable_discovery(num_consumers)
                 .with_coordination(CoordinationMode::Immediate)
                 .build_producer(|| <$ev>::default())?;
             let coord = BenchmarkCoordination::create(&seg)?;
-            if !coord.wait_for_consumers(1, Duration::from_secs(30)) {
-                return Err("timeout".into());
+            if !coord.wait_for_consumers(num_consumers, Duration::from_secs(30)) {
+                return Err(format!("timeout waiting for {num_consumers} consumers").into());
             }
-            for _ in 0..20 {
-                let _ = producer.min_gating_sequence();
-                std::thread::sleep(Duration::from_millis(2));
-            }
+            warm_discovery_scans(
+                || producer.min_gating_sequence(),
+                discovery_scan_rounds(num_consumers),
+            );
             let start = Instant::now();
             for i in 0..events {
                 producer.publish(|s| {
@@ -301,7 +336,7 @@ macro_rules! raw_shm_impl {
             let output = ProducerOutput::from_elapsed(events, elapsed, std::mem::size_of::<$ev>());
             println!("{}", serde_json::to_string(&output)?);
             coord.signal_producer_done(events as i64);
-            coord.wait_for_consumers_done(1, Duration::from_secs(60));
+            coord.wait_for_consumers_done(num_consumers, Duration::from_secs(60));
             Ok(())
         }
         fn $cons() -> Result<(), Box<dyn std::error::Error>> {
@@ -318,6 +353,7 @@ macro_rules! raw_shm_impl {
             };
             let mut consumer = SharedDisruptorBuilder::<$ev>::new(config).build_consumer()?;
             coord.signal_consumer_ready();
+            let deadline = harness::spin_deadline();
             let mut consumed = 0u64;
             let mut start: Option<Instant> = None;
             let mut latency = LatencyRecorder::default_range();
@@ -334,6 +370,7 @@ macro_rules! raw_shm_impl {
                     consumed += 1;
                 });
                 if consumed < events {
+                    harness::check_deadline(deadline, concat!(stringify!($cons), " measured"));
                     std::hint::spin_loop();
                 }
             }
@@ -375,11 +412,12 @@ macro_rules! raw_mmap_impl {
             let seg = env::var("BENCH_SEGMENT").expect("BENCH_SEGMENT");
             let buf = read_env_usize("BENCH_BUFFER", 16384);
             let events = read_env_u64("BENCH_EVENTS", 100_000);
+            let num_consumers = read_env_usize("BENCH_CONSUMERS", 1);
             let layout = MmapTransportLayout::new(PathBuf::from(&root), seg).expect("layout");
             layout.ensure_directories().expect("dirs");
             let mut producer = MmapProducer::<$ev>::create(layout, buf, || <$ev>::default())?;
-            if !producer.wait_for_consumers_ready(1, Duration::from_secs(30)) {
-                return Err("timeout".into());
+            if !producer.wait_for_consumers_ready(num_consumers as i64, Duration::from_secs(30)) {
+                return Err(format!("timeout waiting for {num_consumers} consumers").into());
             }
             let start = Instant::now();
             for i in 0..events {
@@ -418,6 +456,7 @@ macro_rules! raw_mmap_impl {
                     Err(e) => return Err(format!("attach: {e}").into()),
                 }
             };
+            let deadline = harness::spin_deadline();
             let mut consumed = 0u64;
             let mut start: Option<Instant> = None;
             let mut latency = LatencyRecorder::default_range();
@@ -433,6 +472,7 @@ macro_rules! raw_mmap_impl {
                     latency.record_delta(s.timestamp_ns, nanos_now());
                     consumed += 1;
                 } else {
+                    harness::check_deadline(deadline, concat!(stringify!($cons), " measured"));
                     std::hint::spin_loop();
                 }
             }
@@ -477,12 +517,13 @@ macro_rules! mmap_nofrag_impl {
             let buf = read_env_usize("BENCH_BUFFER", 16384);
             let events = read_env_u64("BENCH_EVENTS", 100_000);
             let batch = read_env_usize("BENCH_BATCH_SIZE", 8);
+            let num_consumers = read_env_usize("BENCH_CONSUMERS", 1);
             let payloads = make_payloads(batch);
             let layout = MmapTransportLayout::new(PathBuf::from(&root), seg).expect("layout");
             layout.ensure_directories().expect("dirs");
             let mut producer = MmapProducer::<$slot>::create(layout, buf, || <$slot>::default())?;
-            if !producer.wait_for_consumers_ready(1, Duration::from_secs(30)) {
-                return Err("timeout".into());
+            if !producer.wait_for_consumers_ready(num_consumers as i64, Duration::from_secs(30)) {
+                return Err(format!("timeout waiting for {num_consumers} consumers").into());
             }
             let start = Instant::now();
             for _ in 0..events {
@@ -524,6 +565,7 @@ macro_rules! mmap_nofrag_impl {
                     Err(e) => return Err(format!("attach: {e}").into()),
                 }
             };
+            let deadline = harness::spin_deadline();
             let mut consumed = 0u64;
             let mut start: Option<Instant> = None;
             let mut latency = LatencyRecorder::default_range();
@@ -539,6 +581,7 @@ macro_rules! mmap_nofrag_impl {
                     latency.record_delta(slot.ts_ns, nanos_now());
                     consumed += 1;
                 } else {
+                    harness::check_deadline(deadline, concat!(stringify!($cons), " measured"));
                     std::hint::spin_loop();
                 }
             }
@@ -628,121 +671,135 @@ mmap_nofrag_impl!(
 // Orchestrator
 // ============================================================
 
-struct Result2 {
+struct Scenario {
     layer: &'static str,
     backend: &'static str,
-    payload_label: String,
-    slot_size: usize,
-    ring_depth: usize,
-    producers: usize,
-    consumers: usize,
-    prod_ops: f64,
-    cons_ops: f64,
-    p50_ns: u64,
-    p99_ns: u64,
-}
-
-fn run_shm(
-    layer: &'static str,
-    prod_role: &str,
-    cons_role: &str,
+    prod_role: &'static str,
+    cons_role: &'static str,
     events: u64,
     buffer: usize,
     batch: usize,
-    size_tag: &str,
+    size_tag: &'static str,
     slot_size: usize,
-) -> Result2 {
-    let seg = unique_shm_segment(&format!("nfa_{layer}"));
-    let exe = env::current_exe().expect("exe");
-    let envs: Vec<(&str, String)> = vec![
-        ("BENCH_SEGMENT", seg.clone()),
-        ("BENCH_EVENTS", events.to_string()),
-        ("BENCH_BUFFER", buffer.to_string()),
-        ("BENCH_BATCH_SIZE", batch.to_string()),
-    ];
-    let producer = spawn_child(&exe, prod_role, &envs);
-    let mut consumer_envs = envs.clone();
-    consumer_envs.push(("BENCH_CONSUMER_ID", "0".to_string()));
-    let consumer = spawn_child(&exe, cons_role, &consumer_envs);
-    let timeout = Duration::from_secs(300);
-    let cons = harness::collect_child_output("cons", consumer, timeout);
-    let prod = harness::collect_child_output("prod", producer, timeout);
-    let prod_metrics: ProducerOutput = harness::parse_child_metrics("producer", &prod);
-    let cons_metrics: ConsumerOutput = harness::parse_child_metrics("consumer", &cons);
-    Result2 {
-        layer,
-        backend: "shm",
-        payload_label: size_tag.to_string(),
-        slot_size,
-        ring_depth: buffer,
-        producers: 1,
-        consumers: 1,
-        prod_ops: prod_metrics.throughput_ops_sec,
-        cons_ops: cons_metrics.throughput_ops_sec,
-        p50_ns: cons_metrics
-            .latency
-            .as_ref()
-            .map(|stats| stats.p50_ns)
-            .unwrap_or(0),
-        p99_ns: cons_metrics
-            .latency
-            .as_ref()
-            .map(|stats| stats.p99_ns)
-            .unwrap_or(0),
+    consumers: usize,
+}
+
+impl IpcBenchmark for Scenario {
+    fn bench_name(&self) -> &str {
+        "nofrag_all"
+    }
+
+    fn scenario_name(&self) -> String {
+        format!(
+            "{}_{}_{}_1p{}c",
+            self.layer, self.backend, self.size_tag, self.consumers
+        )
+    }
+
+    fn backend(&self) -> &str {
+        self.backend
+    }
+
+    fn layer(&self) -> &str {
+        self.layer
+    }
+
+    fn message_size_bytes(&self) -> usize {
+        self.slot_size
+    }
+
+    fn buffer_depth(&self) -> usize {
+        self.buffer
+    }
+
+    fn num_messages(&self) -> u64 {
+        self.events
+    }
+
+    fn num_consumers(&self) -> usize {
+        self.consumers
+    }
+
+    fn timeout(&self) -> Duration {
+        harness::bench_timeout_duration(300)
+    }
+
+    fn print_summary_with_metrics(
+        &self,
+        _producer: &harness::ProducerOutput,
+        _consumers: &[harness::ConsumerOutput],
+        _latency: Option<&perf_bench::latency::LatencyStats>,
+    ) {
+    }
+
+    fn launch(&self, exe: &std::path::Path) -> Result<ScenarioChildren, harness::BenchError> {
+        if self.backend == "shm" {
+            let seg = unique_shm_segment(&format!("nfa_{}", self.layer));
+            let envs: Vec<(&str, String)> = vec![
+                ("BENCH_SEGMENT", seg.clone()),
+                ("BENCH_EVENTS", self.events.to_string()),
+                ("BENCH_BUFFER", self.buffer.to_string()),
+                ("BENCH_BATCH_SIZE", self.batch.to_string()),
+                ("BENCH_CONSUMERS", self.consumers.to_string()),
+            ];
+            let producer = spawn_child(exe, self.prod_role, &envs);
+            let consumers = (0..self.consumers)
+                .map(|consumer_id| {
+                    let mut consumer_envs = envs.clone();
+                    consumer_envs.push(("BENCH_CONSUMER_ID", consumer_id.to_string()));
+                    spawn_child(exe, self.cons_role, &consumer_envs)
+                })
+                .collect();
+            Ok(ScenarioChildren::new(producer, consumers))
+        } else {
+            let root = unique_mmap_root(&format!("nfa_mmap_{}", self.layer));
+            let seg = format!("nfa_{}", std::process::id() % 10000);
+            let envs: Vec<(&str, String)> = vec![
+                ("BENCH_ROOT", root.display().to_string()),
+                ("BENCH_SEGMENT", seg),
+                ("BENCH_EVENTS", self.events.to_string()),
+                ("BENCH_BUFFER", self.buffer.to_string()),
+                ("BENCH_BATCH_SIZE", self.batch.to_string()),
+                ("BENCH_CONSUMERS", self.consumers.to_string()),
+            ];
+            let producer = spawn_child(exe, self.prod_role, &envs);
+            let consumers = (0..self.consumers)
+                .map(|consumer_id| {
+                    let mut consumer_envs = envs.clone();
+                    consumer_envs.push(("BENCH_CONSUMER_ID", consumer_id.to_string()));
+                    spawn_child(exe, self.cons_role, &consumer_envs)
+                })
+                .collect();
+            Ok(ScenarioChildren::new(producer, consumers).with_cleanup_path(root))
+        }
     }
 }
 
-fn run_mmap(
-    layer: &'static str,
-    prod_role: &str,
-    cons_role: &str,
-    events: u64,
-    buffer: usize,
-    batch: usize,
-    size_tag: &str,
-    slot_size: usize,
-) -> Result2 {
-    let root = unique_mmap_root(&format!("nfa_mmap_{layer}"));
-    let seg = format!("nfa_{}", std::process::id() % 10000);
-    let root_str = root.display().to_string();
-    let exe = env::current_exe().expect("exe");
-    let envs: Vec<(&str, String)> = vec![
-        ("BENCH_ROOT", root_str.clone()),
-        ("BENCH_SEGMENT", seg.clone()),
-        ("BENCH_EVENTS", events.to_string()),
-        ("BENCH_BUFFER", buffer.to_string()),
-        ("BENCH_BATCH_SIZE", batch.to_string()),
-    ];
-    let producer = spawn_child(&exe, prod_role, &envs);
-    let mut consumer_envs = envs.clone();
-    consumer_envs.push(("BENCH_CONSUMER_ID", "0".to_string()));
-    let consumer = spawn_child(&exe, cons_role, &consumer_envs);
-    let timeout = Duration::from_secs(300);
-    let cons = harness::collect_child_output("cons", consumer, timeout);
-    let prod = harness::collect_child_output("prod", producer, timeout);
-    let _ = std::fs::remove_dir_all(&root);
-    let prod_metrics: ProducerOutput = harness::parse_child_metrics("producer", &prod);
-    let cons_metrics: ConsumerOutput = harness::parse_child_metrics("consumer", &cons);
-    Result2 {
-        layer,
-        backend: "mmap",
-        payload_label: size_tag.to_string(),
-        slot_size,
-        ring_depth: buffer,
-        producers: 1,
-        consumers: 1,
-        prod_ops: prod_metrics.throughput_ops_sec,
-        cons_ops: cons_metrics.throughput_ops_sec,
-        p50_ns: cons_metrics
-            .latency
-            .as_ref()
-            .map(|stats| stats.p50_ns)
-            .unwrap_or(0),
-        p99_ns: cons_metrics
-            .latency
-            .as_ref()
-            .map(|stats| stats.p99_ns)
-            .unwrap_or(0),
+impl Scenario {
+    fn run(&self) -> Result<(reporting::BenchResult, NofragMatrixEntry), harness::BenchError> {
+        let result = self.run_benchmark()?;
+        let entry = NofragMatrixEntry {
+            layer: self.layer.to_string(),
+            backend: self.backend.to_string(),
+            payload_label: self.size_tag.to_string(),
+            slot_size: self.slot_size,
+            ring_depth: self.buffer,
+            producers: 1,
+            consumers: self.consumers,
+            prod_ops: result.results.producer_throughput_ops_sec,
+            cons_ops: result.results.consumer_throughput_ops_sec,
+            p50_ns: result
+                .latency
+                .as_ref()
+                .map(|stats| stats.p50_ns)
+                .unwrap_or(0),
+            p99_ns: result
+                .latency
+                .as_ref()
+                .map(|stats| stats.p99_ns)
+                .unwrap_or(0),
+        };
+        Ok((result, entry))
     }
 }
 
@@ -812,8 +869,13 @@ impl harness::BenchHarness for NofragAllBench {
         CHILD_ROLES
     }
 
-    fn run_orchestrator(&self, _args: &[String]) -> harness::BenchRunResult {
+    fn run_orchestrator(&self, args: &[String]) -> harness::BenchRunResult {
         let _log = perf_bench::bench_log::BenchLog::default_capacity("nofrag_all");
+        let output_args = reporting::ReportOutputArgs::from_args(args);
+        let consumers_arg = find_flag_value(args, "--consumers").unwrap_or("all");
+        let backend_arg = find_flag_value(args, "--backend").unwrap_or("all");
+        let layer_arg = find_flag_value(args, "--layer").unwrap_or("all");
+        let size_arg = find_flag_value(args, "--size").unwrap_or("all");
 
         struct SizeConfig {
             tag: &'static str,
@@ -918,215 +980,185 @@ impl harness::BenchHarness for NofragAllBench {
                 fb_mmap_cons: "fb_mmap_cons_128k",
             },
         ];
+        let consumer_counts = [1usize, 2, 4, 6, 8, 12];
 
-        println!("=== No-Frag Zero-Copy Complete Matrix ===");
-        println!(
-            "3 layers (raw_ring, rkyv, flatbuf) x 2 backends (SHM, mmap) x 4 sizes = 24 scenarios"
-        );
-        println!("All consumers read ALL field data (fair comparison)");
-        println!();
+        if !output_args.json_mode {
+            println!("=== No-Frag Zero-Copy Complete Matrix ===");
+            println!(
+                "3 layers (raw_ring, rkyv, flatbuf) x 2 backends (SHM, mmap) x 4 sizes x 6 consumer counts = 144 scenarios"
+            );
+            println!("All consumers read ALL field data (fair comparison)");
+            println!();
+        }
 
         let mut results = Vec::new();
-        let mut raw_baselines: std::collections::HashMap<String, f64> =
-            std::collections::HashMap::new();
+        let mut report = reporting::BenchReport::new();
+
+        macro_rules! run_entry {
+            ($scenario:expr, $label:expr, $backend:expr) => {{
+                let (bench_result, entry) = ($scenario).run()?;
+                if !output_args.json_mode {
+                    println!(
+                        "  {:<12} {:<5} prod={:>10} cons={:>10}",
+                        $label,
+                        $backend,
+                        format_throughput(entry.prod_ops),
+                        format_throughput(entry.cons_ops)
+                    );
+                }
+                report.add(bench_result);
+                results.push(entry);
+            }};
+        }
 
         for s in &sizes {
-            println!("--- {} (batch={}) ---", s.tag, s.batch);
-
-            let r = run_shm(
-                "raw_ring",
-                s.raw_shm_prod,
-                s.raw_shm_cons,
-                s.events,
-                s.buffer,
-                s.batch,
-                s.tag,
-                s.raw_slot,
-            );
-            println!(
-                "  raw_ring     SHM   prod={:>10} cons={:>10}",
-                format_throughput(r.prod_ops),
-                format_throughput(r.cons_ops)
-            );
-            raw_baselines.insert(format!("{}_shm", s.tag), r.cons_ops);
-            results.push(r);
-
-            let r = run_mmap(
-                "raw_ring",
-                s.raw_mmap_prod,
-                s.raw_mmap_cons,
-                s.events,
-                s.buffer,
-                s.batch,
-                s.tag,
-                s.raw_slot,
-            );
-            println!(
-                "  raw_ring     mmap  prod={:>10} cons={:>10}",
-                format_throughput(r.prod_ops),
-                format_throughput(r.cons_ops)
-            );
-            raw_baselines.insert(format!("{}_mmap", s.tag), r.cons_ops);
-            results.push(r);
-
-            let r = run_shm(
-                "rkyv_nofrag",
-                s.rkyv_shm_prod,
-                s.rkyv_shm_cons,
-                s.events,
-                s.buffer,
-                s.batch,
-                s.tag,
-                s.codec_slot,
-            );
-            println!(
-                "  rkyv_nf      SHM   prod={:>10} cons={:>10}",
-                format_throughput(r.prod_ops),
-                format_throughput(r.cons_ops)
-            );
-            results.push(r);
-
-            let r = run_shm(
-                "flatbuf_nf",
-                s.fb_shm_prod,
-                s.fb_shm_cons,
-                s.events,
-                s.buffer,
-                s.batch,
-                s.tag,
-                s.codec_slot,
-            );
-            println!(
-                "  flatbuf_nf   SHM   prod={:>10} cons={:>10}",
-                format_throughput(r.prod_ops),
-                format_throughput(r.cons_ops)
-            );
-            results.push(r);
-
-            let r = run_mmap(
-                "rkyv_nofrag",
-                s.rkyv_mmap_prod,
-                s.rkyv_mmap_cons,
-                s.events,
-                s.buffer,
-                s.batch,
-                s.tag,
-                s.codec_slot,
-            );
-            println!(
-                "  rkyv_nf      mmap  prod={:>10} cons={:>10}",
-                format_throughput(r.prod_ops),
-                format_throughput(r.cons_ops)
-            );
-            results.push(r);
-
-            let r = run_mmap(
-                "flatbuf_nf",
-                s.fb_mmap_prod,
-                s.fb_mmap_cons,
-                s.events,
-                s.buffer,
-                s.batch,
-                s.tag,
-                s.codec_slot,
-            );
-            println!(
-                "  flatbuf_nf   mmap  prod={:>10} cons={:>10}",
-                format_throughput(r.prod_ops),
-                format_throughput(r.cons_ops)
-            );
-            results.push(r);
-        }
-
-        // Summary table
-        fn fmt_bytes(b: usize) -> String {
-            if b >= 1024 * 1024 {
-                format!("{}MB", b / (1024 * 1024))
-            } else if b >= 1024 {
-                format!("{}KB", b / 1024)
-            } else {
-                format!("{}B", b)
+            let size_matches = size_arg == "all" || size_arg == s.tag;
+            if !size_matches {
+                continue;
             }
-        }
-        fn fmt_ring_size(slot: usize, depth: usize) -> String {
-            let total = slot * depth;
-            if total >= 1024 * 1024 * 1024 {
-                format!("{:.1}GB", total as f64 / (1024.0 * 1024.0 * 1024.0))
-            } else if total >= 1024 * 1024 {
-                format!("{}MB", total / (1024 * 1024))
-            } else {
-                format!("{}KB", total / 1024)
+            if !output_args.json_mode {
+                println!("--- {} (batch={}) ---", s.tag, s.batch);
             }
-        }
 
-        fn fmt_latency(ns: u64) -> String {
-            if ns == 0 {
-                return "-".to_string();
-            }
-            if ns < 1_000 {
-                format!("{}ns", ns)
-            } else if ns < 1_000_000 {
-                format!("{:.1}us", ns as f64 / 1_000.0)
-            } else {
-                format!("{:.2}ms", ns as f64 / 1_000_000.0)
-            }
-        }
-
-        #[derive(Tabled)]
-        struct Row {
-            #[tabled(rename = "Payload")]
-            size: String,
-            #[tabled(rename = "Layer")]
-            layer: String,
-            #[tabled(rename = "Backend")]
-            backend: String,
-            #[tabled(rename = "Slot")]
-            slot: String,
-            #[tabled(rename = "Depth")]
-            depth: String,
-            #[tabled(rename = "Ring")]
-            ring_size: String,
-            #[tabled(rename = "P")]
-            producers: String,
-            #[tabled(rename = "C")]
-            consumers: String,
-            #[tabled(rename = "Producer\n(ops/s)")]
-            prod: String,
-            #[tabled(rename = "Consumer\n(ops/s)")]
-            cons: String,
-            #[tabled(rename = "P50")]
-            p50: String,
-            #[tabled(rename = "P99")]
-            p99: String,
-            #[tabled(rename = "% of\nRaw")]
-            pct: String,
-        }
-
-        let rows: Vec<Row> = results
-            .iter()
-            .map(|r| {
-                let size = &r.payload_label;
-                let baseline_key = format!("{}_{}", size, r.backend);
-                let baseline = raw_baselines.get(&baseline_key).copied().unwrap_or(1.0);
-                Row {
-                    size: size.clone(),
-                    layer: r.layer.to_string(),
-                    backend: r.backend.to_string(),
-                    slot: fmt_bytes(r.slot_size),
-                    depth: format!("{}", r.ring_depth),
-                    ring_size: fmt_ring_size(r.slot_size, r.ring_depth),
-                    producers: format!("{}", r.producers),
-                    consumers: format!("{}", r.consumers),
-                    prod: format_throughput(r.prod_ops),
-                    cons: format_throughput(r.cons_ops),
-                    p50: fmt_latency(r.p50_ns),
-                    p99: fmt_latency(r.p99_ns),
-                    pct: format!("{:.0}%", r.cons_ops / baseline * 100.0),
+            for consumers in consumer_counts {
+                let consumers_match = consumers_arg == "all"
+                    || consumers_arg.parse::<usize>().ok() == Some(consumers);
+                if !consumers_match {
+                    continue;
                 }
-            })
-            .collect();
 
-        println!("\n{}", Table::new(rows).with(Style::modern()));
+                if (layer_arg == "all" || layer_arg == "raw_ring")
+                    && (backend_arg == "all" || backend_arg == "shm")
+                {
+                    run_entry!(
+                        Scenario {
+                            layer: "raw_ring",
+                            backend: "shm",
+                            prod_role: s.raw_shm_prod,
+                            cons_role: s.raw_shm_cons,
+                            events: s.events,
+                            buffer: scaled_buffer_depth(s.buffer, consumers),
+                            batch: s.batch,
+                            size_tag: s.tag,
+                            slot_size: s.raw_slot,
+                            consumers,
+                        },
+                        "raw_ring",
+                        "SHM"
+                    );
+                }
+
+                if (layer_arg == "all" || layer_arg == "raw_ring")
+                    && (backend_arg == "all" || backend_arg == "mmap")
+                {
+                    run_entry!(
+                        Scenario {
+                            layer: "raw_ring",
+                            backend: "mmap",
+                            prod_role: s.raw_mmap_prod,
+                            cons_role: s.raw_mmap_cons,
+                            events: s.events,
+                            buffer: scaled_buffer_depth(s.buffer, consumers),
+                            batch: s.batch,
+                            size_tag: s.tag,
+                            slot_size: s.raw_slot,
+                            consumers,
+                        },
+                        "raw_ring",
+                        "mmap"
+                    );
+                }
+
+                if (layer_arg == "all" || layer_arg == "rkyv_nofrag")
+                    && (backend_arg == "all" || backend_arg == "shm")
+                {
+                    run_entry!(
+                        Scenario {
+                            layer: "rkyv_nofrag",
+                            backend: "shm",
+                            prod_role: s.rkyv_shm_prod,
+                            cons_role: s.rkyv_shm_cons,
+                            events: s.events,
+                            buffer: scaled_buffer_depth(s.buffer, consumers),
+                            batch: s.batch,
+                            size_tag: s.tag,
+                            slot_size: s.codec_slot,
+                            consumers,
+                        },
+                        "rkyv_nf",
+                        "SHM"
+                    );
+                }
+
+                if (layer_arg == "all" || layer_arg == "flatbuf_nf")
+                    && (backend_arg == "all" || backend_arg == "shm")
+                {
+                    run_entry!(
+                        Scenario {
+                            layer: "flatbuf_nf",
+                            backend: "shm",
+                            prod_role: s.fb_shm_prod,
+                            cons_role: s.fb_shm_cons,
+                            events: s.events,
+                            buffer: scaled_buffer_depth(s.buffer, consumers),
+                            batch: s.batch,
+                            size_tag: s.tag,
+                            slot_size: s.codec_slot,
+                            consumers,
+                        },
+                        "flatbuf_nf",
+                        "SHM"
+                    );
+                }
+
+                if (layer_arg == "all" || layer_arg == "rkyv_nofrag")
+                    && (backend_arg == "all" || backend_arg == "mmap")
+                {
+                    run_entry!(
+                        Scenario {
+                            layer: "rkyv_nofrag",
+                            backend: "mmap",
+                            prod_role: s.rkyv_mmap_prod,
+                            cons_role: s.rkyv_mmap_cons,
+                            events: s.events,
+                            buffer: scaled_buffer_depth(s.buffer, consumers),
+                            batch: s.batch,
+                            size_tag: s.tag,
+                            slot_size: s.codec_slot,
+                            consumers,
+                        },
+                        "rkyv_nf",
+                        "mmap"
+                    );
+                }
+
+                if (layer_arg == "all" || layer_arg == "flatbuf_nf")
+                    && (backend_arg == "all" || backend_arg == "mmap")
+                {
+                    run_entry!(
+                        Scenario {
+                            layer: "flatbuf_nf",
+                            backend: "mmap",
+                            prod_role: s.fb_mmap_prod,
+                            cons_role: s.fb_mmap_cons,
+                            events: s.events,
+                            buffer: scaled_buffer_depth(s.buffer, consumers),
+                            batch: s.batch,
+                            size_tag: s.tag,
+                            slot_size: s.codec_slot,
+                            consumers,
+                        },
+                        "flatbuf_nf",
+                        "mmap"
+                    );
+                }
+            }
+        }
+
+        if !output_args.json_mode {
+            reporting::print_nofrag_matrix(&results);
+        }
+        reporting::emit_report(&report, &output_args, None, None, None);
         Ok(())
     }
 }

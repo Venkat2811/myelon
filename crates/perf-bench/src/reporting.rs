@@ -127,6 +127,30 @@ pub struct BenchReport {
     pub results: Vec<BenchResult>,
 }
 
+#[derive(Debug, Clone)]
+pub struct LayerComparisonEntry {
+    pub payload_label: String,
+    pub layer: String,
+    pub consumers: usize,
+    pub prod_ops: f64,
+    pub cons_ops: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct NofragMatrixEntry {
+    pub payload_label: String,
+    pub layer: String,
+    pub backend: String,
+    pub slot_size: usize,
+    pub ring_depth: usize,
+    pub producers: usize,
+    pub consumers: usize,
+    pub prod_ops: f64,
+    pub cons_ops: f64,
+    pub p50_ns: u64,
+    pub p99_ns: u64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReportView {
     Summary,
@@ -523,6 +547,156 @@ impl BenchReport {
 
         std::fs::write(path, md)
     }
+}
+
+pub fn print_layer_comparison(entries: &[LayerComparisonEntry]) {
+    use tabled::{settings::Style, Table, Tabled};
+
+    #[derive(Tabled)]
+    struct Row {
+        #[tabled(rename = "Payload")]
+        payload: String,
+        #[tabled(rename = "Layer")]
+        layer: String,
+        #[tabled(rename = "C")]
+        consumers: String,
+        #[tabled(rename = "Producer\n(ops/s)")]
+        prod: String,
+        #[tabled(rename = "Consumer\n(ops/s)")]
+        cons: String,
+        #[tabled(rename = "% of Raw\nRing")]
+        pct: String,
+    }
+
+    let raw_baseline = |tag: &str, consumers: usize| -> Option<f64> {
+        entries
+            .iter()
+            .find(|entry| {
+                entry.layer == "raw_ring"
+                    && entry.payload_label == tag
+                    && entry.consumers == consumers
+            })
+            .map(|entry| entry.cons_ops)
+    };
+
+    let rows: Vec<Row> = entries
+        .iter()
+        .map(|entry| {
+            let pct = if entry.layer == "raw_ring" {
+                "100%".to_string()
+            } else if let Some(baseline) = raw_baseline(&entry.payload_label, entry.consumers) {
+                format!("{:.0}%", entry.cons_ops / baseline * 100.0)
+            } else {
+                "-".to_string()
+            };
+            Row {
+                payload: entry.payload_label.clone(),
+                layer: entry.layer.clone(),
+                consumers: entry.consumers.to_string(),
+                prod: format_throughput(entry.prod_ops),
+                cons: format_throughput(entry.cons_ops),
+                pct,
+            }
+        })
+        .collect();
+
+    println!("\n{}", Table::new(rows).with(Style::modern()));
+}
+
+pub fn print_nofrag_matrix(entries: &[NofragMatrixEntry]) {
+    use tabled::{settings::Style, Table, Tabled};
+
+    #[derive(Tabled)]
+    struct Row {
+        #[tabled(rename = "Payload")]
+        size: String,
+        #[tabled(rename = "Layer")]
+        layer: String,
+        #[tabled(rename = "Backend")]
+        backend: String,
+        #[tabled(rename = "Slot")]
+        slot: String,
+        #[tabled(rename = "Depth")]
+        depth: String,
+        #[tabled(rename = "Ring")]
+        ring_size: String,
+        #[tabled(rename = "P")]
+        producers: String,
+        #[tabled(rename = "C")]
+        consumers: String,
+        #[tabled(rename = "Producer\n(ops/s)")]
+        prod: String,
+        #[tabled(rename = "Consumer\n(ops/s)")]
+        cons: String,
+        #[tabled(rename = "P50")]
+        p50: String,
+        #[tabled(rename = "P99")]
+        p99: String,
+        #[tabled(rename = "% of\nRaw")]
+        pct: String,
+    }
+
+    let ring_size = |slot_size: usize, depth: usize| -> String {
+        let total = slot_size * depth;
+        if total >= 1024 * 1024 * 1024 {
+            format!("{:.1}GB", total as f64 / (1024.0 * 1024.0 * 1024.0))
+        } else if total >= 1024 * 1024 {
+            format!("{}MB", total / (1024 * 1024))
+        } else {
+            format!("{}KB", total / 1024)
+        }
+    };
+
+    let raw_baseline = |payload_label: &str, backend: &str, consumers: usize| -> Option<f64> {
+        entries
+            .iter()
+            .find(|entry| {
+                entry.layer == "raw_ring"
+                    && entry.payload_label == payload_label
+                    && entry.backend == backend
+                    && entry.consumers == consumers
+            })
+            .map(|entry| entry.cons_ops)
+    };
+
+    let rows: Vec<Row> = entries
+        .iter()
+        .map(|entry| {
+            let baseline = raw_baseline(&entry.payload_label, &entry.backend, entry.consumers);
+            let pct = if entry.layer == "raw_ring" {
+                "100%".to_string()
+            } else if let Some(baseline) = baseline {
+                format!("{:.0}%", entry.cons_ops / baseline * 100.0)
+            } else {
+                "-".to_string()
+            };
+            Row {
+                size: entry.payload_label.clone(),
+                layer: entry.layer.clone(),
+                backend: entry.backend.clone(),
+                slot: human_size(entry.slot_size),
+                depth: entry.ring_depth.to_string(),
+                ring_size: ring_size(entry.slot_size, entry.ring_depth),
+                producers: entry.producers.to_string(),
+                consumers: entry.consumers.to_string(),
+                prod: format_throughput(entry.prod_ops),
+                cons: format_throughput(entry.cons_ops),
+                p50: if entry.p50_ns == 0 {
+                    "-".into()
+                } else {
+                    latency::format_ns(entry.p50_ns)
+                },
+                p99: if entry.p99_ns == 0 {
+                    "-".into()
+                } else {
+                    latency::format_ns(entry.p99_ns)
+                },
+                pct,
+            }
+        })
+        .collect();
+
+    println!("\n{}", Table::new(rows).with(Style::modern()));
 }
 
 impl Default for BenchReport {
@@ -946,7 +1120,13 @@ pub fn print_monster_sweep_report(report: &BenchReport, backend: MonsterSweepBac
             let baseline = c1.unwrap_or(1.0);
             let format_consumer = |consumers: usize| -> String {
                 find(consumers)
-                    .map(|value| format!("{} ({:.0}%)", format_throughput(value), value / baseline * 100.0))
+                    .map(|value| {
+                        format!(
+                            "{} ({:.0}%)",
+                            format_throughput(value),
+                            value / baseline * 100.0
+                        )
+                    })
                     .unwrap_or("-".into())
             };
             scaling_rows.push(ScalingRow {
@@ -1148,7 +1328,11 @@ pub fn write_monster_sweep_markdown(
         .collect();
 
     md.push_str("## Throughput Sweep (1p1c)\n\n");
-    md.push_str(&Table::new(throughput_rows).with(Style::markdown()).to_string());
+    md.push_str(
+        &Table::new(throughput_rows)
+            .with(Style::markdown())
+            .to_string(),
+    );
     md.push_str("\n\nLegend: ✓ = >10% BW efficiency | △ = >1% | ✗ = <1%\n\n");
 
     #[derive(Tabled)]

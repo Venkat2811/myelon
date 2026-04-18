@@ -13,56 +13,99 @@ use std::time::{Duration, Instant};
 
 const FRAME_DATA_BYTES: usize = 64 * 1024 - 12;
 type Frame = FixedFrame<FRAME_DATA_BYTES>;
-const BUFFER_DEPTH: usize = 1024;
 
 #[derive(Clone, Copy)]
 struct Scenario {
-    label: &'static str,
+    payload_label: &'static str,
+    payload_tag: &'static str,
     payload_bytes: usize,
     messages: u64,
+    buffer: usize,
     consumers: usize,
-    tag: &'static str,
 }
 
-const SCENARIOS: [Scenario; 5] = [
-    Scenario {
+#[derive(Clone, Copy)]
+struct PayloadConfig {
+    label: &'static str,
+    tag: &'static str,
+    payload_bytes: usize,
+    messages: u64,
+    base_buffer: usize,
+}
+
+const PAYLOADS: [PayloadConfig; 4] = [
+    PayloadConfig {
         label: "1KB",
+        tag: "1K",
         payload_bytes: 1024,
         messages: 100_000,
-        consumers: 1,
-        tag: "1K",
+        base_buffer: 1024,
     },
-    Scenario {
+    PayloadConfig {
         label: "32KB",
+        tag: "32K",
         payload_bytes: 32 * 1024,
         messages: 50_000,
-        consumers: 1,
-        tag: "32K",
+        base_buffer: 1024,
     },
-    Scenario {
+    PayloadConfig {
         label: "64KB",
+        tag: "64K",
         payload_bytes: 65_524,
         messages: 50_000,
-        consumers: 1,
-        tag: "64K",
+        base_buffer: 1024,
     },
-    Scenario {
+    PayloadConfig {
         label: "128KB-frag",
+        tag: "128K",
         payload_bytes: 128 * 1024,
         messages: 10_000,
-        consumers: 1,
-        tag: "128K",
-    },
-    Scenario {
-        label: "32KB_1p3c",
-        payload_bytes: 32 * 1024,
-        messages: 50_000,
-        consumers: 3,
-        tag: "32K_3c",
+        base_buffer: 2048,
     },
 ];
 
-fn read_env() -> (disruptor_mp::MmapTransportLayout, usize, u64) {
+const TARGET_CONSUMERS: [usize; 6] = [1, 2, 4, 6, 8, 12];
+
+impl Scenario {
+    fn selector(&self) -> String {
+        format!("{}_{}c", self.payload_tag, self.consumers)
+    }
+}
+
+fn scaled_buffer(base_buffer: usize, consumers: usize) -> usize {
+    base_buffer
+        .max(consumers.next_power_of_two() * 256)
+        .next_power_of_two()
+}
+
+fn scenarios() -> Vec<Scenario> {
+    let mut scenarios = Vec::new();
+    for payload in PAYLOADS {
+        for consumers in TARGET_CONSUMERS {
+            scenarios.push(Scenario {
+                payload_label: payload.label,
+                payload_tag: payload.tag,
+                payload_bytes: payload.payload_bytes,
+                messages: payload.messages,
+                buffer: scaled_buffer(payload.base_buffer, consumers),
+                consumers,
+            });
+        }
+    }
+
+    // Preserve the legacy 1p3c 32KB anchor scenario for comparison with older runs.
+    scenarios.push(Scenario {
+        payload_label: "32KB",
+        payload_tag: "32K",
+        payload_bytes: 32 * 1024,
+        messages: 50_000,
+        buffer: scaled_buffer(1024, 3),
+        consumers: 3,
+    });
+    scenarios
+}
+
+fn read_env() -> (disruptor_mp::MmapTransportLayout, usize, u64, usize) {
     let layout = mmap_layout_from_env("MMAP_ROOT", "MMAP_SEGMENT");
     let payload_bytes: usize = env::var("BENCH_PAYLOAD_BYTES")
         .expect("BENCH_PAYLOAD_BYTES")
@@ -72,14 +115,15 @@ fn read_env() -> (disruptor_mp::MmapTransportLayout, usize, u64) {
         .expect("BENCH_MESSAGES")
         .parse()
         .expect("message count");
-    (layout, payload_bytes, messages)
+    let buffer_depth = read_env_usize("BENCH_BUFFER_DEPTH", 1024);
+    (layout, payload_bytes, messages, buffer_depth)
 }
 
 fn producer_process() -> Result<(), Box<dyn std::error::Error>> {
-    let (layout, payload_bytes, messages) = read_env();
+    let (layout, payload_bytes, messages, buffer_depth) = read_env();
     let num_consumers = read_env_usize("BENCH_NUM_CONSUMERS", 1);
     let payload = vec![42u8; payload_bytes];
-    let mut producer = MmapFramedTransportProducer::<Frame>::create(layout, BUFFER_DEPTH)?;
+    let mut producer = MmapFramedTransportProducer::<Frame>::create(layout, buffer_depth)?;
 
     if !producer.wait_for_consumers_ready(num_consumers as i64, Duration::from_secs(60)) {
         return Err(format!("timeout waiting for {num_consumers} consumers").into());
@@ -105,7 +149,7 @@ fn producer_process() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
-    let (layout, payload_bytes, messages) = read_env();
+    let (layout, payload_bytes, messages, buffer_depth) = read_env();
     let consumer_id = read_env_usize("CONSUMER_ID", 0);
     let consumer_name = format!("c{}", consumer_id);
 
@@ -113,7 +157,7 @@ fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
     let mut consumer = loop {
         match MmapFramedTransportConsumer::<Frame>::attach(
             layout.clone(),
-            BUFFER_DEPTH,
+            buffer_depth,
             &consumer_name,
             MyelonWaitStrategy::BusySpin,
         ) {
@@ -131,9 +175,7 @@ fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
         if start.is_none() {
             start = Some(Instant::now());
         }
-        let payload_sum = data
-            .iter()
-            .fold(0u64, |acc, &byte| acc.wrapping_add(byte as u64));
+        let payload_sum = data.iter().fold(0u8, |a, &b| a.wrapping_add(b)) as u64;
         std::hint::black_box(payload_sum);
         checksum = checksum.wrapping_add(payload_sum);
         consumed += 1;
@@ -152,12 +194,7 @@ impl IpcBenchmark for Scenario {
     }
 
     fn scenario_name(&self) -> String {
-        let prefix = if self.consumers == 1 {
-            "framed_1p1c".to_string()
-        } else {
-            format!("framed_1p{}c", self.consumers)
-        };
-        format!("{}_{}", prefix, self.label)
+        format!("framed_1p{}c_{}", self.consumers, self.payload_label)
     }
 
     fn backend(&self) -> &str {
@@ -173,7 +210,7 @@ impl IpcBenchmark for Scenario {
     }
 
     fn buffer_depth(&self) -> usize {
-        BUFFER_DEPTH
+        self.buffer
     }
 
     fn num_messages(&self) -> u64 {
@@ -205,6 +242,7 @@ impl IpcBenchmark for Scenario {
             ("MMAP_SEGMENT", segment),
             ("BENCH_PAYLOAD_BYTES", self.payload_bytes.to_string()),
             ("BENCH_MESSAGES", self.messages.to_string()),
+            ("BENCH_BUFFER_DEPTH", self.buffer.to_string()),
             ("BENCH_NUM_CONSUMERS", self.consumers.to_string()),
         ];
 
@@ -253,8 +291,12 @@ impl harness::BenchHarness for FramedMmapBench {
         }
 
         let mut report = BenchReport::new();
-        for scenario in SCENARIOS {
-            if payload_arg == "all" || payload_arg == scenario.tag {
+        for scenario in scenarios() {
+            let selector = scenario.selector();
+            if payload_arg == "all"
+                || payload_arg == scenario.payload_tag
+                || payload_arg == selector
+            {
                 report.add(scenario.run_benchmark()?);
             }
         }

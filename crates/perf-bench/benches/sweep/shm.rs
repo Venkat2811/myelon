@@ -54,9 +54,8 @@ type Ev256K = BenchEvent<{ 256 * 1024 - 16 }>;
 type Ev1M = BenchEvent<{ 1024 * 1024 - 16 }>;
 
 fn checksum_bytes(bytes: &[u8]) -> u64 {
-    bytes
-        .iter()
-        .fold(0u64, |sum, &value| sum.wrapping_add(value as u64))
+    // u8 accumulator for SIMD-friendly vectorization, matching original monster_sweep.
+    bytes.iter().fold(0u8, |a, &b| a.wrapping_add(b)) as u64
 }
 
 fn spawn_sweep_child(
@@ -144,12 +143,14 @@ fn signal_consumer() -> Result<(), Box<dyn std::error::Error>> {
     let mut consumer = SharedDisruptorBuilder::<SignalEvent>::new(config).build_consumer()?;
     coord.signal_consumer_ready();
 
+    let deadline = harness::spin_deadline();
     let mut wc = 0u64;
     while wc < warmup {
         consumer.process_available(|_e, _s| {
             wc += 1;
         });
         if wc < warmup {
+            harness::check_deadline(deadline, "monster_sweep_shm signal_consumer warmup");
             std::hint::spin_loop();
         }
     }
@@ -163,6 +164,7 @@ fn signal_consumer() -> Result<(), Box<dyn std::error::Error>> {
             consumed += 1;
         });
         if consumed < events {
+            harness::check_deadline(deadline, "monster_sweep_shm signal_consumer measured");
             std::hint::spin_loop();
         }
     }
@@ -285,12 +287,14 @@ macro_rules! sweep_impl {
             let mut consumer = SharedDisruptorBuilder::<$ev_type>::new(config).build_consumer()?;
             coord.signal_consumer_ready();
 
+            let deadline = harness::spin_deadline();
             let mut wc = 0u64;
             while wc < warmup {
                 consumer.process_available(|_e, _s| {
                     wc += 1;
                 });
                 if wc < warmup {
+                    harness::check_deadline(deadline, concat!(stringify!($cons_fn), " warmup"));
                     std::hint::spin_loop();
                 }
             }
@@ -311,6 +315,7 @@ macro_rules! sweep_impl {
                     consumed += 1;
                 });
                 if consumed < events {
+                    harness::check_deadline(deadline, concat!(stringify!($cons_fn), " measured"));
                     std::hint::spin_loop();
                 }
             }
@@ -403,7 +408,7 @@ impl IpcBenchmark for SweepPoint {
     }
 
     fn timeout(&self) -> Duration {
-        Duration::from_secs(300)
+        harness::bench_timeout_duration(300)
     }
 
     fn producer_label(&self) -> String {
@@ -526,11 +531,7 @@ fn print_sweep_report(report: &BenchReport) {
 }
 
 fn write_sweep_markdown(report: &BenchReport, path: &str) -> std::io::Result<()> {
-    reporting::write_monster_sweep_markdown(
-        report,
-        path,
-        reporting::MonsterSweepBackend::Shm,
-    )
+    reporting::write_monster_sweep_markdown(report, path, reporting::MonsterSweepBackend::Shm)
 }
 
 fn format_size(bytes: usize) -> String {

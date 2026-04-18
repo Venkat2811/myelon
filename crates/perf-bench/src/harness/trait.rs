@@ -57,7 +57,7 @@ pub trait IpcBenchmark {
     }
     fn num_consumers(&self) -> usize;
     fn timeout(&self) -> Duration {
-        Duration::from_secs(180)
+        super::env_config::bench_timeout_duration(180)
     }
     fn throughput_unit(&self) -> &str {
         "ops/s"
@@ -145,8 +145,9 @@ pub trait IpcBenchmark {
 
     fn run_benchmark(&self) -> Result<BenchResult, BenchError> {
         let exe = std::env::current_exe()?;
-        let children = self.launch(&exe)?;
         let timeout = self.timeout();
+        std::env::set_var("BENCH_TIMEOUT", timeout.as_secs().to_string());
+        let children = self.launch(&exe)?;
         let consumer_outputs: Vec<_> = children
             .consumers
             .into_iter()
@@ -189,7 +190,14 @@ pub trait BenchHarness {
 
     /// Run the bench as either a child role or orchestrator.
     fn run(&self) {
-        let args: Vec<String> = std::env::args().collect();
+        let raw_args: Vec<String> = std::env::args().collect();
+        let args = match super::env_config::apply_timeout_arg(&raw_args) {
+            Ok(args) => args,
+            Err(error) => {
+                eprintln!("{} failed: {error}", self.bench_name());
+                std::process::exit(1);
+            }
+        };
         if dispatch_child_or_exit(&args, self.child_roles()) {
             return;
         }

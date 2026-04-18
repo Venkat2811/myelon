@@ -7,7 +7,10 @@
 //! measures the RFC 0012 API surface, not ad-hoc encode/decode calls.
 
 use myelon::codec::Codec;
-use myelon::transport::{FixedFrame, FramedTransportProducer, MyelonWaitStrategy};
+use myelon::transport::{
+    FrameMeta, FramedTransportConsumer, FramedTransportFrame, FramedTransportProducer,
+    MyelonWaitStrategy,
+};
 use myelon::typed_transport::{TypedConsumer, TypedProducer};
 use perf_bench::codec_payloads::{
     checksum_payloads, encoded_len, make_payloads, BincodeBatch, FlatbufBatch, RkyvBatch,
@@ -18,16 +21,99 @@ use perf_bench::harness::{
     self, segment_from_env, spawn_child, unique_shm_segment, ConsumerOutput, IpcBenchmark,
     PhaseTiming, ProducerOutput, ScenarioChildren,
 };
+use perf_bench::latency::LatencyRecorder;
 use perf_bench::reporting::{self, BenchReport};
+use std::cell::Cell;
 use std::env;
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
 const FRAME_DATA_BYTES: usize = 64 * 1024 - 12;
-type Frame = FixedFrame<FRAME_DATA_BYTES>;
+type Frame = TimedFrame<FRAME_DATA_BYTES>;
 const BUFFER_DEPTH: usize = 1024;
+const TARGET_CONSUMERS: [usize; 6] = [1, 2, 4, 6, 8, 12];
 
-fn read_codec_env() -> (String, usize, u64, String) {
+thread_local! {
+    static INTENDED_SEND_TIMESTAMP_NS: Cell<Option<u64>> = Cell::new(None);
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+struct TimedFrame<const DATA_BYTES: usize> {
+    len: u32,
+    kind: u8,
+    flags: u8,
+    msg_id: u32,
+    timestamp_ns: u64,
+    data: [u8; DATA_BYTES],
+}
+
+impl<const DATA_BYTES: usize> Default for TimedFrame<DATA_BYTES> {
+    fn default() -> Self {
+        Self {
+            len: 0,
+            kind: 0,
+            flags: 0,
+            msg_id: 0,
+            timestamp_ns: 0,
+            data: [0u8; DATA_BYTES],
+        }
+    }
+}
+
+impl<const DATA_BYTES: usize> FramedTransportFrame for TimedFrame<DATA_BYTES> {
+    fn payload_capacity() -> usize {
+        DATA_BYTES
+    }
+
+    fn frame_meta(&self) -> FrameMeta<'_> {
+        FrameMeta {
+            len: self.len as usize,
+            kind: self.kind,
+            flags: self.flags,
+            msg_id: self.msg_id,
+            timestamp_ns: Some(self.timestamp_ns),
+            data: &self.data[..self.len as usize],
+        }
+    }
+
+    fn write_frame(&mut self, payload: &[u8], kind: u8, msg_id: u32, flags: u8) {
+        assert!(payload.len() <= DATA_BYTES);
+        self.len = payload.len() as u32;
+        self.kind = kind;
+        self.flags = flags;
+        self.msg_id = msg_id;
+        self.timestamp_ns = current_send_timestamp_ns();
+        self.data[..payload.len()].copy_from_slice(payload);
+    }
+}
+
+fn wall_clock_ns() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time")
+        .as_nanos() as u64
+}
+
+fn current_send_timestamp_ns() -> u64 {
+    INTENDED_SEND_TIMESTAMP_NS
+        .with(|cell| cell.get())
+        .unwrap_or_else(wall_clock_ns)
+}
+
+fn set_intended_send_timestamp(timestamp_ns: Option<u64>) {
+    INTENDED_SEND_TIMESTAMP_NS.with(|cell| cell.set(timestamp_ns));
+}
+
+fn scaled_buffer(consumers: usize) -> usize {
+    BUFFER_DEPTH
+        .max(consumers.next_power_of_two() * 256)
+        .next_power_of_two()
+}
+
+fn read_codec_env() -> (String, usize, u64, String, usize, usize, u64) {
     let codec = env::var("BENCH_CODEC").expect("BENCH_CODEC");
     let batch_size = env::var("BENCH_BATCH_SIZE")
         .expect("BENCH_BATCH_SIZE")
@@ -38,11 +124,32 @@ fn read_codec_env() -> (String, usize, u64, String) {
         .parse()
         .expect("message count");
     let segment = segment_from_env("BENCHMARK_SEGMENT_NAME");
-    (codec, batch_size, messages, segment)
+    let buffer_depth = env::var("BENCH_BUFFER_DEPTH")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(BUFFER_DEPTH);
+    let num_consumers = env::var("BENCH_NUM_CONSUMERS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(1);
+    let target_rate = env::var("BENCH_TARGET_RATE")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(0);
+    (
+        codec,
+        batch_size,
+        messages,
+        segment,
+        buffer_depth,
+        num_consumers,
+        target_rate,
+    )
 }
 
 fn producer_process() -> Result<(), Box<dyn std::error::Error>> {
-    let (codec, batch_size, messages, segment) = read_codec_env();
+    let (codec, batch_size, messages, segment, buffer_depth, num_consumers, target_rate) =
+        read_codec_env();
     let phase_timing = env::var("BENCH_PHASE_TIMING")
         .ok()
         .map_or(false, |v| v == "1");
@@ -51,10 +158,14 @@ fn producer_process() -> Result<(), Box<dyn std::error::Error>> {
 
     if phase_timing {
         // Phase timing: use FramedTransportProducer directly to time encode vs transport
-        let mut producer = FramedTransportProducer::<Frame>::create(&segment, BUFFER_DEPTH)?;
+        let mut producer = FramedTransportProducer::<Frame>::create_with_consumers(
+            &segment,
+            buffer_depth,
+            num_consumers,
+        )?;
         let coord = BenchmarkCoordination::create(&segment)?;
-        if !coord.wait_for_consumers(1, Duration::from_secs(30)) {
-            return Err("timeout waiting for consumer".into());
+        if !coord.wait_for_consumers(num_consumers, Duration::from_secs(30)) {
+            return Err(format!("timeout waiting for {num_consumers} consumers").into());
         }
         producer.discover_consumers(Duration::from_secs(3));
 
@@ -102,48 +213,86 @@ fn producer_process() -> Result<(), Box<dyn std::error::Error>> {
         });
         println!("{}", serde_json::to_string(&output)?);
         coord.signal_producer_done(messages as i64);
-        coord.wait_for_consumers_done(1, Duration::from_secs(30));
+        coord.wait_for_consumers_done(num_consumers, Duration::from_secs(30));
     } else {
-        let mut producer = TypedProducer::<Frame>::create(&segment, BUFFER_DEPTH)?;
+        let mut producer =
+            TypedProducer::<Frame>::create_with_consumers(&segment, buffer_depth, num_consumers)?;
         let coord = BenchmarkCoordination::create(&segment)?;
-        if !coord.wait_for_consumers(1, Duration::from_secs(30)) {
-            return Err("timeout waiting for consumer".into());
+        if !coord.wait_for_consumers(num_consumers, Duration::from_secs(30)) {
+            return Err(format!("timeout waiting for {num_consumers} consumers").into());
         }
         producer.discover_consumers(Duration::from_secs(3));
 
         let start = Instant::now();
-        match codec.as_str() {
-            "bincode" => {
-                let payload = BincodeBatch(payloads);
-                for i in 0..messages {
-                    producer.publish(&payload, (i % 256) as u8)?;
-                }
+        if target_rate > 0 {
+            let interval_ns = 1_000_000_000u64 / target_rate;
+            let base_ns = wall_clock_ns();
+            macro_rules! co_loop {
+                ($payload:expr) => {
+                    for i in 0..messages {
+                        let encoded = $payload.encode()?;
+                        let intended_ns = base_ns.saturating_add(i.saturating_mul(interval_ns));
+                        while wall_clock_ns() < intended_ns {
+                            std::hint::spin_loop();
+                        }
+                        set_intended_send_timestamp(Some(intended_ns));
+                        producer.publish_raw(encoded.as_ref(), (i % 256) as u8);
+                        set_intended_send_timestamp(None);
+                    }
+                };
             }
-            "rkyv" => {
-                let payload = RkyvBatch(payloads);
-                for i in 0..messages {
-                    producer.publish(&payload, (i % 256) as u8)?;
+
+            match codec.as_str() {
+                "bincode" => {
+                    let payload = BincodeBatch(payloads);
+                    co_loop!(payload);
                 }
-            }
-            "flatbuf" => {
-                let payload = FlatbufBatch(payloads);
-                for i in 0..messages {
-                    producer.publish(&payload, (i % 256) as u8)?;
+                "rkyv" => {
+                    let payload = RkyvBatch(payloads);
+                    co_loop!(payload);
                 }
+                "flatbuf" => {
+                    let payload = FlatbufBatch(payloads);
+                    co_loop!(payload);
+                }
+                other => return Err(format!("unknown codec: {other}").into()),
             }
-            other => return Err(format!("unknown codec: {other}").into()),
+            set_intended_send_timestamp(None);
+        } else {
+            match codec.as_str() {
+                "bincode" => {
+                    let payload = BincodeBatch(payloads);
+                    for i in 0..messages {
+                        producer.publish(&payload, (i % 256) as u8)?;
+                    }
+                }
+                "rkyv" => {
+                    let payload = RkyvBatch(payloads);
+                    for i in 0..messages {
+                        producer.publish(&payload, (i % 256) as u8)?;
+                    }
+                }
+                "flatbuf" => {
+                    let payload = FlatbufBatch(payloads);
+                    for i in 0..messages {
+                        producer.publish(&payload, (i % 256) as u8)?;
+                    }
+                }
+                other => return Err(format!("unknown codec: {other}").into()),
+            }
         }
         let elapsed = start.elapsed();
         let output = ProducerOutput::from_elapsed(messages, elapsed, encoded_bytes);
         println!("{}", serde_json::to_string(&output)?);
         coord.signal_producer_done(messages as i64);
-        coord.wait_for_consumers_done(1, Duration::from_secs(30));
+        coord.wait_for_consumers_done(num_consumers, Duration::from_secs(30));
     }
     Ok(())
 }
 
 fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
-    let (codec, batch_size, messages, segment) = read_codec_env();
+    let (codec, batch_size, messages, segment, buffer_depth, _num_consumers, _target_rate) =
+        read_codec_env();
     let consumer_id = env::var("CONSUMER_ID")
         .ok()
         .and_then(|value| value.parse().ok())
@@ -156,12 +305,11 @@ fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
 
     if phase_timing {
         // Phase timing: use FramedTransportConsumer directly to time transport vs decode
-        use myelon::transport::FramedTransportConsumer;
         let deadline = Instant::now() + Duration::from_secs(15);
         let mut consumer = loop {
             match FramedTransportConsumer::<Frame>::attach(
                 &segment,
-                BUFFER_DEPTH,
+                buffer_depth,
                 MyelonWaitStrategy::BusySpin,
             ) {
                 Ok(c) => break c,
@@ -175,14 +323,18 @@ fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
 
         let mut recv_ns = 0u64;
         let mut decode_ns = 0u64;
+        let mut latency = LatencyRecorder::default_range();
         let start = Instant::now();
         let mut consumed = 0u64;
         let mut checksum = 0u64;
 
         while consumed < messages {
             let t0 = Instant::now();
-            let (_kind, raw_bytes) = consumer.recv_message_blocking();
+            let (meta, raw_bytes) = consumer.recv_message_blocking_with_meta();
             let t1 = Instant::now();
+            if let Some(lat_ns) = meta.one_way_latency_ns() {
+                latency.record(lat_ns);
+            }
             let payload_sum = match codec.as_str() {
                 "bincode" => {
                     let batch = BincodeBatch::decode(&raw_bytes)?;
@@ -213,9 +365,12 @@ fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
             transport_read_avg_ns: Some(recv_ns as f64 / consumed as f64),
             decode_avg_ns: Some(decode_ns as f64 / consumed as f64),
         };
-        let output =
+        let mut output =
             ConsumerOutput::from_elapsed(consumer_id, consumed, elapsed, encoded_bytes, checksum)
                 .with_phase_timing(timing);
+        if let Some(stats) = latency.stats() {
+            output = output.with_latency(stats);
+        }
         println!("{}", serde_json::to_string(&output)?);
         coord.signal_consumer_done(consumed as i64);
     } else {
@@ -223,7 +378,7 @@ fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
         let mut consumer = loop {
             match TypedConsumer::<Frame>::attach(
                 &segment,
-                BUFFER_DEPTH,
+                buffer_depth,
                 MyelonWaitStrategy::BusySpin,
             ) {
                 Ok(c) => break c,
@@ -235,6 +390,7 @@ fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
         };
         coord.signal_consumer_ready();
 
+        let mut latency = LatencyRecorder::default_range();
         let start = Instant::now();
         let mut consumed = 0u64;
         let mut checksum = 0u64;
@@ -244,15 +400,24 @@ fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
         while consumed < messages {
             let payload_sum = match codec.as_str() {
                 "bincode" => {
-                    let (_, b): (u8, BincodeBatch) = consumer.recv()?;
+                    let (_, b, meta): (u8, BincodeBatch, _) = consumer.recv_with_meta()?;
+                    if let Some(lat_ns) = meta.one_way_latency_ns() {
+                        latency.record(lat_ns);
+                    }
                     checksum_payloads(&b.0)
                 }
                 "rkyv" => {
-                    let (_, b): (u8, RkyvBatch) = consumer.recv()?;
+                    let (_, b, meta): (u8, RkyvBatch, _) = consumer.recv_with_meta()?;
+                    if let Some(lat_ns) = meta.one_way_latency_ns() {
+                        latency.record(lat_ns);
+                    }
                     checksum_payloads(&b.0)
                 }
                 "flatbuf" => {
-                    let (_, b): (u8, FlatbufBatch) = consumer.recv()?;
+                    let (_, b, meta): (u8, FlatbufBatch, _) = consumer.recv_with_meta()?;
+                    if let Some(lat_ns) = meta.one_way_latency_ns() {
+                        latency.record(lat_ns);
+                    }
                     checksum_payloads(&b.0)
                 }
                 other => return Err(format!("unknown codec: {other}").into()),
@@ -263,8 +428,11 @@ fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         let elapsed = start.elapsed();
-        let output =
+        let mut output =
             ConsumerOutput::from_elapsed(consumer_id, consumed, elapsed, encoded_bytes, checksum);
+        if let Some(stats) = latency.stats() {
+            output = output.with_latency(stats);
+        }
         println!("{}", serde_json::to_string(&output)?);
         coord.signal_consumer_done(consumed as i64);
     }
@@ -276,7 +444,10 @@ struct Scenario {
     codec: &'static str,
     batch_size: usize,
     messages: u64,
+    buffer: usize,
+    consumers: usize,
     phase_timing: bool,
+    target_rate: u64,
 }
 
 impl IpcBenchmark for Scenario {
@@ -285,7 +456,11 @@ impl IpcBenchmark for Scenario {
     }
 
     fn scenario_name(&self) -> String {
-        format!("codec_e2e_{}seq_{}", self.batch_size, self.codec)
+        let suffix = if self.phase_timing { "_phase" } else { "" };
+        format!(
+            "codec_e2e_1p{}c_{}seq_{}{}",
+            self.consumers, self.batch_size, self.codec, suffix
+        )
     }
 
     fn backend(&self) -> &str {
@@ -305,7 +480,7 @@ impl IpcBenchmark for Scenario {
     }
 
     fn buffer_depth(&self) -> usize {
-        BUFFER_DEPTH
+        self.buffer
     }
 
     fn num_messages(&self) -> u64 {
@@ -313,7 +488,7 @@ impl IpcBenchmark for Scenario {
     }
 
     fn num_consumers(&self) -> usize {
-        1
+        self.consumers
     }
 
     fn throughput_unit(&self) -> &str {
@@ -321,38 +496,75 @@ impl IpcBenchmark for Scenario {
     }
 
     fn producer_label(&self) -> String {
-        format!("{}/{} prod", self.codec, self.batch_size)
+        format!(
+            "{}/{}/{}c prod",
+            self.codec, self.batch_size, self.consumers
+        )
     }
 
-    fn consumer_label(&self, _consumer_id: usize) -> String {
-        format!("{}/{} cons", self.codec, self.batch_size)
+    fn consumer_label(&self, consumer_id: usize) -> String {
+        if self.consumers == 1 {
+            format!("{}/{} cons", self.codec, self.batch_size)
+        } else {
+            format!(
+                "{}/{}/{}c cons{}",
+                self.codec, self.batch_size, self.consumers, consumer_id
+            )
+        }
     }
 
     fn launch(&self, exe: &std::path::Path) -> Result<ScenarioChildren, harness::BenchError> {
-        let segment = unique_shm_segment(&format!("{}_{}", self.codec, self.batch_size));
+        let segment = unique_shm_segment(&format!(
+            "{}_{}_{}c",
+            self.codec, self.batch_size, self.consumers
+        ));
         let mut envs = vec![
             ("BENCHMARK_SEGMENT_NAME", segment.clone()),
             ("BENCH_CODEC", self.codec.to_string()),
             ("BENCH_BATCH_SIZE", self.batch_size.to_string()),
             ("BENCH_MESSAGES", self.messages.to_string()),
+            ("BENCH_BUFFER_DEPTH", self.buffer.to_string()),
+            ("BENCH_NUM_CONSUMERS", self.consumers.to_string()),
         ];
         if self.phase_timing {
             envs.push(("BENCH_PHASE_TIMING", "1".to_string()));
         }
+        if self.target_rate > 0 {
+            envs.push(("BENCH_TARGET_RATE", self.target_rate.to_string()));
+        }
 
         let producer = spawn_child(exe, "codec_producer", &envs);
-        let consumer = spawn_child(exe, "codec_consumer", &envs);
-        Ok(ScenarioChildren::new(producer, vec![consumer]))
+        let consumers = (0..self.consumers)
+            .map(|consumer_id| {
+                let mut consumer_envs = envs.clone();
+                consumer_envs.push(("CONSUMER_ID", consumer_id.to_string()));
+                spawn_child(exe, "codec_consumer", &consumer_envs)
+            })
+            .collect();
+        Ok(ScenarioChildren::new(producer, consumers))
+    }
+
+    fn aggregate_latency(
+        &self,
+        consumers: &[ConsumerOutput],
+    ) -> Option<perf_bench::latency::LatencyStats> {
+        consumers
+            .iter()
+            .filter_map(|entry| entry.latency.clone())
+            .max_by_key(|stats| stats.p99_ns)
     }
 
     fn print_summary_with_metrics(
         &self,
         producer: &ProducerOutput,
         consumers: &[ConsumerOutput],
-        _latency: Option<&perf_bench::latency::LatencyStats>,
+        latency: Option<&perf_bench::latency::LatencyStats>,
     ) {
-        let consumer = consumers.first().expect("consumer metrics");
+        let latency_suffix = latency
+            .map(|stats| format!("  {}", stats.summary()))
+            .unwrap_or_default();
         if self.phase_timing {
+            let consumer = consumers.first().expect("consumer metrics");
             let prod_timing = producer
                 .phase_timing
                 .as_ref()
@@ -366,7 +578,7 @@ impl IpcBenchmark for Scenario {
             let read_us = cons_timing.transport_read_avg_ns.unwrap_or(0.0) / 1000.0;
             let decode_us = cons_timing.decode_avg_ns.unwrap_or(0.0) / 1000.0;
             println!(
-                "  codec={:<8} batch={:<3}  encode: {:>8.1}μs  write: {:>8.1}μs  read: {:>8.1}μs  decode: {:>8.1}μs  | prod: {:>8} cons: {:>8}",
+                "  codec={:<8} batch={:<3}  encode: {:>8.1}μs  write: {:>8.1}μs  read: {:>8.1}μs  decode: {:>8.1}μs  | prod: {:>8} cons: {:>8}{}",
                 self.codec,
                 self.batch_size,
                 encode_us,
@@ -375,14 +587,24 @@ impl IpcBenchmark for Scenario {
                 decode_us,
                 format_throughput(producer.throughput_ops_sec),
                 format_throughput(consumer.throughput_ops_sec),
+                latency_suffix,
             );
         } else {
+            let avg_consumer_ops = self.average_consumer_ops(consumers);
+            let mode_label = if self.target_rate > 0 {
+                format!("co@{}", format_throughput(self.target_rate as f64))
+            } else {
+                "tput".to_string()
+            };
             println!(
-                "  codec={:<8} batch={:<3} producer: {:>10} msgs/s  consumer: {:>10} msgs/s",
+                "  codec={:<8} batch={:<3} consumers={:<2} mode={:<10} producer: {:>10} msgs/s  avg cons: {:>10} msgs/s{}",
                 self.codec,
                 self.batch_size,
+                self.consumers,
+                mode_label,
                 format_throughput(producer.throughput_ops_sec),
-                format_throughput(consumer.throughput_ops_sec),
+                format_throughput(avg_consumer_ops),
+                latency_suffix,
             );
         }
     }
@@ -391,10 +613,10 @@ impl IpcBenchmark for Scenario {
         &self,
         producer: &ProducerOutput,
         consumers: &[ConsumerOutput],
-        _latency: Option<perf_bench::latency::LatencyStats>,
+        latency: Option<perf_bench::latency::LatencyStats>,
     ) -> reporting::BenchResult {
-        let consumer = consumers.first().expect("consumer metrics");
-        reporting::make_result(
+        let avg_consumer_ops = self.average_consumer_ops(consumers);
+        let mut result = reporting::make_result(
             "codec_e2e_shm",
             &self.scenario_name(),
             "shm",
@@ -402,14 +624,20 @@ impl IpcBenchmark for Scenario {
             Some(self.codec),
             "BusySpin",
             self.message_size_bytes(),
-            BUFFER_DEPTH,
-            consumer.events_consumed,
+            self.buffer,
+            self.messages,
             0,
-            1,
+            self.consumers,
             producer.throughput_ops_sec,
-            consumer.throughput_ops_sec,
-            None,
-        )
+            avg_consumer_ops,
+            latency,
+        );
+        if self.phase_timing {
+            result.measurement_mode = "batch_timing".to_string();
+        } else if self.target_rate > 0 {
+            result.measurement_mode = format!("co_aware@{}", self.target_rate);
+        }
+        result
     }
 }
 
@@ -435,7 +663,34 @@ impl harness::BenchHarness for CodecE2eShmBench {
             .find(|w| w[0] == "--mode")
             .map(|w| w[1].as_str())
             .unwrap_or("throughput");
+        let codec_filter = args
+            .windows(2)
+            .find(|w| w[0] == "--codec")
+            .map(|w| w[1].as_str())
+            .unwrap_or("all");
+        let batch_filter = args
+            .windows(2)
+            .find(|w| w[0] == "--batch")
+            .map(|w| w[1].parse::<usize>().expect("batch filter"));
+        let consumers_filter = args
+            .windows(2)
+            .find(|w| w[0] == "--consumers")
+            .map(|w| w[1].parse::<usize>().expect("consumer filter"));
+        let target_rate = args
+            .windows(2)
+            .find(|w| w[0] == "--target-rate")
+            .map(|w| w[1].parse::<u64>().expect("target rate"));
+        if !matches!(mode, "throughput" | "phase_timing" | "co") {
+            return Err(format!("unsupported mode: {mode}").into());
+        }
+        if mode == "co" && target_rate.is_none() {
+            return Err("--mode co requires --target-rate".into());
+        }
+        if mode != "co" && target_rate.is_some() {
+            return Err("--target-rate requires --mode co".into());
+        }
         let phase_timing = mode == "phase_timing";
+        let target_rate = target_rate.unwrap_or(0);
         let output_args = reporting::ReportOutputArgs::from_args(args);
 
         if !output_args.json_mode {
@@ -445,27 +700,51 @@ impl harness::BenchHarness for CodecE2eShmBench {
                 "Mode: {}",
                 if phase_timing {
                     "phase_timing (encode/transport/decode)"
+                } else if target_rate > 0 {
+                    "co_aware"
                 } else {
                     "throughput"
                 }
             );
+            if target_rate > 0 {
+                println!("Target rate: {} msgs/s", target_rate);
+            }
             println!("Payload: Vec<TestPayload> with Sequence-like Vec fields");
             println!();
         }
 
-        let scenarios = [(8usize, 50_000u64), (64, 20_000), (256, 10_000)];
+        let batches = [(8usize, 50_000u64), (64, 20_000), (256, 10_000)];
         let mut report = BenchReport::new();
-        for (batch_size, messages) in scenarios {
+        let consumer_counts: &[usize] = if phase_timing {
+            &[1]
+        } else {
+            &TARGET_CONSUMERS
+        };
+        for (batch_size, messages) in batches {
+            if batch_filter.is_some_and(|batch| batch != batch_size) {
+                continue;
+            }
             for codec in ["bincode", "rkyv", "flatbuf"] {
-                report.add(
-                    Scenario {
-                        codec,
-                        batch_size,
-                        messages,
-                        phase_timing,
+                if codec_filter != "all" && codec_filter != codec {
+                    continue;
+                }
+                for &consumers in consumer_counts {
+                    if consumers_filter.is_some_and(|value| value != consumers) {
+                        continue;
                     }
-                    .run_benchmark()?,
-                );
+                    report.add(
+                        Scenario {
+                            codec,
+                            batch_size,
+                            messages,
+                            buffer: scaled_buffer(consumers),
+                            consumers,
+                            phase_timing,
+                            target_rate,
+                        }
+                        .run_benchmark()?,
+                    );
+                }
             }
         }
 

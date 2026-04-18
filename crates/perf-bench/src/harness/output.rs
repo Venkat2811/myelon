@@ -103,6 +103,10 @@ impl PhaseTiming {
     pub fn codec_pct(&self) -> f64 {
         let codec = self.codec_total_ns();
         let total = codec + self.transport_total_ns();
-        if total > 0.0 { codec / total * 100.0 } else { 0.0 }
+        if total > 0.0 {
+            codec / total * 100.0
+        } else {
+            0.0
+        }
     }
 }

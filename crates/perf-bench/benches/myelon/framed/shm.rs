@@ -34,7 +34,11 @@ fn producer_process() -> Result<(), Box<dyn std::error::Error>> {
     let buffer_depth = read_env_usize("BENCH_BUFFER_DEPTH", 1024);
     let num_consumers = read_env_usize("BENCH_NUM_CONSUMERS", 1);
 
-    let mut producer = FramedTransportProducer::<Frame>::create(&segment, buffer_depth)?;
+    let mut producer = FramedTransportProducer::<Frame>::create_with_consumers(
+        &segment,
+        buffer_depth,
+        num_consumers,
+    )?;
     let coord = BenchmarkCoordination::create(&segment)?;
 
     if !coord.wait_for_consumers(num_consumers, Duration::from_secs(30)) {
@@ -90,9 +94,7 @@ fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
         if start.is_none() {
             start = Some(Instant::now());
         }
-        let payload_sum = data
-            .iter()
-            .fold(0u64, |acc, &byte| acc.wrapping_add(byte as u64));
+        let payload_sum = data.iter().fold(0u8, |a, &b| a.wrapping_add(b)) as u64;
         std::hint::black_box(payload_sum);
         checksum = checksum.wrapping_add(payload_sum);
         consumed += 1;
@@ -118,12 +120,93 @@ fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
 
 #[derive(Clone, Copy)]
 struct Scenario {
-    label: &'static str,
+    payload_label: &'static str,
+    payload_tag: &'static str,
     payload: usize,
     messages: u64,
     buffer: usize,
     consumers: usize,
+}
+
+#[derive(Clone, Copy)]
+struct PayloadConfig {
+    label: &'static str,
     tag: &'static str,
+    payload: usize,
+    messages: u64,
+    base_buffer: usize,
+}
+
+const PAYLOADS: [PayloadConfig; 4] = [
+    PayloadConfig {
+        label: "1KB",
+        tag: "1K",
+        payload: 1_024,
+        messages: 100_000,
+        base_buffer: 1024,
+    },
+    PayloadConfig {
+        label: "32KB",
+        tag: "32K",
+        payload: 32_768,
+        messages: 50_000,
+        base_buffer: 1024,
+    },
+    PayloadConfig {
+        label: "64KB",
+        tag: "64K",
+        payload: 65_524,
+        messages: 50_000,
+        base_buffer: 1024,
+    },
+    PayloadConfig {
+        label: "128KB-frag",
+        tag: "128K",
+        payload: 131_072,
+        messages: 10_000,
+        base_buffer: 2048,
+    },
+];
+
+const TARGET_CONSUMERS: [usize; 6] = [1, 2, 4, 6, 8, 12];
+
+impl Scenario {
+    fn selector(&self) -> String {
+        format!("{}_{}c", self.payload_tag, self.consumers)
+    }
+}
+
+fn scaled_buffer(base_buffer: usize, consumers: usize) -> usize {
+    base_buffer
+        .max(consumers.next_power_of_two() * 256)
+        .next_power_of_two()
+}
+
+fn scenarios() -> Vec<Scenario> {
+    let mut scenarios = Vec::new();
+    for payload in PAYLOADS {
+        for consumers in TARGET_CONSUMERS {
+            scenarios.push(Scenario {
+                payload_label: payload.label,
+                payload_tag: payload.tag,
+                payload: payload.payload,
+                messages: payload.messages,
+                buffer: scaled_buffer(payload.base_buffer, consumers),
+                consumers,
+            });
+        }
+    }
+
+    // Preserve the legacy 1p3c 32KB anchor scenario for comparison with older runs.
+    scenarios.push(Scenario {
+        payload_label: "32KB",
+        payload_tag: "32K",
+        payload: 32_768,
+        messages: 50_000,
+        buffer: scaled_buffer(1024, 3),
+        consumers: 3,
+    });
+    scenarios
 }
 
 impl IpcBenchmark for Scenario {
@@ -132,7 +215,7 @@ impl IpcBenchmark for Scenario {
     }
 
     fn scenario_name(&self) -> String {
-        self.label.to_string()
+        format!("framed_1p{}c_{}", self.consumers, self.payload_label)
     }
 
     fn backend(&self) -> &str {
@@ -172,7 +255,7 @@ impl IpcBenchmark for Scenario {
     }
 
     fn launch(&self, exe: &std::path::Path) -> Result<ScenarioChildren, harness::BenchError> {
-        let segment = unique_shm_segment(&format!("fr_{}", self.label));
+        let segment = unique_shm_segment(&format!("fr_{}", self.scenario_name()));
         let env_common: Vec<(&str, String)> = vec![
             ("BENCHMARK_SEGMENT_NAME", segment.clone()),
             ("BENCH_PAYLOAD_SIZE", self.payload.to_string()),
@@ -225,52 +308,13 @@ impl harness::BenchHarness for FramedShmBench {
             println!();
         }
 
-        let scenarios = [
-            Scenario {
-                label: "framed_1p1c_1KB",
-                payload: 1_024,
-                messages: 100_000,
-                buffer: 1024,
-                consumers: 1,
-                tag: "1K",
-            },
-            Scenario {
-                label: "framed_1p1c_32KB",
-                payload: 32_768,
-                messages: 50_000,
-                buffer: 1024,
-                consumers: 1,
-                tag: "32K",
-            },
-            Scenario {
-                label: "framed_1p1c_64KB",
-                payload: 65_524,
-                messages: 50_000,
-                buffer: 1024,
-                consumers: 1,
-                tag: "64K",
-            },
-            Scenario {
-                label: "framed_1p1c_128KB",
-                payload: 131_072,
-                messages: 10_000,
-                buffer: 2048,
-                consumers: 1,
-                tag: "128K",
-            },
-            Scenario {
-                label: "framed_1p3c_32KB",
-                payload: 32_768,
-                messages: 50_000,
-                buffer: 1024,
-                consumers: 3,
-                tag: "32K_3c",
-            },
-        ];
-
         let mut report = BenchReport::new();
-        for scenario in scenarios {
-            if payload_arg == "all" || payload_arg == scenario.tag {
+        for scenario in scenarios() {
+            let selector = scenario.selector();
+            if payload_arg == "all"
+                || payload_arg == scenario.payload_tag
+                || payload_arg == selector
+            {
                 report.add(scenario.run_benchmark()?);
             }
         }

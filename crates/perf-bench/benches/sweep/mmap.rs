@@ -43,9 +43,8 @@ type Ev256K = BenchEvent<{ 256 * 1024 - 16 }>;
 type Ev1M = BenchEvent<{ 1024 * 1024 - 16 }>;
 
 fn checksum_bytes(bytes: &[u8]) -> u64 {
-    bytes
-        .iter()
-        .fold(0u64, |sum, &value| sum.wrapping_add(value as u64))
+    // u8 accumulator for SIMD-friendly vectorization, matching original monster_sweep.
+    bytes.iter().fold(0u8, |a, &b| a.wrapping_add(b)) as u64
 }
 
 fn child_layout() -> MmapTransportLayout {
@@ -59,6 +58,7 @@ fn spawn_sweep_child(
     segment: &str,
     events: u64,
     buffer: usize,
+    consumers: usize,
     target_rate: u64,
 ) -> std::process::Child {
     let mut envs = vec![
@@ -66,6 +66,7 @@ fn spawn_sweep_child(
         ("SWEEP_SEGMENT", segment.to_string()),
         ("SWEEP_BUFFER", buffer.to_string()),
         ("SWEEP_EVENTS", events.to_string()),
+        ("SWEEP_CONSUMERS", consumers.to_string()),
     ];
     if target_rate > 0 {
         envs.push(("SWEEP_TARGET_RATE", target_rate.to_string()));
@@ -81,11 +82,12 @@ fn signal_producer() -> Result<(), Box<dyn std::error::Error>> {
     let layout = child_layout();
     let buffer = harness::read_env_usize("SWEEP_BUFFER", 65536);
     let events = harness::read_env_u64("SWEEP_EVENTS", 10_000_000);
+    let consumers = harness::read_env_usize("SWEEP_CONSUMERS", 1);
     let warmup = 100_000u64;
     layout.ensure_directories()?;
     let mut producer =
         MmapProducer::<SignalEvent>::create(layout, buffer, || SignalEvent::default())?;
-    if !producer.wait_for_consumers_ready(1, Duration::from_secs(30)) {
+    if !producer.wait_for_consumers_ready(consumers as i64, Duration::from_secs(30)) {
         return Err("timeout".into());
     }
     for i in 0..warmup {
@@ -130,10 +132,12 @@ fn signal_consumer() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
     let mut wc = 0u64;
+    let deadline = harness::spin_deadline();
     while wc < warmup {
         if consumer.try_consume_next().is_some() {
             wc += 1;
         } else {
+            harness::check_deadline(deadline, "monster_sweep_mmap signal_consumer warmup");
             std::hint::spin_loop();
         }
     }
@@ -145,6 +149,7 @@ fn signal_consumer() -> Result<(), Box<dyn std::error::Error>> {
             checksum = checksum.wrapping_add(event.data);
             consumed += 1;
         } else {
+            harness::check_deadline(deadline, "monster_sweep_mmap signal_consumer measured");
             std::hint::spin_loop();
         }
     }
@@ -170,12 +175,13 @@ macro_rules! sweep_impl {
             let layout = child_layout();
             let buffer = harness::read_env_usize("SWEEP_BUFFER", 4096);
             let events = harness::read_env_u64("SWEEP_EVENTS", 100_000);
+            let consumers = harness::read_env_usize("SWEEP_CONSUMERS", 1);
             let target_rate = harness::read_env_u64("SWEEP_TARGET_RATE", 0);
             let warmup = events / 100;
             layout.ensure_directories()?;
             let mut producer =
                 MmapProducer::<$ev_type>::create(layout, buffer, || <$ev_type>::default())?;
-            if !producer.wait_for_consumers_ready(1, Duration::from_secs(30)) {
+            if !producer.wait_for_consumers_ready(consumers as i64, Duration::from_secs(30)) {
                 return Err("timeout".into());
             }
             for i in 0..warmup {
@@ -252,10 +258,12 @@ macro_rules! sweep_impl {
                 }
             };
             let mut wc = 0u64;
+            let deadline = harness::spin_deadline();
             while wc < warmup {
                 if consumer.try_consume_next().is_some() {
                     wc += 1;
                 } else {
+                    harness::check_deadline(deadline, concat!(stringify!($cons_fn), " warmup"));
                     std::hint::spin_loop();
                 }
             }
@@ -273,6 +281,7 @@ macro_rules! sweep_impl {
                     checksum = checksum.wrapping_add(payload_sum);
                     consumed += 1;
                 } else {
+                    harness::check_deadline(deadline, concat!(stringify!($cons_fn), " measured"));
                     std::hint::spin_loop();
                 }
             }
@@ -319,6 +328,7 @@ struct SweepPoint {
     size_bytes: usize,
     events: u64,
     buffer: usize,
+    consumers: usize,
     target_rate: u64,
     prod_role: &'static str,
     cons_role: &'static str,
@@ -359,11 +369,11 @@ impl IpcBenchmark for SweepPoint {
     }
 
     fn num_consumers(&self) -> usize {
-        1
+        self.consumers
     }
 
     fn timeout(&self) -> Duration {
-        Duration::from_secs(600)
+        harness::bench_timeout_duration(600)
     }
 
     fn producer_label(&self) -> String {
@@ -386,21 +396,26 @@ impl IpcBenchmark for SweepPoint {
             &segment,
             self.events,
             self.buffer,
+            self.consumers,
             self.target_rate,
         );
-        let mut consumer_env = vec![
-            ("SWEEP_ROOT", root_str),
-            ("SWEEP_SEGMENT", segment),
-            ("SWEEP_BUFFER", self.buffer.to_string()),
-            ("SWEEP_EVENTS", self.events.to_string()),
-            ("BENCH_CONSUMER_ID", "0".to_string()),
-        ];
-        if self.target_rate > 0 {
-            consumer_env.push(("SWEEP_TARGET_RATE", self.target_rate.to_string()));
-        }
-        let consumer = harness::spawn_child(exe, self.cons_role, &consumer_env);
+        let consumers = (0..self.consumers)
+            .map(|i| {
+                let mut consumer_env = vec![
+                    ("SWEEP_ROOT", root_str.clone()),
+                    ("SWEEP_SEGMENT", segment.clone()),
+                    ("SWEEP_BUFFER", self.buffer.to_string()),
+                    ("SWEEP_EVENTS", self.events.to_string()),
+                    ("BENCH_CONSUMER_ID", i.to_string()),
+                ];
+                if self.target_rate > 0 {
+                    consumer_env.push(("SWEEP_TARGET_RATE", self.target_rate.to_string()));
+                }
+                harness::spawn_child(exe, self.cons_role, &consumer_env)
+            })
+            .collect();
 
-        Ok(ScenarioChildren::new(producer, vec![consumer]).with_cleanup_path(root))
+        Ok(ScenarioChildren::new(producer, consumers).with_cleanup_path(root))
     }
 
     fn print_summary_with_metrics(
@@ -464,11 +479,7 @@ impl IpcBenchmark for SweepPoint {
 }
 
 fn write_sweep_markdown(report: &reporting::BenchReport, path: &str) -> std::io::Result<()> {
-    reporting::write_monster_sweep_markdown(
-        report,
-        path,
-        reporting::MonsterSweepBackend::Mmap,
-    )
+    reporting::write_monster_sweep_markdown(report, path, reporting::MonsterSweepBackend::Mmap)
 }
 
 const CHILD_ROLES: &[harness::ChildRole] = &[
@@ -521,10 +532,25 @@ impl harness::BenchHarness for MonsterSweepMmap {
         let run_throughput = mode_arg == "all" || mode_arg == "throughput";
         let run_co = mode_arg == "all" || mode_arg == "co";
 
+        fn label_for_size(bytes: usize) -> &'static str {
+            match bytes {
+                64 => "64B",
+                512 => "512B",
+                1024 => "1KB",
+                4096 => "4KB",
+                16384 => "16KB",
+                65536 => "64KB",
+                262144 => "256KB",
+                1048576 => "1MB",
+                _ => "?",
+            }
+        }
+
         fn roles(tag: &str) -> (&'static str, &'static str) {
             match tag {
-                "64B" => ("prod_64b", "cons_64b"),
-                "512B" => ("prod_512b", "cons_512b"),
+                t if t.starts_with("SIG") => ("sig_prod", "sig_cons"),
+                t if t.starts_with("64B") => ("prod_64b", "cons_64b"),
+                t if t.starts_with("512B") => ("prod_512b", "cons_512b"),
                 t if t.starts_with("1K") => ("prod_1k", "cons_1k"),
                 t if t.starts_with("4K") => ("prod_4k", "cons_4k"),
                 t if t.starts_with("16K") => ("prod_16k", "cons_16k"),
@@ -544,6 +570,7 @@ impl harness::BenchHarness for MonsterSweepMmap {
                     size_bytes: 64,
                     events: 10_000_000,
                     buffer: 65_536,
+                    consumers: 1,
                     target_rate: 0,
                     prod_role: "sig_prod",
                     cons_role: "sig_cons",
@@ -565,11 +592,62 @@ impl harness::BenchHarness for MonsterSweepMmap {
                         size_bytes: size,
                         events,
                         buffer,
+                        consumers: 1,
                         target_rate: 0,
                         prod_role: p,
                         cons_role: c,
                         tag,
                     });
+                }
+
+                for nc in [2usize, 4, 6, 8, 12] {
+                    let tag_str = format!("SIG_{nc}c");
+                    let tag: &'static str = Box::leak(tag_str.into_boxed_str());
+                    let label_str = format!("signalx{nc}c");
+                    let label: &'static str = Box::leak(label_str.into_boxed_str());
+                    let (p, c) = roles("SIG");
+                    v.push(SweepPoint {
+                        label,
+                        size_bytes: 64,
+                        events: 1_000_000,
+                        buffer: 65_536,
+                        consumers: nc,
+                        target_rate: 0,
+                        prod_role: p,
+                        cons_role: c,
+                        tag,
+                    });
+                }
+
+                // Multi-consumer throughput scenarios across the full size sweep.
+                for nc in [2usize, 4, 6, 8, 12] {
+                    for (size, events, buffer, base_tag) in [
+                        (64usize, 1_000_000u64, 65_536usize, "64B"),
+                        (512, 500_000, 131_072, "512B"),
+                        (1_024usize, 200_000u64, 131_072usize, "1K"),
+                        (4_096, 100_000, 65_536, "4K"),
+                        (16_384, 50_000, 32_768, "16K"),
+                        (65_536, 20_000, 16_384, "64K"),
+                        (262_144, 10_000, 8_192, "256K"),
+                        (1_048_576, 5_000, 4_096, "1M"),
+                    ] {
+                        let tag_str = format!("{base_tag}_{nc}c");
+                        let tag: &'static str = Box::leak(tag_str.into_boxed_str());
+                        let label_str = format!("{}x{}c", label_for_size(size), nc);
+                        let label: &'static str = Box::leak(label_str.into_boxed_str());
+                        let (p, c) = roles(base_tag);
+                        v.push(SweepPoint {
+                            label,
+                            size_bytes: size,
+                            events,
+                            buffer,
+                            consumers: nc,
+                            target_rate: 0,
+                            prod_role: p,
+                            cons_role: c,
+                            tag,
+                        });
+                    }
                 }
             }
 
@@ -589,11 +667,42 @@ impl harness::BenchHarness for MonsterSweepMmap {
                         size_bytes: size,
                         events: 100_000,
                         buffer,
+                        consumers: 1,
                         target_rate: rate,
                         prod_role: p,
                         cons_role: c,
                         tag,
                     });
+                }
+
+                for nc in [2usize, 4, 6, 8, 12] {
+                    for (size, buffer, rate, base_tag) in [
+                        (1_024usize, 131_072usize, 100_000u64, "1K_CO"),
+                        (1_024, 131_072, 500_000, "1K_CO"),
+                        (4_096, 65_536, 100_000, "4K_CO"),
+                        (65_536, 16_384, 50_000, "64K_CO"),
+                        (65_536, 16_384, 100_000, "64K_CO"),
+                        (262_144, 8_192, 10_000, "256K_CO"),
+                        (1_048_576, 4_096, 10_000, "1M_CO"),
+                    ] {
+                        let tag_str = format!("{base_tag}_{nc}c");
+                        let tag: &'static str = Box::leak(tag_str.into_boxed_str());
+                        let label_str =
+                            format!("{}@{}Kx{}c", label_for_size(size), rate / 1000, nc);
+                        let label: &'static str = Box::leak(label_str.into_boxed_str());
+                        let (p, c) = roles(base_tag);
+                        v.push(SweepPoint {
+                            label,
+                            size_bytes: size,
+                            events: 100_000,
+                            buffer,
+                            consumers: nc,
+                            target_rate: rate,
+                            prod_role: p,
+                            cons_role: c,
+                            tag,
+                        });
+                    }
                 }
             }
 
