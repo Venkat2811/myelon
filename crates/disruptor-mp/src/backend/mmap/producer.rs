@@ -30,12 +30,14 @@ where
     where
         F: FnMut() -> E,
     {
+        // Create coordination first so consumers never attach without a
+        // readiness cursor and silently miss startup registration.
+        let mut consumer_barrier = MmapConsumerBarrier::new_with_coordination(layout.clone())?;
         let ring_buffer = MmapRingBuffer::new(
             layout.ring_config(buffer_size, std::mem::size_of::<E>(), true),
             event_factory,
         )?;
         let producer_sequence = MmapCursor::new(layout.producer_cursor_config(true), -1)?;
-        let mut consumer_barrier = MmapConsumerBarrier::new_with_coordination(layout)?;
         consumer_barrier.set_producer_cursor(producer_sequence.clone());
 
         Ok(Self {

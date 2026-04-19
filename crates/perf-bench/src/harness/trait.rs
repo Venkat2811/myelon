@@ -43,13 +43,20 @@ pub trait IpcBenchmark {
     fn scenario_name(&self) -> String;
     fn backend(&self) -> &str;
     fn layer(&self) -> &str;
+    fn transport_metadata(&self) -> reporting::BenchTransportSpec;
     fn codec(&self) -> Option<&str> {
         None
+    }
+    fn measurement_mode(&self) -> String {
+        "max_throughput".to_string()
     }
     fn wait_strategy(&self) -> &str {
         "BusySpin"
     }
     fn message_size_bytes(&self) -> usize;
+    fn payload_bytes(&self) -> usize {
+        self.message_size_bytes()
+    }
     fn buffer_depth(&self) -> usize;
     fn num_messages(&self) -> u64;
     fn warmup_messages(&self) -> u64 {
@@ -57,7 +64,7 @@ pub trait IpcBenchmark {
     }
     fn num_consumers(&self) -> usize;
     fn timeout(&self) -> Duration {
-        super::env_config::bench_timeout_duration(180)
+        Duration::from_secs(180)
     }
     fn throughput_unit(&self) -> &str {
         "ops/s"
@@ -125,39 +132,74 @@ pub trait IpcBenchmark {
         latency: Option<LatencyStats>,
     ) -> BenchResult {
         let avg_consumer_ops = self.average_consumer_ops(consumers);
-        reporting::make_result(
-            self.bench_name(),
-            &self.scenario_name(),
-            self.backend(),
-            self.layer(),
-            self.codec(),
-            self.wait_strategy(),
-            self.message_size_bytes(),
-            self.buffer_depth(),
-            self.num_messages(),
-            self.warmup_messages(),
-            self.num_consumers(),
-            producer.throughput_ops_sec,
-            avg_consumer_ops,
+        let mut result = reporting::make_result(reporting::BenchResultSpec {
+            bench_name: self.bench_name().to_string(),
+            scenario: self.scenario_name(),
+            backend: self.backend().to_string(),
+            layer: self.layer().to_string(),
+            codec: self.codec().map(|value| value.to_string()),
+            measurement_mode: self.measurement_mode(),
+            wait_strategy: self.wait_strategy().to_string(),
+            transport: self.transport_metadata(),
+            message_size_bytes: self.message_size_bytes(),
+            payload_bytes: self.payload_bytes(),
+            buffer_depth: self.buffer_depth(),
+            num_messages: self.num_messages(),
+            warmup_messages: self.warmup_messages(),
+            num_producers: 1,
+            num_consumers: self.num_consumers(),
+            producer_throughput_ops_sec: producer.throughput_ops_sec,
+            consumer_throughput_ops_sec: avg_consumer_ops,
             latency,
-        )
+        });
+        reporting::attach_child_metrics(&mut result, producer, consumers);
+        result
     }
 
     fn run_benchmark(&self) -> Result<BenchResult, BenchError> {
         let exe = std::env::current_exe()?;
-        let timeout = self.timeout();
+        let timeout = super::env_config::bench_timeout_override_secs()
+            .map(Duration::from_secs)
+            .unwrap_or_else(|| self.timeout());
         std::env::set_var("BENCH_TIMEOUT", timeout.as_secs().to_string());
         let children = self.launch(&exe)?;
-        let consumer_outputs: Vec<_> = children
-            .consumers
+        let ScenarioChildren {
+            producer,
+            consumers,
+            cleanup_paths,
+        } = children;
+
+        let cleanup = |paths: Vec<PathBuf>| {
+            for path in paths {
+                let _ = std::fs::remove_dir_all(&path).or_else(|_| std::fs::remove_file(&path));
+            }
+        };
+
+        let producer_output = collect_child_output(&self.producer_label(), producer, timeout);
+        if !producer_output.success {
+            for (consumer_id, child) in consumers.into_iter().enumerate() {
+                let _ = collect_child_output(
+                    &self.consumer_label(consumer_id),
+                    child,
+                    Duration::from_secs(1),
+                );
+            }
+            cleanup(cleanup_paths);
+            return Err(format!(
+                "{} producer failed\nstderr:\n{}",
+                self.scenario_name(),
+                producer_output.stderr
+            )
+            .into());
+        }
+
+        let consumer_outputs: Vec<_> = consumers
             .into_iter()
             .enumerate()
             .map(|(consumer_id, child)| {
                 collect_child_output(&self.consumer_label(consumer_id), child, timeout)
             })
             .collect();
-        let producer_output =
-            collect_child_output(&self.producer_label(), children.producer, timeout);
         let producer_metrics: ProducerOutput = parse_child_metrics("producer", &producer_output);
         let consumer_metrics: Vec<ConsumerOutput> = consumer_outputs
             .iter()
@@ -166,9 +208,7 @@ pub trait IpcBenchmark {
 
         let latency = self.aggregate_latency(&consumer_metrics);
 
-        for path in children.cleanup_paths {
-            let _ = std::fs::remove_dir_all(&path).or_else(|_| std::fs::remove_file(&path));
-        }
+        cleanup(cleanup_paths);
 
         self.print_summary_with_metrics(&producer_metrics, &consumer_metrics, latency.as_ref());
         Ok(self.build_result_with_metrics(&producer_metrics, &consumer_metrics, latency))

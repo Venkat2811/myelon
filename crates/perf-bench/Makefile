@@ -3,7 +3,7 @@
 # Usage:
 #   make smoke          # Quick smoke test (~60s)
 #   make competitive    # Competitive ping-pong benches
-#   make myelon-sweep   # Myelon layer + nofrag sweeps
+#   make myelon-sweep   # Framed + zero-copy myelon sweeps
 #   make all-multi      # Multi-consumer coverage matrix
 #   make sweep          # Monster sweep SHM + mmap (full)
 #   make sweep-quick    # Monster sweep quick mode
@@ -18,15 +18,15 @@ BENCH = cargo bench -p perf-bench
 OUT_DIR ?= /tmp/perf_bench_results
 PROFILE ?= bench
 
-.PHONY: smoke competitive myelon-sweep all-multi sweep sweep-quick layers nofrag wait wait-full codec codec-phase framed raw layout all results clean
+.PHONY: smoke competitive myelon-sweep all-multi sweep sweep-quick layers nofrag wait wait-full codec codec-phase framed raw layout repeatability all results clean
 
 # --- Smoke test: ~60 seconds, validates all binaries produce output ---
 smoke:
 	@echo "=== Smoke Test ==="
 	$(BENCH) --bench raw_ring_shm -- --timeout 30 --class signal --consumers 1
 	$(BENCH) --bench raw_ring_mmap -- --timeout 30 --class signal --consumers 1
-	$(BENCH) --bench framed_shm -- --timeout 30 --payload 1K
-	$(BENCH) --bench framed_mmap -- --timeout 30 --payload 1K
+	$(BENCH) --bench framed_shm -- --timeout 30 --payload 1K_1c
+	$(BENCH) --bench framed_mmap -- --timeout 30 --payload 1K_1c
 	$(BENCH) --bench codec_e2e_shm -- --timeout 30 --codec bincode --batch 8 --consumers 1
 	$(BENCH) --bench codec_e2e_mmap -- --timeout 30 --codec bincode --batch 8 --consumers 1
 	$(BENCH) --bench codec_nofrag_shm -- --timeout 30 --codec rkyv --batch 8 --consumers 1
@@ -37,7 +37,7 @@ smoke:
 	$(BENCH) --bench monster_sweep_shm -- --timeout 30 --quick --size 64B --mode throughput
 	$(BENCH) --bench monster_sweep_mmap -- --timeout 30 --quick --size 64B --mode throughput
 	$(BENCH) --bench competitive_shm -- --timeout 30 -s 64 -n 1000 -w 100 --json --no-compare
-	$(BENCH) --bench competitive_mmap -- --timeout 30
+	$(BENCH) --bench competitive_mmap -- --timeout 30 -s 64 -n 1000 -w 100 --json --no-compare
 	$(BENCH) --bench layout_validation --no-run
 	@echo "=== Smoke Test PASSED ==="
 
@@ -52,8 +52,8 @@ competitive:
 
 # --- Myelon layer sweeps ---
 myelon-sweep:
-	$(BENCH) --bench myelon_layers
-	$(BENCH) --bench nofrag_all
+	$(BENCH) --bench myelon_framed_sweep -- --mode all
+	$(BENCH) --bench nofrag_all -- --mode all
 
 # --- Full multi-consumer coverage set ---
 all-multi:
@@ -64,8 +64,9 @@ all-multi:
 	$(BENCH) --bench codec_e2e_shm
 	$(BENCH) --bench codec_e2e_mmap
 	$(BENCH) --bench codec_nofrag_shm
+	$(BENCH) --bench myelon_framed_sweep -- --mode all
 	$(BENCH) --bench myelon_layers
-	$(BENCH) --bench nofrag_all
+	$(BENCH) --bench nofrag_all -- --mode all
 
 # --- Monster sweep ---
 sweep:
@@ -124,6 +125,21 @@ raw:
 layout:
 	$(BENCH) --bench layout_validation
 
+# --- Repeatability ---
+repeatability:
+	@mkdir -p $(OUT_DIR)
+	cargo run -p perf-bench --bin repeatability -- \
+		--repeat 3 --threshold-pct 10 \
+		--json-out $(OUT_DIR)/repeat_raw_ring_shm_signal_1p1c.json \
+		--md-out $(OUT_DIR)/repeat_raw_ring_shm_signal_1p1c.md \
+		-- cargo bench -p perf-bench --bench raw_ring_shm -- --timeout 120 --class signal --consumers 1 --events 50000000
+	cargo run -p perf-bench --bin repeatability -- \
+		--repeat 3 --threshold-pct 10 \
+		--json-env DISRUPTOR_MP_BENCHMARK_JSON_OUT \
+		--json-out $(OUT_DIR)/repeat_competitive_shm_64b_1p1c_10m.json \
+		--md-out $(OUT_DIR)/repeat_competitive_shm_64b_1p1c_10m.md \
+		-- cargo bench -p perf-bench --bench competitive_shm -- --timeout 300 --no-compare -s 64 -n 10000000 -w 1000000 --consumers 1
+
 # --- All benchmarks (sequential) ---
 all: raw framed codec wait myelon-sweep competitive sweep layout
 
@@ -141,11 +157,12 @@ results:
 	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/codec_nofrag_shm.json $(BENCH) --bench codec_nofrag_shm
 	DISRUPTOR_MP_BENCHMARK_JSON_OUT=$(OUT_DIR)/competitive_shm.json $(BENCH) --bench competitive_shm -- --json-canonical --no-compare --csv-out $(OUT_DIR)/competitive_shm.csv --md-out $(OUT_DIR)/competitive_shm.md
 	DISRUPTOR_MP_BENCHMARK_JSON_OUT=$(OUT_DIR)/competitive_mmap.json $(BENCH) --bench competitive_mmap -- --json-canonical --no-compare --csv-out $(OUT_DIR)/competitive_mmap.csv --md-out $(OUT_DIR)/competitive_mmap.md
-	$(BENCH) --bench layout_validation -- --json-out $(OUT_DIR)/layout_validation.json
+	$(BENCH) --bench layout_validation -- --json-out $(OUT_DIR)/layout_validation.json --csv-out $(OUT_DIR)/layout_validation.csv --md-out $(OUT_DIR)/layout_validation.md
 	BENCH_MODE=full MYELON_BENCH_JSON_OUT=$(OUT_DIR)/wait_shm.json $(BENCH) --bench wait_strategy_shm
 	BENCH_MODE=full MYELON_BENCH_JSON_OUT=$(OUT_DIR)/wait_mmap.json $(BENCH) --bench wait_strategy_mmap
+	$(BENCH) --bench myelon_framed_sweep -- --mode all --json-out $(OUT_DIR)/myelon_framed_sweep.json --csv-out $(OUT_DIR)/myelon_framed_sweep.csv --md-out $(OUT_DIR)/myelon_framed_sweep.md
 	$(BENCH) --bench myelon_layers -- --json-out $(OUT_DIR)/myelon_layers.json --csv-out $(OUT_DIR)/myelon_layers.csv --md-out $(OUT_DIR)/myelon_layers.md
-	$(BENCH) --bench nofrag_all -- --json-out $(OUT_DIR)/nofrag_all.json --csv-out $(OUT_DIR)/nofrag_all.csv --md-out $(OUT_DIR)/nofrag_all.md
+	$(BENCH) --bench nofrag_all -- --mode all --json-out $(OUT_DIR)/nofrag_all.json --csv-out $(OUT_DIR)/nofrag_all.csv --md-out $(OUT_DIR)/nofrag_all.md
 	$(BENCH) --bench monster_sweep_shm -- \
 		--md-out $(OUT_DIR)/sweep_shm.md --json-out $(OUT_DIR)/sweep_shm.json --csv-out $(OUT_DIR)/sweep_shm.csv
 	$(BENCH) --bench monster_sweep_mmap -- \

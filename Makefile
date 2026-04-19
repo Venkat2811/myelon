@@ -14,7 +14,7 @@ endef
 .PHONY: \
 	help fmt check build test bench bench-mp bench-matrix bench-matrix-smoke \
 	bench-matrix-raw bench-matrix-framed bench-matrix-codec bench-matrix-wait bench-matrix-competitive bench-matrix-layout \
-	workspace-smoke competitive myelon-sweep all-multi results \
+	workspace-smoke competitive myelon-sweep all-multi repeatability results \
 	test-rust-fast test-rust-extended test-rust-perf-gate test-rust-manifest \
 	test-py-fast test-py-extended test-py-manifest py-check py-test py-setup \
 	check-layer-boundaries check-layout-refs check-hot-path-ffi \
@@ -38,8 +38,9 @@ help:
 	@echo "  make bench-matrix        - run perf-bench matrix targets"
 	@echo "  make bench-matrix-smoke  - run perf-bench smoke subset"
 	@echo "  make competitive         - run competitive ping-pong benches"
-	@echo "  make myelon-sweep        - run myelon layer + nofrag sweeps"
+	@echo "  make myelon-sweep        - run framed + zero-copy myelon sweeps"
 	@echo "  make all-multi           - run multi-consumer coverage benches"
+	@echo "  make repeatability       - run repeated canonical perf-bench variance checks"
 	@echo "  make results             - write benchmark JSON/CSV/MD artifacts"
 	@echo "  make test-rust-fast      - canonical disruptor-mp Linux Rust lane"
 	@echo "  make test-rust-extended  - disruptor-mp Linux lane + stress/perf smoke"
@@ -112,6 +113,9 @@ myelon-sweep:
 
 all-multi:
 	@$(PERF_BENCH_MAKE) all-multi
+
+repeatability:
+	@$(PERF_BENCH_MAKE) repeatability
 
 results:
 	@$(PERF_BENCH_MAKE) results

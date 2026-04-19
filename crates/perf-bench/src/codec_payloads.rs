@@ -3,7 +3,7 @@
 //! Eliminates 5 copies of TestPayload + make_payloads + encode/access functions
 //! from codec/shm, codec/mmap, codec/nofrag_shm, sweep/myelon_layers, sweep/nofrag_all.
 
-use myelon::codec::{Codec, CodecError};
+use myelon::codec::{Codec, CodecError, ZeroCopyCodec};
 use std::hint::black_box;
 
 /// Common benchmark payload — mimics a Competitor Sequence with token_ids and block_table.
@@ -50,7 +50,13 @@ pub fn encode_rkyv(payloads: &Vec<TestPayload>) -> rkyv::util::AlignedVec {
 
 /// Zero-copy access of rkyv-archived payloads. Returns checksum of all fields.
 pub fn access_rkyv(bytes: &[u8]) -> u64 {
-    let archived = unsafe { rkyv::access_unchecked::<rkyv::Archived<Vec<TestPayload>>>(bytes) };
+    let archived = unsafe { rkyv::access_unchecked::<ArchivedPayloadBatch>(bytes) };
+    checksum_archived_rkyv(archived)
+}
+
+pub type ArchivedPayloadBatch = rkyv::Archived<Vec<TestPayload>>;
+
+pub fn checksum_archived_rkyv(archived: &ArchivedPayloadBatch) -> u64 {
     let mut sum = 0u64;
     for e in archived.iter() {
         sum = sum.wrapping_add(e.id.into());
@@ -106,7 +112,11 @@ pub fn encode_flatbuf(payloads: &[TestPayload]) -> Vec<u8> {
 
 /// Zero-copy access of FlatBuffers-encoded payloads. Returns checksum of all fields.
 pub fn access_flatbuf(bytes: &[u8]) -> u64 {
-    let root = flatbuffers::root::<flatbench::PayloadBatch>(bytes).unwrap();
+    let root = flatbench::root_as_payload_batch(bytes).unwrap();
+    checksum_flatbuf_root(root)
+}
+
+pub fn checksum_flatbuf_root(root: flatbench::PayloadBatch<'_>) -> u64 {
     let entries = root.entries().unwrap();
     let mut sum = 0u64;
     for e in entries.iter() {
@@ -214,6 +224,14 @@ impl Codec for RkyvBatch {
     }
 }
 
+impl ZeroCopyCodec for RkyvBatch {
+    type Archived<'a> = &'a ArchivedPayloadBatch;
+
+    fn access<'a>(bytes: &'a [u8]) -> Result<Self::Archived<'a>, CodecError> {
+        rkyv::access::<ArchivedPayloadBatch, rkyv::rancor::Error>(bytes).map_err(CodecError::decode)
+    }
+}
+
 pub struct FlatbufBatch(pub Vec<TestPayload>);
 
 impl Codec for FlatbufBatch {
@@ -251,6 +269,14 @@ impl Codec for FlatbufBatch {
     }
 }
 
+impl ZeroCopyCodec for FlatbufBatch {
+    type Archived<'a> = flatbench::PayloadBatch<'a>;
+
+    fn access<'a>(bytes: &'a [u8]) -> Result<Self::Archived<'a>, CodecError> {
+        flatbench::root_as_payload_batch(bytes).map_err(CodecError::decode)
+    }
+}
+
 pub fn encoded_len(codec: &str, payloads: &[TestPayload]) -> usize {
     match codec {
         "bincode" => BincodeBatch(payloads.to_vec())
@@ -269,6 +295,60 @@ pub fn encoded_len(codec: &str, payloads: &[TestPayload]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use myelon::transport::{
+        FixedFrame, FramedTransportFrame, MyelonWaitStrategy, ReassemblyBuffer,
+    };
+    use myelon::typed_transport::{TypedConsumer, TypedProducer};
+
+    #[repr(C)]
+    #[derive(Clone, Copy, Debug)]
+    struct AlignedFrame<const DATA_BYTES: usize> {
+        len: u32,
+        kind: u8,
+        flags: u8,
+        msg_id: u32,
+        _aligned_header: u64,
+        data: [u8; DATA_BYTES],
+    }
+
+    impl<const DATA_BYTES: usize> Default for AlignedFrame<DATA_BYTES> {
+        fn default() -> Self {
+            Self {
+                len: 0,
+                kind: 0,
+                flags: 0,
+                msg_id: 0,
+                _aligned_header: 0,
+                data: [0; DATA_BYTES],
+            }
+        }
+    }
+
+    impl<const DATA_BYTES: usize> FramedTransportFrame for AlignedFrame<DATA_BYTES> {
+        fn payload_capacity() -> usize {
+            DATA_BYTES
+        }
+
+        fn frame_meta(&self) -> myelon::transport::FrameMeta<'_> {
+            myelon::transport::FrameMeta {
+                len: self.len as usize,
+                kind: self.kind,
+                flags: self.flags,
+                msg_id: self.msg_id,
+                timestamp_ns: None,
+                data: &self.data[..self.len as usize],
+            }
+        }
+
+        fn write_frame(&mut self, payload: &[u8], kind: u8, msg_id: u32, flags: u8) {
+            assert!(payload.len() <= DATA_BYTES);
+            self.len = payload.len() as u32;
+            self.kind = kind;
+            self.flags = flags;
+            self.msg_id = msg_id;
+            self.data[..payload.len()].copy_from_slice(payload);
+        }
+    }
 
     #[test]
     fn test_make_payloads() {
@@ -330,5 +410,140 @@ mod tests {
             "batch=8 rkyv size: {}",
             r8.len()
         );
+    }
+
+    #[test]
+    fn test_rkyv_batch_zero_copy_access_works_from_framed_slot_bytes() {
+        type Fixed = FixedFrame<{ 64 * 1024 - 12 }>;
+        type Aligned = AlignedFrame<{ 64 * 1024 - 24 }>;
+
+        let payloads = make_payloads(8);
+        let encoded = encode_rkyv(&payloads);
+        let mut fixed = Fixed::default();
+        fixed.write_frame(encoded.as_ref(), 7, 42, 0b11);
+        let fixed_bytes = fixed.frame_meta().data;
+        assert!(
+            rkyv::access::<ArchivedPayloadBatch, rkyv::rancor::Error>(fixed_bytes).is_err(),
+            "checked rkyv access unexpectedly succeeded for framed slot bytes"
+        );
+
+        let mut aligned = Aligned::default();
+        aligned.write_frame(encoded.as_ref(), 7, 42, 0b11);
+        let archived =
+            RkyvBatch::access(aligned.frame_meta().data).expect("typed zero-copy access");
+        let checksum = checksum_archived_rkyv(archived);
+        assert_eq!(checksum, access_rkyv(encoded.as_ref()));
+    }
+
+    #[test]
+    fn test_rkyv_batch_zero_copy_fragmented_typed_transport() {
+        use std::thread;
+        use std::time::{Duration, Instant};
+
+        type FragFrame = AlignedFrame<256>;
+
+        let ring_name = format!("rkyv_zc_frag_{}", std::process::id());
+        let depth = 32;
+        let payloads = make_payloads(8);
+        let expected_checksum = access_rkyv(encode_rkyv(&payloads).as_ref());
+        let payload = RkyvBatch(payloads);
+
+        let mut producer: TypedProducer<FragFrame> =
+            TypedProducer::create(&ring_name, depth).expect("create producer");
+
+        let consumer_name = ring_name.clone();
+        let handle = thread::spawn(move || {
+            let mut consumer: TypedConsumer<FragFrame> =
+                TypedConsumer::attach(&consumer_name, depth, MyelonWaitStrategy::BusySpin)
+                    .expect("attach consumer");
+            let mut reassembly = ReassemblyBuffer::new(8 * 1024);
+            let deadline = Instant::now() + Duration::from_secs(30);
+            let mut result = None;
+            while result.is_none() {
+                consumer.process_available_zero_copy::<RkyvBatch, _>(
+                    &mut reassembly,
+                    |kind, archived| {
+                        result = Some((kind, checksum_archived_rkyv(archived)));
+                    },
+                );
+                assert!(
+                    Instant::now() <= deadline,
+                    "timed out waiting for fragmented zero-copy payload"
+                );
+                std::hint::spin_loop();
+            }
+            result.expect("result")
+        });
+
+        thread::sleep(Duration::from_millis(50));
+        producer.discover_consumers(Duration::from_secs(3));
+        producer.publish(&payload, 7).expect("publish payload");
+
+        let (kind, checksum) = handle.join().expect("join");
+        assert_eq!(kind, 7);
+        assert_eq!(checksum, expected_checksum);
+    }
+
+    #[test]
+    fn test_flatbuf_batch_zero_copy_access_from_fixed_frame_bytes() {
+        type Frame = FixedFrame<{ 64 * 1024 - 12 }>;
+
+        let payloads = make_payloads(8);
+        let encoded = encode_flatbuf(&payloads);
+        let mut frame = Frame::default();
+        frame.write_frame(encoded.as_ref(), 7, 42, 0b11);
+
+        let root = FlatbufBatch::access(frame.frame_meta().data).expect("flatbuf zero-copy access");
+        let checksum = checksum_flatbuf_root(root);
+        assert_eq!(checksum, access_flatbuf(encoded.as_ref()));
+    }
+
+    #[test]
+    fn test_flatbuf_batch_zero_copy_fragmented_typed_transport() {
+        use std::thread;
+        use std::time::{Duration, Instant};
+
+        type FragFrame = FixedFrame<256>;
+
+        let ring_name = format!("fzcf_{}", std::process::id());
+        let depth = 32;
+        let payloads = make_payloads(8);
+        let expected_checksum = access_flatbuf(encode_flatbuf(&payloads).as_ref());
+        let payload = FlatbufBatch(payloads);
+
+        let mut producer: TypedProducer<FragFrame> =
+            TypedProducer::create(&ring_name, depth).expect("create producer");
+
+        let consumer_name = ring_name.clone();
+        let handle = thread::spawn(move || {
+            let mut consumer: TypedConsumer<FragFrame> =
+                TypedConsumer::attach(&consumer_name, depth, MyelonWaitStrategy::BusySpin)
+                    .expect("attach consumer");
+            let mut reassembly = ReassemblyBuffer::new(8 * 1024);
+            let deadline = Instant::now() + Duration::from_secs(30);
+            let mut result = None;
+            while result.is_none() {
+                consumer.process_available_zero_copy::<FlatbufBatch, _>(
+                    &mut reassembly,
+                    |kind, archived| {
+                        result = Some((kind, checksum_flatbuf_root(archived)));
+                    },
+                );
+                assert!(
+                    Instant::now() <= deadline,
+                    "timed out waiting for fragmented flatbuf zero-copy payload"
+                );
+                std::hint::spin_loop();
+            }
+            result.expect("result")
+        });
+
+        thread::sleep(Duration::from_millis(50));
+        producer.discover_consumers(Duration::from_secs(3));
+        producer.publish(&payload, 9).expect("publish payload");
+
+        let (kind, checksum) = handle.join().expect("join");
+        assert_eq!(kind, 9);
+        assert_eq!(checksum, expected_checksum);
     }
 }

@@ -8,6 +8,7 @@
 //! Inspired by criterion's trait-based measurement and divan's declarative output.
 
 pub mod env_config;
+pub mod launch;
 pub mod naming;
 pub mod output;
 pub mod process;
@@ -20,6 +21,7 @@ pub use env_config::{
     check_deadline, read_env_bool, read_env_string, read_env_u64, read_env_usize, spin_deadline,
     spin_deadline_or,
 };
+pub use launch::{launch_mmap_group, launch_shm_group, MultiConsumerSpawn};
 pub use naming::{
     mmap_layout_from_env, segment_from_env, unique_mmap_root, unique_mmap_segment,
     unique_shm_segment,

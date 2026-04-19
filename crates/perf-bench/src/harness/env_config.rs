@@ -41,6 +41,14 @@ pub fn bench_timeout_secs_or(default_secs: u64) -> u64 {
     read_env_u64("BENCH_TIMEOUT", default_secs)
 }
 
+/// Read an explicit timeout override parsed from CLI flags.
+pub fn bench_timeout_override_secs() -> Option<u64> {
+    std::env::var("BENCH_TIMEOUT_OVERRIDE")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+}
+
 /// Construct a duration from BENCH_TIMEOUT with a bench-specific default.
 pub fn bench_timeout_duration(default_secs: u64) -> std::time::Duration {
     std::time::Duration::from_secs(bench_timeout_secs_or(default_secs))
@@ -87,6 +95,7 @@ pub fn apply_timeout_arg(args: &[String]) -> Result<Vec<String>, String> {
                 return Err("--timeout must be greater than zero".to_string());
             }
             std::env::set_var("BENCH_TIMEOUT", seconds.to_string());
+            std::env::set_var("BENCH_TIMEOUT_OVERRIDE", seconds.to_string());
             index += 2;
             continue;
         }
@@ -96,4 +105,33 @@ pub fn apply_timeout_arg(args: &[String]) -> Result<Vec<String>, String> {
     }
 
     Ok(filtered)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_apply_timeout_arg_sets_explicit_override() {
+        std::env::remove_var("BENCH_TIMEOUT");
+        std::env::remove_var("BENCH_TIMEOUT_OVERRIDE");
+
+        let args = vec![
+            "bench".to_string(),
+            "--timeout".to_string(),
+            "45".to_string(),
+            "--quick".to_string(),
+        ];
+        let filtered = apply_timeout_arg(&args).expect("timeout parsing should succeed");
+
+        assert_eq!(filtered, vec!["bench".to_string(), "--quick".to_string()]);
+        assert_eq!(std::env::var("BENCH_TIMEOUT").ok().as_deref(), Some("45"));
+        assert_eq!(
+            std::env::var("BENCH_TIMEOUT_OVERRIDE").ok().as_deref(),
+            Some("45")
+        );
+
+        std::env::remove_var("BENCH_TIMEOUT");
+        std::env::remove_var("BENCH_TIMEOUT_OVERRIDE");
+    }
 }

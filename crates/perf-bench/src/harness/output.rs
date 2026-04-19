@@ -21,6 +21,10 @@ impl ProducerOutput {
     /// Construct from measured elapsed time and event count.
     pub fn from_elapsed(events: u64, elapsed: std::time::Duration, payload_bytes: usize) -> Self {
         let secs = elapsed.as_secs_f64();
+        assert!(
+            events == 0 || secs > 0.0,
+            "non-positive producer elapsed for {events} events"
+        );
         let tp = events as f64 / secs;
         let bw = tp * payload_bytes as f64;
         Self {
@@ -57,6 +61,10 @@ impl ConsumerOutput {
         checksum: u64,
     ) -> Self {
         let secs = elapsed.as_secs_f64();
+        assert!(
+            events == 0 || secs > 0.0,
+            "non-positive consumer elapsed for {events} events"
+        );
         let tp = events as f64 / secs;
         let bw = tp * payload_bytes as f64;
         Self {
@@ -79,6 +87,24 @@ impl ConsumerOutput {
     pub fn with_phase_timing(mut self, timing: PhaseTiming) -> Self {
         self.phase_timing = Some(timing);
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    #[should_panic(expected = "non-positive producer elapsed")]
+    fn producer_output_rejects_zero_elapsed_with_events() {
+        let _ = ProducerOutput::from_elapsed(1, Duration::ZERO, 64);
+    }
+
+    #[test]
+    #[should_panic(expected = "non-positive consumer elapsed")]
+    fn consumer_output_rejects_zero_elapsed_with_events() {
+        let _ = ConsumerOutput::from_elapsed(0, 1, Duration::ZERO, 64, 0);
     }
 }
 

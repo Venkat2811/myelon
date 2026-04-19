@@ -95,6 +95,11 @@ name = "myelon_layers"
 path = "benches/sweep/myelon_layers.rs"
 harness = false
 
+[[bench]]
+name = "myelon_framed_sweep"
+path = "benches/sweep/myelon_framed_sweep.rs"
+harness = false
+
 # --- cross-cutting ---
 
 [[bench]]
