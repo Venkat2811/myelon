@@ -464,7 +464,6 @@ impl IpcBenchmark for SweepPoint {
             lat_str,
         );
     }
-
 }
 
 fn write_sweep_markdown(report: &reporting::BenchReport, path: &str) -> std::io::Result<()> {

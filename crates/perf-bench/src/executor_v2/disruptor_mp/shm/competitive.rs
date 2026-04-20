@@ -10,17 +10,17 @@ mod common;
 #[path = "../../../../../disruptor-mp/benches/ipc/competitive/table.rs"]
 mod table;
 
+use crate::coordination::UnifiedCoordination;
+use crate::harness;
+use crate::latency::{self, LatencyRecorder};
+use crate::reporting::{self, BenchReport};
+use crate::scenario_v2::competitive::{self, CompetitiveArgs as Args, CompetitiveBackend};
 use clap::Parser;
 use common::{calculate_data_rate_gbps, format_throughput, BenchmarkEvent};
 use disruptor_mp::{
     attach_shared_consumer, build_shared_single_producer, portable_shm_segment_name,
     CoordinationMode, SharedConsumer, SharedProducer,
 };
-use crate::coordination::UnifiedCoordination;
-use crate::harness;
-use crate::latency::{self, LatencyRecorder};
-use crate::reporting::{self, BenchReport};
-use crate::scenario_v2::competitive::{self, CompetitiveArgs as Args, CompetitiveBackend};
 use std::env;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};

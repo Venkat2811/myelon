@@ -1,8 +1,5 @@
 //! FramedTransport benchmark over mmap backend.
 
-use myelon::transport::{
-    FixedFrame, MmapFramedTransportConsumer, MmapFramedTransportProducer, MyelonWaitStrategy,
-};
 use crate::harness::{
     self, mmap_layout_from_env, read_env_usize, spawn_child, unique_mmap_root, unique_mmap_segment,
     ConsumerOutput, IpcBenchmark, ProducerOutput, ScenarioChildren,
@@ -10,6 +7,9 @@ use crate::harness::{
 use crate::report_v2::BackendKind;
 use crate::reporting::{self, BenchReport};
 use crate::scenario_v2::framed::{FramedScenarioSpec, FramedSelection};
+use myelon::transport::{
+    FixedFrame, MmapFramedTransportConsumer, MmapFramedTransportProducer, MyelonWaitStrategy,
+};
 use std::env;
 use std::time::{Duration, Instant};
 

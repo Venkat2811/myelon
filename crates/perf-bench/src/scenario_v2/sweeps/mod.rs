@@ -2,6 +2,7 @@ mod common;
 mod framed;
 mod layers;
 mod monster;
+mod typed_zero_copy;
 
 pub use common::{
     default_co_target_rate, payload_sweep_specs, BasicSweepSelection, PayloadSweepSpec,
@@ -18,4 +19,8 @@ pub use layers::{
 pub use monster::{
     monster_sweep_roles, monster_sweep_scenarios, monster_sweep_should_run, MonsterSweepRoleKey,
     MonsterSweepScenarioSpec,
+};
+pub use typed_zero_copy::{
+    typed_zero_copy_roles, typed_zero_copy_sweep_specs, typed_zero_copy_targets,
+    TypedZeroCopyCodec, TypedZeroCopySweepSpec, TypedZeroCopyTargetSpec,
 };

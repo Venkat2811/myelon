@@ -1,11 +1,5 @@
 //! End-to-end Codec benchmark over mmap typed transport.
 
-use myelon::codec::Codec;
-use myelon::transport::{
-    FrameMeta, FramedTransportFrame, MmapFramedTransportConsumer, MmapFramedTransportProducer,
-    MyelonWaitStrategy,
-};
-use myelon::typed_transport::{MmapTypedConsumer, MmapTypedProducer};
 use crate::codec_payloads::{
     checksum_payloads, encoded_len, make_payloads, BincodeBatch, FlatbufBatch, RkyvBatch,
 };
@@ -18,6 +12,12 @@ use crate::latency::LatencyRecorder;
 use crate::report_v2::BackendKind;
 use crate::reporting::{self, BenchReport};
 use crate::scenario_v2::codec::{CodecScenarioSpec, CodecSelection};
+use myelon::codec::Codec;
+use myelon::transport::{
+    FrameMeta, FramedTransportFrame, MmapFramedTransportConsumer, MmapFramedTransportProducer,
+    MyelonWaitStrategy,
+};
+use myelon::typed_transport::{MmapTypedConsumer, MmapTypedProducer};
 use std::cell::Cell;
 use std::env;
 use std::hint::black_box;
@@ -668,7 +668,6 @@ impl IpcBenchmark for Scenario {
             );
         }
     }
-
 }
 
 impl Scenario {

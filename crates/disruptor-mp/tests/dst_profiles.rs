@@ -70,6 +70,7 @@ fn test_profile_coverage_maps_to_existing_deterministic_multiprocess_matrix() {
                 name.contains("true_multiprocess")
                     || name.contains("ring_buffer")
                     || name.contains("cursor")
+                    || name.contains("dst_failure_class_")
             }),
             "{} coverage must include a true multiprocess or shared-memory test",
             profile.name()

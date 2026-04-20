@@ -8,14 +8,14 @@
 #[path = "../../../../../disruptor-mp/benches/ipc/competitive/common.rs"]
 mod common;
 
-use clap::Parser;
-use common::{calculate_data_rate_gbps, format_throughput, BenchmarkEvent};
-use disruptor_mp::{portable_shm_segment_name, MmapConsumer, MmapProducer, MmapTransportLayout};
 use crate::coordination::UnifiedCoordination;
 use crate::harness;
 use crate::latency::{self, LatencyRecorder};
 use crate::reporting::{self, BenchReport};
 use crate::scenario_v2::competitive::{self, CompetitiveArgs as Args, CompetitiveBackend};
+use clap::Parser;
+use common::{calculate_data_rate_gbps, format_throughput, BenchmarkEvent};
+use disruptor_mp::{portable_shm_segment_name, MmapConsumer, MmapProducer, MmapTransportLayout};
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};

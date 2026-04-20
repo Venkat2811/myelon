@@ -660,7 +660,10 @@ where
 
         // Create this consumer's own sequence tracker
         let consumer_sequence_name = format!("{}_{}_seq", self.config.name, consumer_id);
-        let consumer_sequence = SharedCursor::new_or_attach(&consumer_sequence_name, -1)?;
+        let mut consumer_sequence = SharedCursor::new_or_attach(&consumer_sequence_name, -1)?;
+        if consumer_sequence.is_owner() {
+            consumer_sequence.set_owner(false);
+        }
 
         // Create the consumer with coordination support
         let mut consumer = SharedConsumer::new_with_coordination(
@@ -791,6 +794,11 @@ where
     where
         F: FnMut() -> E,
     {
+        #[cfg(feature = "dst")]
+        if dst_fixtures::dst_buggify::buggify(file!(), line!()) {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+
         self.maybe_pin_process_to_core(ProcessRole::Producer);
 
         let discovery_mode = self.discovery_mode.unwrap_or_default();
@@ -881,6 +889,11 @@ where
 
     /// Build a consumer (attaches to existing shared memory segments)
     pub fn build_consumer(self) -> MultiProcessResult<SharedConsumer<E>> {
+        #[cfg(feature = "dst")]
+        if dst_fixtures::dst_buggify::buggify(file!(), line!()) {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+
         self.maybe_pin_process_to_core(ProcessRole::Consumer);
 
         let ring_buffer: SharedRingBuffer<E> = SharedRingBuffer::attach(self.config.clone())?;
@@ -901,7 +914,10 @@ where
         // Note: Uses new_or_attach because multiple consumers might start simultaneously
         // and try to create the same sequence name (different from coordination structures)
         let consumer_sequence_name = format!("{}_{}_seq", self.config.name, consumer_id);
-        let consumer_sequence = SharedCursor::new_or_attach(&consumer_sequence_name, -1)?;
+        let mut consumer_sequence = SharedCursor::new_or_attach(&consumer_sequence_name, -1)?;
+        if consumer_sequence.is_owner() {
+            consumer_sequence.set_owner(false);
+        }
 
         Ok(SharedConsumer::new_with_coordination(
             ring_buffer,

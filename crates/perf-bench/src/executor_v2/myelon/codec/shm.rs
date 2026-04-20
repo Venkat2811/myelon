@@ -6,12 +6,6 @@
 //! This bench intentionally uses `TypedProducer` / `TypedConsumer` so it
 //! measures the RFC 0012 API surface, not ad-hoc encode/decode calls.
 
-use myelon::codec::Codec;
-use myelon::transport::{
-    FrameMeta, FramedTransportConsumer, FramedTransportFrame, FramedTransportProducer,
-    MyelonWaitStrategy,
-};
-use myelon::typed_transport::{TypedConsumer, TypedProducer};
 use crate::codec_payloads::{
     checksum_payloads, encoded_len, make_payloads, BincodeBatch, FlatbufBatch, RkyvBatch,
 };
@@ -25,6 +19,12 @@ use crate::latency::LatencyRecorder;
 use crate::report_v2::BackendKind;
 use crate::reporting::{self, BenchReport};
 use crate::scenario_v2::codec::{CodecScenarioSpec, CodecSelection};
+use myelon::codec::Codec;
+use myelon::transport::{
+    FrameMeta, FramedTransportConsumer, FramedTransportFrame, FramedTransportProducer,
+    MyelonWaitStrategy,
+};
+use myelon::typed_transport::{TypedConsumer, TypedProducer};
 use std::cell::Cell;
 use std::env;
 use std::hint::black_box;
@@ -635,7 +635,6 @@ impl IpcBenchmark for Scenario {
             );
         }
     }
-
 }
 
 impl Scenario {

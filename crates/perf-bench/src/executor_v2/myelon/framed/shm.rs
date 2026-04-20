@@ -8,9 +8,6 @@
 //! Run: cargo bench -p myelon-bench --bench framed_shm
 //! Single payload: cargo bench -p myelon-bench --bench framed_shm -- --payload 128K
 
-use myelon::transport::{
-    FixedFrame, FramedTransportConsumer, FramedTransportProducer, MyelonWaitStrategy,
-};
 use crate::coordination::BenchmarkCoordination;
 use crate::harness::{
     self, read_env_u64, read_env_usize, segment_from_env, spawn_child, unique_shm_segment,
@@ -19,6 +16,9 @@ use crate::harness::{
 use crate::report_v2::BackendKind;
 use crate::reporting::{self, BenchReport};
 use crate::scenario_v2::framed::{FramedScenarioSpec, FramedSelection};
+use myelon::transport::{
+    FixedFrame, FramedTransportConsumer, FramedTransportProducer, MyelonWaitStrategy,
+};
 use std::time::{Duration, Instant};
 
 // 64KB frame (matching competitor-rs RPC frame size)

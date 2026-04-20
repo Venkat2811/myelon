@@ -302,3 +302,106 @@ pub fn replay_trace(expected: &TraceArtifact, actual: &TraceArtifact) -> Result<
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn runtime() -> DstRuntime {
+        DstRuntime::new("dst-runtime-test", "unit", 0x1700, 10_000)
+    }
+
+    #[test]
+    fn rejects_pause_before_start() {
+        let mut runtime = runtime();
+        let err = runtime.pause().expect_err("pause before start must fail");
+        assert_eq!(
+            err,
+            DstRuntimeError::InvalidTransition {
+                current: DstRuntimeState::Initialized,
+                command: DstRuntimeCommand::Pause,
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_resume_without_pause() {
+        let mut runtime = runtime();
+        runtime.start().expect("start should succeed");
+        let err = runtime
+            .resume()
+            .expect_err("resume without pause must fail");
+        assert_eq!(
+            err,
+            DstRuntimeError::InvalidTransition {
+                current: DstRuntimeState::Running,
+                command: DstRuntimeCommand::Resume,
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_crash_before_start() {
+        let mut runtime = runtime();
+        let err = runtime
+            .crash(ProcessRole::Producer, "not-running")
+            .expect_err("crash before start must fail");
+        assert_eq!(
+            err,
+            DstRuntimeError::InvalidTransition {
+                current: DstRuntimeState::Initialized,
+                command: DstRuntimeCommand::Crash {
+                    reason: "not-running",
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_restart_without_crash() {
+        let mut runtime = runtime();
+        runtime.start().expect("start should succeed");
+        let err = runtime
+            .restart(ProcessRole::Consumer { index: 0 }, "still-running")
+            .expect_err("restart without crash must fail");
+        assert_eq!(
+            err,
+            DstRuntimeError::InvalidTransition {
+                current: DstRuntimeState::Running,
+                command: DstRuntimeCommand::Restart {
+                    reason: "still-running",
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_step_when_not_running() {
+        let mut runtime = runtime();
+        let err = runtime
+            .step(ProcessRole::Producer, SchedulerAction::Spawn, 1)
+            .expect_err("step before start must fail");
+        assert_eq!(
+            err,
+            DstRuntimeError::InvalidTransition {
+                current: DstRuntimeState::Initialized,
+                command: DstRuntimeCommand::Step,
+            }
+        );
+    }
+
+    #[test]
+    fn budget_check_reports_overflow() {
+        let runtime = runtime();
+        let err = runtime
+            .enforce_budget(20_000)
+            .expect_err("budget overflow must fail");
+        assert_eq!(
+            err,
+            DstRuntimeError::BudgetExceeded {
+                limit_ns: 10_000,
+                observed_ns: 20_000,
+            }
+        );
+    }
+}

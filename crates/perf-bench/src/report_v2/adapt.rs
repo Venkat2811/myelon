@@ -129,6 +129,10 @@ fn adapt_outcome(result: &BenchResult) -> ScenarioOutcome {
         derived: DerivedMetrics {
             pct_of_raw_ring: result.results.pct_of_raw_ring,
             speedup_vs_bincode: result.results.speedup_vs_bincode,
+            access_avg_ns: result.results.access_avg_ns,
+            access_vs_decode_speedup: result.results.access_vs_decode_speedup,
+            alloc_count: result.results.alloc_count,
+            alloc_bytes: result.results.alloc_bytes,
             hw_bandwidth_limit_gbps: result.results.hw_bandwidth_limit_gbps,
             hw_efficiency_pct: result.results.hw_efficiency_pct,
         },
@@ -210,6 +214,10 @@ fn adapt_scenario_back(scenario: &ScenarioReport) -> BenchResult {
                 phase_timing: outcome.phase_timing.clone(),
                 pct_of_raw_ring: outcome.derived.pct_of_raw_ring,
                 speedup_vs_bincode: outcome.derived.speedup_vs_bincode,
+                access_avg_ns: outcome.derived.access_avg_ns,
+                access_vs_decode_speedup: outcome.derived.access_vs_decode_speedup,
+                alloc_count: outcome.derived.alloc_count,
+                alloc_bytes: outcome.derived.alloc_bytes,
                 hw_bandwidth_limit_gbps: outcome.derived.hw_bandwidth_limit_gbps,
                 hw_efficiency_pct: outcome.derived.hw_efficiency_pct,
                 per_consumer: outcome
@@ -284,6 +292,10 @@ fn adapt_scenario_back(scenario: &ScenarioReport) -> BenchResult {
                 phase_timing: None,
                 pct_of_raw_ring: None,
                 speedup_vs_bincode: None,
+                access_avg_ns: None,
+                access_vs_decode_speedup: None,
+                alloc_count: None,
+                alloc_bytes: None,
                 hw_bandwidth_limit_gbps: None,
                 hw_efficiency_pct: None,
                 per_consumer: Vec::new(),
@@ -595,6 +607,10 @@ mod tests {
         let consumer1 =
             ConsumerOutput::from_elapsed(1, 50_000, Duration::from_millis(420), 2048, 17);
         reporting::attach_child_metrics(&mut result, &producer, &[consumer0, consumer1]);
+        result.results.access_avg_ns = Some(42.5);
+        result.results.access_vs_decode_speedup = Some(4.25);
+        result.results.alloc_count = Some(0);
+        result.results.alloc_bytes = Some(0);
 
         let mut report = reporting::BenchReport::new();
         report.add(result);
@@ -623,6 +639,10 @@ mod tests {
         assert_eq!(outcome.consumers.checksum_total, Some(28));
         assert!(outcome.phase_timing.is_some());
         assert!(outcome.latency.is_some());
+        assert_eq!(outcome.derived.access_avg_ns, Some(42.5));
+        assert_eq!(outcome.derived.access_vs_decode_speedup, Some(4.25));
+        assert_eq!(outcome.derived.alloc_count, Some(0));
+        assert_eq!(outcome.derived.alloc_bytes, Some(0));
     }
 
     #[test]
@@ -676,6 +696,10 @@ mod tests {
             None,
         );
         result.results.consumer_checksum_total = Some(18);
+        result.results.access_avg_ns = Some(18.0);
+        result.results.access_vs_decode_speedup = Some(3.5);
+        result.results.alloc_count = Some(0);
+        result.results.alloc_bytes = Some(0);
 
         let mut report = reporting::BenchReport::new();
         report.add(result);
@@ -688,5 +712,12 @@ mod tests {
         );
         assert_eq!(compat.results[0].backend, "shm");
         assert_eq!(compat.results[0].results.consumer_checksum_total, Some(18));
+        assert_eq!(compat.results[0].results.access_avg_ns, Some(18.0));
+        assert_eq!(
+            compat.results[0].results.access_vs_decode_speedup,
+            Some(3.5)
+        );
+        assert_eq!(compat.results[0].results.alloc_count, Some(0));
+        assert_eq!(compat.results[0].results.alloc_bytes, Some(0));
     }
 }

@@ -18,7 +18,7 @@ endef
 	test-rust-fast test-rust-extended test-rust-perf-gate test-rust-manifest \
 	test-py-fast test-py-extended test-py-manifest py-check py-test py-setup \
 	check-layer-boundaries check-layout-refs check-hot-path-ffi \
-	test-dst run-rust-examples run-rust-benches run-py-examples run-py-benches \
+	test-dst test-dst-fuzz test-dst-nightly run-rust-examples run-rust-benches run-py-examples run-py-benches \
 	smoke orchestrate-rust orchestrate-python orchestrate-all \
 	validate-ci-workflows
 
@@ -52,6 +52,8 @@ help:
 	@echo "  make py-check            - cargo check for Python extension crate"
 	@echo "  make py-test             - alias for canonical myelon-py Linux Python lane"
 	@echo "  make test-dst            - run deterministic DST lanes for disruptor-mp and myelon"
+	@echo "  make test-dst-fuzz       - run 100-seed DST CI fuzz envelopes"
+	@echo "  make test-dst-nightly    - run 1000-seed DST nightly fuzz envelopes"
 	@echo "  make run-rust-examples   - run supported Rust examples with timeout protection"
 	@echo "  make run-rust-benches    - run supported Rust benches with timeout protection"
 	@echo "  make run-py-examples     - run supported Python examples with timeout protection"
@@ -152,9 +154,22 @@ py-setup:
 
 test-dst:
 	@$(MAKE) test-dst
+	@$(CARGO) test -p dst-runner --features dst -- --test-threads=1
+	@$(CARGO) test -p myelon --features dst --test dst_framed -- --test-threads=1
+	@$(CARGO) test -p myelon --features 'dst rkyv flatbuffers' --test dst_codec -- --test-threads=1
 	@$(CARGO) test -p myelon --test dst_contract -- --test-threads=1
 	@$(CARGO) test -p myelon --test dst_profiles -- --test-threads=1
 	@$(CARGO) test -p myelon --test dst_runtime -- --test-threads=1
+
+test-dst-fuzz:
+	@$(CARGO) test -p dst-runner --features dst dst_fuzz_raw_ring_ci_seed_matrix -- --ignored --nocapture --test-threads=1
+	@$(CARGO) test -p myelon --features dst --test dst_framed dst_fuzz_framed_ci_seed_matrix -- --ignored --nocapture --test-threads=1
+	@$(CARGO) test -p myelon --features 'dst rkyv flatbuffers' --test dst_codec dst_fuzz_codec_ci_seed_matrix -- --ignored --nocapture --test-threads=1
+
+test-dst-nightly:
+	@$(CARGO) test -p dst-runner --features dst dst_fuzz_raw_ring_nightly_seed_matrix -- --ignored --nocapture --test-threads=1
+	@$(CARGO) test -p myelon --features dst --test dst_framed dst_fuzz_framed_nightly_seed_matrix -- --ignored --nocapture --test-threads=1
+	@$(CARGO) test -p myelon --features 'dst rkyv flatbuffers' --test dst_codec dst_fuzz_codec_nightly_seed_matrix -- --ignored --nocapture --test-threads=1
 
 run-rust-examples:
 	@$(MAKE) example-all

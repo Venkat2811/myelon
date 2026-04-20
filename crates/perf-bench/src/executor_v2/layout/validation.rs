@@ -2,6 +2,10 @@
 //!
 //! Run: cargo bench -p myelon-bench --bench layout_validation
 
+use crate::events::BenchEvent;
+use crate::report_v2::{self, LayoutTargetMeasurement};
+use crate::reporting;
+use crate::scenario_v2::layout;
 use disruptor_mp::{
     attach_shared_consumer, build_shared_single_producer, MmapConsumer, MmapCursor, MmapProducer,
     MmapTransportLayout, SharedCursor,
@@ -13,10 +17,6 @@ use myelon::transport::{
 use myelon::typed_transport::{
     MmapTypedConsumer, MmapTypedProducer, TypedConsumer, TypedProducer,
 };
-use crate::events::BenchEvent;
-use crate::report_v2::{self, LayoutTargetMeasurement};
-use crate::reporting;
-use crate::scenario_v2::layout;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
@@ -100,6 +100,8 @@ pub fn run_main() {
         let _producer = build_shared_single_producer::<Event>(&segment, 1024)
             .build_producer(Event::default)
             .expect("create shm ring");
+        let _coordination = SharedCursor::new(&format!("{segment}_cr"), 0)
+            .expect("create shm readiness cursor");
 
         let avg_ns = measure_avg_ns(
             || {

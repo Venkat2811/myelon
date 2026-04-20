@@ -193,6 +193,26 @@ impl SharedConsumerBarrier {
         self.consumer_registration = Some(consumer_registration);
     }
 
+    /// Attach a known consumer cursor by explicit consumer id.
+    ///
+    /// This is required for restart tests and long-lived named consumers where the producer
+    /// cannot infer the cursor name from auto-ID registration or PID-based discovery.
+    pub fn discover_consumer_id(&mut self, consumer_id: &str) -> bool {
+        if self.consumer_cursors.contains_key(consumer_id) {
+            return true;
+        }
+
+        let sequence_name = format!("{}_{}_seq", self.base_name, consumer_id);
+        match SharedCursor::attach(&sequence_name) {
+            Ok(cursor) => {
+                self.consumer_cursors
+                    .insert(consumer_id.to_string(), cursor);
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
     /// Access readiness counter used during startup coordination.
     pub fn get_consumer_readiness_counter(&self) -> Option<&SharedCursor> {
         self.consumers_ready.as_ref()
@@ -352,6 +372,11 @@ impl SharedConsumerBarrier {
 
     /// Optimized discovery using name prefix conventions.
     fn discover_with_consumer_prefix(&mut self, prefix: &str) {
+        #[cfg(feature = "dst")]
+        if dst_fixtures::dst_buggify::buggify(file!(), line!()) {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
         let max_consumers = match &self.discovery_mode {
             DiscoveryMode::Enabled { max_consumers, .. } => *max_consumers,
             _ => 16,
@@ -367,12 +392,23 @@ impl SharedConsumerBarrier {
 
             if let Ok(cursor) = SharedCursor::attach(&sequence_name) {
                 self.consumer_cursors.insert(consumer_name, cursor);
+                #[cfg(feature = "dst")]
+                dst_fixtures::dst_assertions::assert_sometimes(
+                    true,
+                    "consumer discovered",
+                    format!("prefix={prefix} consumer={counter}"),
+                );
             }
         }
     }
 
     /// Deterministic discovery for coordinated auto-generated consumer IDs.
     fn discover_with_registered_slots(&mut self, max_consumers: usize) -> usize {
+        #[cfg(feature = "dst")]
+        if dst_fixtures::dst_buggify::buggify(file!(), line!()) {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
         if self.consumer_registration.is_none() && uses_registered_auto_ids(&self.discovery_mode) {
             self.consumer_registration =
                 SharedCursor::attach(&consumer_registration_cursor_name(&self.base_name)).ok();
@@ -395,6 +431,12 @@ impl SharedConsumerBarrier {
 
             if let Ok(cursor) = SharedCursor::attach(&sequence_name) {
                 self.consumer_cursors.insert(consumer_name, cursor);
+                #[cfg(feature = "dst")]
+                dst_fixtures::dst_assertions::assert_sometimes(
+                    true,
+                    "consumer discovered",
+                    format!("registered-slot={slot}"),
+                );
             }
         }
 
@@ -403,6 +445,11 @@ impl SharedConsumerBarrier {
 
     /// PID-based discovery fallback.
     fn discover_with_pid_based_scanning(&mut self) {
+        #[cfg(feature = "dst")]
+        if dst_fixtures::dst_buggify::buggify(file!(), line!()) {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
         let current_pid = std::process::id();
 
         let max_consumers = match &self.discovery_mode {
@@ -424,6 +471,12 @@ impl SharedConsumerBarrier {
 
                     if let Ok(cursor) = SharedCursor::attach(&sequence_name) {
                         self.consumer_cursors.insert(consumer_name, cursor);
+                        #[cfg(feature = "dst")]
+                        dst_fixtures::dst_assertions::assert_sometimes(
+                            true,
+                            "consumer discovered",
+                            format!("pid={pid} counter={counter}"),
+                        );
                     }
                 }
             }

@@ -5,15 +5,15 @@
 //! Run: cargo bench -p perf-bench --bench wait_strategy_shm
 //! Full: BENCH_MODE=full cargo bench -p perf-bench --bench wait_strategy_shm
 
-use disruptor_mp::{
-    build_shared_single_producer, CoordinationMode, SharedDisruptorBuilder, SharedMemoryConfig,
-};
 use crate::coordination::BenchmarkCoordination;
 use crate::events::format_throughput;
 use crate::harness::{self, read_env_usize, IpcBenchmark, ScenarioChildren};
 use crate::report_v2::BackendKind;
 use crate::reporting::{self, BenchReport};
 use crate::scenario_v2::wait_strategy::{WaitStrategyScenarioSpec, WaitStrategySelection};
+use disruptor_mp::{
+    build_shared_single_producer, CoordinationMode, SharedDisruptorBuilder, SharedMemoryConfig,
+};
 use std::time::{Duration, Instant};
 
 const BUFFER_SIZE: usize = 64 * 1024;

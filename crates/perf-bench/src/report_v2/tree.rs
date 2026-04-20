@@ -7,7 +7,9 @@ use crate::latency::format_ns;
 use std::collections::BTreeMap;
 use std::iter::repeat;
 
-const TREE_COL_BUF: usize = 2;
+const TREE_COL_BUF: usize = 4;
+// Width policy: never wrap or truncate the tree label column. Instead, widen the
+// label span to the longest rendered node name and keep parent rows tree-only.
 
 #[derive(Debug, Clone)]
 struct TreeLeaf {
@@ -17,6 +19,18 @@ struct TreeLeaf {
     label: String,
     sort_key: String,
     columns: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+enum TreeNode {
+    Parent {
+        name: String,
+        children: Vec<TreeNode>,
+    },
+    Leaf {
+        name: String,
+        columns: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -39,35 +53,36 @@ impl TreePainter {
         }
     }
 
+    fn has_columns(&self) -> bool {
+        self.column_widths.iter().any(|width| *width > 0)
+    }
+
     fn start_root(&mut self, title: &str, headings: &[&str]) {
         self.out.push_str(title);
-        right_pad_tree_name(&mut self.out, &mut self.max_name_span);
-        write_tree_columns(&mut self.out, headings, &mut self.column_widths);
+        if self.has_columns() {
+            right_pad_tree_name(&mut self.out, &mut self.max_name_span);
+            write_tree_columns(&mut self.out, headings, &mut self.column_widths);
+        }
         self.out.push('\n');
     }
 
     fn start_parent(&mut self, name: &str, is_last: bool) {
-        let is_top_level = self.depth == 0;
-        if !is_top_level {
-            self.out.push_str(&self.current_prefix);
-            self.out.push_str(if is_last { "╰─ " } else { "├─ " });
-        }
+        self.out.push_str(&self.current_prefix);
+        self.out.push_str(if is_last { "╰─ " } else { "├─ " });
         self.out.push_str(name);
         self.out.push('\n');
 
         self.depth += 1;
-        if !is_top_level {
-            self.current_prefix
-                .push_str(if is_last { "   " } else { "│  " });
-        }
+        self.current_prefix
+            .push_str(if is_last { "   " } else { "│  " });
     }
 
     fn finish_parent(&mut self) {
-        self.depth = self.depth.saturating_sub(1);
         if self.depth == 0 {
             return;
         }
 
+        self.depth -= 1;
         let new_prefix_len = {
             let mut iter = self.current_prefix.chars();
             let _ = iter.by_ref().rev().nth(2);
@@ -88,6 +103,24 @@ impl TreePainter {
 
     fn finish(self) -> String {
         self.out
+    }
+}
+
+impl TreeNode {
+    fn max_name_span(nodes: &[Self], depth: usize) -> usize {
+        const DEPTH_COLS: usize = 3;
+
+        nodes
+            .iter()
+            .map(|node| match node {
+                TreeNode::Parent { name, children } => {
+                    let node_span = depth * DEPTH_COLS + name.chars().count();
+                    node_span.max(Self::max_name_span(children, depth + 1))
+                }
+                TreeNode::Leaf { name, .. } => depth * DEPTH_COLS + name.chars().count(),
+            })
+            .max()
+            .unwrap_or_default()
     }
 }
 
@@ -144,6 +177,8 @@ impl ReportBundle {
                 "%raw",
                 "hw%",
                 "codec%",
+                "acc ns",
+                "acc x",
                 "coord",
                 "disc",
                 "zc",
@@ -168,6 +203,8 @@ impl ReportBundle {
                         pct_raw,
                         hw_pct,
                         codec_pct,
+                        access_avg,
+                        access_speedup,
                     ) = match &scenario.outcome {
                         ScenarioOutcome::Throughput(outcome) => (
                             human_size(scenario.config.workload.payload_bytes),
@@ -221,12 +258,24 @@ impl ReportBundle {
                                 .as_ref()
                                 .map(|timing| format!("{:.0}%", timing.codec_pct()))
                                 .unwrap_or_else(|| "-".to_string()),
+                            outcome
+                                .derived
+                                .access_avg_ns
+                                .map(format_avg_ns)
+                                .unwrap_or_else(|| "-".to_string()),
+                            outcome
+                                .derived
+                                .access_vs_decode_speedup
+                                .map(|value| format!("{value:.1}x"))
+                                .unwrap_or_else(|| "-".to_string()),
                         ),
                         ScenarioOutcome::Layout(_) => (
                             "-".to_string(),
                             "-".to_string(),
                             scenario.config.workload.num_producers.to_string(),
                             scenario.config.workload.num_consumers.to_string(),
+                            "-".to_string(),
+                            "-".to_string(),
                             "-".to_string(),
                             "-".to_string(),
                             "-".to_string(),
@@ -264,6 +313,8 @@ impl ReportBundle {
                             pct_raw,
                             hw_pct,
                             codec_pct,
+                            access_avg,
+                            access_speedup,
                             coordination_label(scenario.config.transport.coordination.as_ref()),
                             discovery_label(scenario.config.transport.discovery.as_ref()),
                             zero_copy_label(scenario.config.transport.zero_copy.as_ref()),
@@ -294,14 +345,9 @@ impl ReportBundle {
 fn render_grouped_tree(title: &str, headings: &[&str], rows: Vec<TreeLeaf>) -> String {
     let mut groups: BTreeMap<String, BTreeMap<String, BTreeMap<String, Vec<TreeLeaf>>>> =
         BTreeMap::new();
-    let mut max_name_span = title.chars().count();
     let mut column_widths: Vec<usize> = headings.iter().map(|name| name.chars().count()).collect();
 
     for row in rows {
-        max_name_span = max_name_span.max(row.benchmark.chars().count());
-        max_name_span = max_name_span.max(3 + row.backend.chars().count());
-        max_name_span = max_name_span.max(6 + row.layer.chars().count());
-        max_name_span = max_name_span.max(9 + row.label.chars().count());
         for (index, value) in row.columns.iter().enumerate() {
             column_widths[index] = column_widths[index].max(value.chars().count());
         }
@@ -323,39 +369,81 @@ fn render_grouped_tree(title: &str, headings: &[&str], rows: Vec<TreeLeaf>) -> S
         }
     }
 
+    let collapse_benchmark = groups.len() == 1;
+    let nodes = build_tree_nodes(groups, collapse_benchmark);
+    let max_name_span = title
+        .chars()
+        .count()
+        .max(TreeNode::max_name_span(&nodes, 1));
+
     let mut painter = TreePainter::new(max_name_span, column_widths);
     painter.start_root(title, headings);
-
-    let benchmarks: Vec<_> = groups.into_iter().collect();
-    for (benchmark_index, (benchmark, backends)) in benchmarks.iter().enumerate() {
-        let benchmark_is_last = benchmark_index + 1 == benchmarks.len();
-        painter.start_parent(benchmark, benchmark_is_last);
-
-        let backend_items: Vec<_> = backends.iter().collect();
-        for (backend_index, (backend, layers)) in backend_items.iter().enumerate() {
-            let backend_is_last = backend_index + 1 == backend_items.len();
-            painter.start_parent(backend, backend_is_last);
-
-            let layer_items: Vec<_> = layers.iter().collect();
-            for (layer_index, (layer, rows)) in layer_items.iter().enumerate() {
-                let layer_is_last = layer_index + 1 == layer_items.len();
-                painter.start_parent(layer, layer_is_last);
-
-                for (row_index, row) in rows.iter().enumerate() {
-                    let row_is_last = row_index + 1 == rows.len();
-                    painter.write_leaf(&row.label, row_is_last, &row.columns);
-                }
-
-                painter.finish_parent();
-            }
-
-            painter.finish_parent();
-        }
-
-        painter.finish_parent();
-    }
+    render_tree_nodes(&mut painter, &nodes);
 
     painter.finish()
+}
+
+fn build_tree_nodes(
+    groups: BTreeMap<String, BTreeMap<String, BTreeMap<String, Vec<TreeLeaf>>>>,
+    collapse_benchmark: bool,
+) -> Vec<TreeNode> {
+    if collapse_benchmark {
+        return groups
+            .into_iter()
+            .next()
+            .map(|(_, backends)| build_backend_nodes(backends))
+            .unwrap_or_default();
+    }
+
+    groups
+        .into_iter()
+        .map(|(benchmark, backends)| TreeNode::Parent {
+            name: benchmark,
+            children: build_backend_nodes(backends),
+        })
+        .collect()
+}
+
+fn build_backend_nodes(
+    backends: BTreeMap<String, BTreeMap<String, Vec<TreeLeaf>>>,
+) -> Vec<TreeNode> {
+    backends
+        .into_iter()
+        .map(|(backend, layers)| TreeNode::Parent {
+            name: backend,
+            children: build_layer_nodes(layers),
+        })
+        .collect()
+}
+
+fn build_layer_nodes(layers: BTreeMap<String, Vec<TreeLeaf>>) -> Vec<TreeNode> {
+    layers
+        .into_iter()
+        .map(|(layer, rows)| TreeNode::Parent {
+            name: layer,
+            children: rows
+                .into_iter()
+                .map(|row| TreeNode::Leaf {
+                    name: row.label,
+                    columns: row.columns,
+                })
+                .collect(),
+        })
+        .collect()
+}
+
+fn render_tree_nodes(painter: &mut TreePainter, nodes: &[TreeNode]) {
+    for (index, node) in nodes.iter().enumerate() {
+        let is_last = index + 1 == nodes.len();
+        match node {
+            TreeNode::Parent { name, children } => {
+                painter.start_parent(name, is_last);
+                render_tree_nodes(painter, children);
+                painter.finish_parent();
+            }
+            TreeNode::Leaf { name, columns } => painter.write_leaf(name, is_last, columns),
+        }
+    }
 }
 
 fn compact_scenario_label(scenario: &str) -> String {
@@ -473,6 +561,14 @@ fn human_gbps(gbps: f64) -> String {
     }
 }
 
+fn format_avg_ns(value: f64) -> String {
+    if value < 1_000.0 {
+        format!("{value:.1}ns")
+    } else {
+        format_ns(value.round() as u64)
+    }
+}
+
 fn right_pad_tree_name(buf: &mut String, max_name_span: &mut usize) {
     let buf_len = buf.chars().count();
     let pad_len = TREE_COL_BUF + max_name_span.saturating_sub(buf_len);
@@ -583,17 +679,19 @@ mod tests {
         let consumer1 =
             ConsumerOutput::from_elapsed(1, 1_000_000, Duration::from_millis(106), 64, 11);
         reporting::attach_child_metrics(&mut result, &producer, &[consumer0, consumer1]);
+        result.results.access_avg_ns = Some(123.4);
+        result.results.access_vs_decode_speedup = Some(5.6);
 
         let mut report = reporting::BenchReport::new();
         report.add(result);
         let tree = report.to_report_v2().render_tree();
-
-        assert!(tree.contains("raw_ring_shm"));
-        assert!(tree.contains("signal 1p2c 64B"));
-        assert!(tree.contains("shm"));
-        assert!(tree.contains("prod BW"));
-        assert!(tree.contains("%raw"));
-        assert!(tree.contains("hw%"));
+        let expected = concat!(
+            "perf-bench/raw_ring_shm     payload │ depth │ P │ C │ prod ops/s │ cons ops/s │ prod BW │ cons BW │ p50   │ p99   │ %raw │ hw%  │ codec% │ acc ns  │ acc x │ coord │ disc  │ zc │ frame │ mode           │ wait\n",
+            "╰─ shm\n",
+            "   ╰─ raw_ring\n",
+            "      ╰─ signal 1p2c 64B    64B     │ 65K   │ 1 │ 2 │ 10.00M     │ 9.50M      │ 640MB/s │ 607MB/s │ 250ns │ 250ns │ 100% │ 0.2% │ -      │ 123.4ns │ 5.6x  │ bench │ on(2) │ no │ none  │ max_throughput │ BusySpin\n",
+        );
+        assert_eq!(tree, expected);
     }
 
     #[test]
@@ -607,9 +705,72 @@ mod tests {
             )],
         );
         let tree = report.render_tree();
+        let expected = concat!(
+            "perf-bench/layout_validation    avg ns/op │ budget ns │ result\n",
+            "╰─ mmap\n",
+            "   ╰─ raw_ring\n",
+            "      ╰─ mmap-ring-attach    1234      │ 500000    │ PASS\n",
+        );
+        assert_eq!(tree, expected);
+    }
 
-        assert!(tree.contains("layout_validation"));
-        assert!(tree.contains("mmap-ring-attach"));
-        assert!(tree.contains("PASS"));
+    #[test]
+    fn renders_competitive_tree_from_report_v2_bundle() {
+        let result = make_test_result(
+            "competitive_shm",
+            "competitive_pingpong_1p1c_64B",
+            "shm",
+            "competitive",
+            reporting::BenchTransportSpec::unified_competitive()
+                .with_zero_copy(false)
+                .with_framing("none"),
+            64,
+            1024,
+            100_000,
+            1,
+            4_200_000.0,
+            4_200_000.0,
+            None,
+        );
+
+        let mut report = reporting::BenchReport::new();
+        report.add(result);
+        let tree = report.to_report_v2().render_tree();
+        let expected = concat!(
+            "perf-bench/competitive_shm                payload │ depth │ P │ C │ prod ops/s │ cons ops/s │ prod BW │ cons BW │ p50 │ p99 │ %raw │ hw%  │ codec% │ acc ns │ acc x │ coord   │ disc │ zc │ frame │ mode           │ wait\n",
+            "╰─ shm\n",
+            "   ╰─ competitive\n",
+            "      ╰─ competitive pingpong 1p1c 64B    64B     │ 1K    │ 1 │ 1 │ 4.20M      │ 4.20M      │ 269MB/s │ 269MB/s │ -   │ -   │ -    │ 0.1% │ -      │ -      │ -     │ unified │ off  │ no │ none  │ max_throughput │ BusySpin\n",
+        );
+        assert_eq!(tree, expected);
+    }
+
+    #[test]
+    fn keeps_long_labels_unwrapped_and_untruncated() {
+        let result = make_test_result(
+            "raw_ring_shm",
+            "signal_extremely_verbose_scenario_name_that_should_not_be_truncated_1p12c_1MB",
+            "shm",
+            "raw_ring",
+            reporting::BenchTransportSpec::benchmark_shm(12)
+                .with_zero_copy(false)
+                .with_framing("none"),
+            1_048_576,
+            65_536,
+            10_000,
+            12,
+            1_000.0,
+            1_000.0,
+            None,
+        );
+
+        let mut report = reporting::BenchReport::new();
+        report.add(result);
+        let tree = report.to_report_v2().render_tree();
+
+        assert!(tree.contains(
+            "signal extremely verbose scenario name that should not be truncated 1p12c 1MB"
+        ));
+        assert!(!tree.contains("..."));
     }
 }

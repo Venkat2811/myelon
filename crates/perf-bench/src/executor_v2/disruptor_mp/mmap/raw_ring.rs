@@ -8,13 +8,13 @@
 //! Run:   cargo bench -p myelon-bench --bench raw_ring_mmap
 //! Signal only: cargo bench -p myelon-bench --bench raw_ring_mmap -- --class signal
 
-use disruptor_mp::{AutoWaitStrategy, MmapConsumer, MmapProducer, MmapTransportLayout};
 use crate::events::nanos_now;
 use crate::harness::{self, IpcBenchmark, ScenarioChildren};
 use crate::latency::LatencyRecorder;
 use crate::report_v2::BackendKind;
 use crate::reporting::{self, BenchReport};
 use crate::scenario_v2::raw_ring::{RawRingScenarioSpec, RawRingSelection};
+use disruptor_mp::{AutoWaitStrategy, MmapConsumer, MmapProducer, MmapTransportLayout};
 use std::env;
 use std::process::Child;
 use std::time::{Duration, Instant};
@@ -736,7 +736,6 @@ impl IpcBenchmark for Scenario {
             .filter_map(|entry| entry.latency.clone())
             .max_by_key(|stats| stats.p99_ns)
     }
-
 }
 
 const CHILD_ROLES: &[harness::ChildRole] = &[

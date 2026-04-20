@@ -160,6 +160,12 @@ where
             .free_slots(last_published, rear_sequence_read);
 
         if free_slots < n {
+            #[cfg(feature = "dst")]
+            dst_fixtures::dst_assertions::assert_sometimes(
+                true,
+                "producer blocked",
+                format!("free_slots={free_slots} requested={n}"),
+            );
             return Err(MissingFreeSlots((n - free_slots) as u64));
         }
 
@@ -192,6 +198,15 @@ where
 
         // Publish sequence with release ordering so consumer-visible event writes happen-before sequence update.
         self.producer_sequence.store(sequence, Ordering::Release);
+
+        #[cfg(feature = "dst")]
+        if sequence > 0 && sequence % self.ring_buffer.size() as i64 == 0 {
+            dst_fixtures::dst_assertions::assert_sometimes(
+                true,
+                "ring buffer wraps around",
+                format!("sequence={sequence} size={}", self.ring_buffer.size()),
+            );
+        }
 
         // Move to next sequence
         self.sequence += 1;
@@ -255,6 +270,10 @@ where
     {
         while self.next_sequences(1).is_err() {
             std::hint::spin_loop();
+        }
+        #[cfg(feature = "dst")]
+        if dst_fixtures::dst_buggify::buggify(file!(), line!()) {
+            std::thread::yield_now();
         }
         self.apply_update(update);
     }
@@ -376,6 +395,10 @@ where
     /// Return the minimum gating sequence across all discovered consumers.
     /// This may discover consumers based on configuration and scan interval.
     pub fn min_gating_sequence(&mut self) -> Sequence {
+        #[cfg(feature = "dst")]
+        if dst_fixtures::dst_buggify::buggify(file!(), line!()) {
+            return self.last_published_sequence();
+        }
         self.consumer_barrier.get_min_consumer_sequence()
     }
 
@@ -387,6 +410,29 @@ where
         // This is intentionally acquired on every check so the producer observes
         // the latest consumer progress before advancing lifecycle assumptions.
         self.consumer_barrier.get_min_consumer_sequence() >= seq
+    }
+
+    /// Attach a known consumer cursor by explicit consumer id.
+    pub fn discover_consumer_id(&mut self, consumer_id: &str) -> bool {
+        self.consumer_barrier.discover_consumer_id(consumer_id)
+    }
+
+    /// Wait for a known consumer cursor to appear by explicit consumer id.
+    pub fn wait_for_consumer_id(&mut self, consumer_id: &str, timeout: Duration) -> bool {
+        assert!(timeout > Duration::ZERO, "timeout must be positive");
+        let deadline = Instant::now()
+            .checked_add(timeout)
+            .expect("timeout duration does not fit in Instant");
+
+        loop {
+            if self.discover_consumer_id(consumer_id) {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
     }
 
     /// Wait until the provided sequence is consumed by all known consumers or timeout.

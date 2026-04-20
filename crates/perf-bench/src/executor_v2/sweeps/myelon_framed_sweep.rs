@@ -449,11 +449,12 @@ impl IpcBenchmark for Scenario {
         } else {
             reporting::BenchTransportSpec::mmap_builtin()
         };
-        base.with_zero_copy(false).with_framing(if self.layer == "framed_right" {
-            "right_sized"
-        } else {
-            "fixed_64k"
-        })
+        base.with_zero_copy(false)
+            .with_framing(if self.layer == "framed_right" {
+                "right_sized"
+            } else {
+                "fixed_64k"
+            })
     }
 
     fn measurement_mode(&self) -> String {

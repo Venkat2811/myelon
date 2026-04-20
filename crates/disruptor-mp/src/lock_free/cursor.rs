@@ -231,6 +231,24 @@ impl SharedCursor {
         }
     }
 
+    /// Return whether this mapping currently owns unlink responsibility.
+    pub fn is_owner(&self) -> bool {
+        self.is_owner
+    }
+
+    /// Transfer or release ownership of the underlying shared-memory name.
+    ///
+    /// Consumer sequence cursors use this to become persistent restart anchors:
+    /// the first attaching consumer may create the cursor segment, but it must not
+    /// unlink that name when the process exits, or subsequent restarts would reset
+    /// the logical consumer position back to the initial value.
+    pub fn set_owner(&mut self, is_owner: bool) -> bool {
+        let previous = self.is_owner;
+        self._shmem.set_owner(is_owner);
+        self.is_owner = is_owner;
+        previous
+    }
+
     /// Load the current value
     pub fn load(&self, ordering: Ordering) -> i64 {
         // Caller-supplied ordering allows callers in producer/consumer layers

@@ -32,7 +32,7 @@ pub static SHM_RING_ATTACH: LayoutTargetSpec = target(
     "shm-ring-attach",
     BackendKind::Shm,
     "raw_ring",
-    2_000_000_000,
+    500_000,
 );
 pub static SHM_CURSOR_ATTACH: LayoutTargetSpec =
     target("shm-cursor-attach", BackendKind::Shm, "cursor", 500_000);

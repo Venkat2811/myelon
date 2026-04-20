@@ -154,6 +154,24 @@ impl MmapCursor {
         Self::new(config, 0)
     }
 
+    /// Create a new cursor if it does not exist, or attach to the existing one.
+    ///
+    /// This is the mmap equivalent of `SharedCursor::new_or_attach` and is required
+    /// for restart paths where a logical consumer must reattach to its existing
+    /// sequence cursor instead of truncating it back to the initial value.
+    pub fn new_or_attach(mut config: MmapCursorConfig, initial_value: i64) -> MultiProcessResult<Self> {
+        if config.path.exists() {
+            config.create = false;
+            return Self::attach(config);
+        }
+        Self::new(config, initial_value)
+    }
+
+    /// Return whether this mapping created the backing file.
+    pub fn is_owner(&self) -> bool {
+        self.is_owner
+    }
+
     /// Load the current value.
     pub fn load(&self, ordering: Ordering) -> i64 {
         unsafe { self.cursor_ptr.as_ref().atomic.load(ordering) }

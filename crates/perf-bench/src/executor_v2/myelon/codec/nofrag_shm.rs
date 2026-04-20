@@ -9,10 +9,6 @@
 //! Run: cargo bench -p myelon-bench --bench codec_nofrag_shm
 //! Single batch: cargo bench -p myelon-bench --bench codec_nofrag_shm -- --batch 256
 
-use disruptor_mp::{
-    build_shared_single_producer, CoordinationMode, SharedDisruptorBuilder, SharedMemoryConfig,
-};
-use myelon::codec::Codec;
 use crate::codec_payloads::{
     checksum_payloads, make_payloads, BincodeBatch, FlatbufBatch, RkyvBatch,
 };
@@ -21,6 +17,10 @@ use crate::events::{format_throughput, nanos_now};
 use crate::harness::{self, ConsumerOutput, IpcBenchmark, ProducerOutput, ScenarioChildren};
 use crate::latency::LatencyRecorder;
 use crate::reporting::{self, BenchReport};
+use disruptor_mp::{
+    build_shared_single_producer, CoordinationMode, SharedDisruptorBuilder, SharedMemoryConfig,
+};
+use myelon::codec::Codec;
 use std::env;
 use std::hint::black_box;
 use std::time::{Duration, Instant};
@@ -526,7 +526,6 @@ impl IpcBenchmark for Scenario {
             lat_str,
         );
     }
-
 }
 
 const CHILD_ROLES: &[harness::ChildRole] = &[

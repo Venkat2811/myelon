@@ -5,8 +5,8 @@ impl ReportBundle {
         let mut csv = String::from(
             "scenario,backend,layer,codec,mode,strategy,msg_bytes,payload_bytes,buffer,consumers,\
              coordination,discovery,zero_copy,framing,prod_ops,cons_ops,mbps,cons_min_ops,\
-             cons_max_ops,cons_total_ops,checksum_total,pct_raw,speedup_vs_bincode,hw_limit_gbps,\
-             hw_efficiency_pct,\
+             cons_max_ops,cons_total_ops,checksum_total,pct_raw,speedup_vs_bincode,access_avg_ns,\
+             access_vs_decode_speedup,alloc_count,alloc_bytes,hw_limit_gbps,hw_efficiency_pct,\
              p50_ns,p99_ns,p999_ns,p9999_ns,p99999_ns,verified,layout_avg_ns,layout_budget_ns,\
              layout_pass,layout_iterations\n",
         );
@@ -72,6 +72,26 @@ impl ReportBundle {
                             .unwrap_or_default(),
                         outcome
                             .derived
+                            .access_avg_ns
+                            .map(|value| format!("{value:.3}"))
+                            .unwrap_or_default(),
+                        outcome
+                            .derived
+                            .access_vs_decode_speedup
+                            .map(|value| format!("{value:.4}"))
+                            .unwrap_or_default(),
+                        outcome
+                            .derived
+                            .alloc_count
+                            .map(|value| value.to_string())
+                            .unwrap_or_default(),
+                        outcome
+                            .derived
+                            .alloc_bytes
+                            .map(|value| value.to_string())
+                            .unwrap_or_default(),
+                        outcome
+                            .derived
                             .hw_bandwidth_limit_gbps
                             .map(|value| format!("{value:.3}"))
                             .unwrap_or_default(),
@@ -110,6 +130,10 @@ impl ReportBundle {
                         discovery,
                         zero_copy,
                         framing,
+                        String::new(),
+                        String::new(),
+                        String::new(),
+                        String::new(),
                         String::new(),
                         String::new(),
                         String::new(),

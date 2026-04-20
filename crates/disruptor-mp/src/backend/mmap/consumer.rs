@@ -2,6 +2,7 @@
 
 use crate::{MmapCursor, MmapRingBuffer, MmapTransportLayout, MultiProcessResult};
 use disruptor_core::Sequence;
+use std::ops::Deref;
 use std::sync::atomic::Ordering;
 
 /// Consumer for the mmap transport.
@@ -12,6 +13,49 @@ pub struct MmapConsumer<E> {
     consumer_id: String,
     last_processed_sequence: Sequence,
     readiness_cursor: Option<MmapCursor>,
+}
+
+pub struct MmapConsumerLease<'a, E>
+where
+    E: Copy + Default,
+{
+    consumer: &'a mut MmapConsumer<E>,
+    sequence: Sequence,
+    event_ptr: *const E,
+}
+
+impl<E> MmapConsumerLease<'_, E>
+where
+    E: Copy + Default,
+{
+    pub fn sequence(&self) -> Sequence {
+        self.sequence
+    }
+}
+
+impl<E> Deref for MmapConsumerLease<'_, E>
+where
+    E: Copy + Default,
+{
+    type Target = E;
+
+    fn deref(&self) -> &Self::Target {
+        // Safety: the lease keeps the consumer sequence unpublished until drop,
+        // so the producer cannot reuse the backing ring slot.
+        unsafe { &*self.event_ptr }
+    }
+}
+
+impl<E> Drop for MmapConsumerLease<'_, E>
+where
+    E: Copy + Default,
+{
+    fn drop(&mut self) {
+        self.consumer
+            .consumer_sequence
+            .store(self.sequence, Ordering::Release);
+        self.consumer.last_processed_sequence = self.sequence;
+    }
 }
 
 impl<E> MmapConsumer<E>
@@ -31,7 +75,8 @@ where
         ))?;
         let producer_sequence = MmapCursor::attach(layout.producer_cursor_config(false))?;
         let consumer_sequence =
-            MmapCursor::new(layout.consumer_cursor_config(consumer_id, true)?, -1)?;
+            MmapCursor::new_or_attach(layout.consumer_cursor_config(consumer_id, true)?, -1)?;
+        let is_new_consumer = consumer_sequence.is_owner();
         let readiness_cursor = MmapCursor::attach(layout.readiness_cursor_config(false)).ok();
 
         let mut consumer = Self {
@@ -44,7 +89,9 @@ where
         };
 
         consumer.last_processed_sequence = consumer.consumer_sequence.load(Ordering::Acquire);
-        consumer.signal_readiness();
+        if is_new_consumer {
+            consumer.signal_readiness();
+        }
         Ok(consumer)
     }
 
@@ -77,6 +124,22 @@ where
         Some((next_sequence, event))
     }
 
+    /// Try to lease the next available event without copying it out of the ring slot.
+    pub fn try_consume_next_leased(&mut self) -> Option<MmapConsumerLease<'_, E>> {
+        let producer_sequence = self.producer_sequence.load(Ordering::Acquire);
+        let next_sequence = self.last_processed_sequence + 1;
+        if next_sequence > producer_sequence {
+            return None;
+        }
+
+        let event_ptr = self.ring_buffer.get(next_sequence) as *const E;
+        Some(MmapConsumerLease {
+            consumer: self,
+            sequence: next_sequence,
+            event_ptr,
+        })
+    }
+
     /// Process all currently available events.
     pub fn process_available<F>(&mut self, mut processor: F) -> usize
     where
@@ -95,6 +158,23 @@ where
         loop {
             if let Some(result) = self.try_consume_next() {
                 return result;
+            }
+            std::hint::spin_loop();
+        }
+    }
+
+    /// Block until one event is available, then lease it.
+    pub fn consume_next_leased(&mut self) -> MmapConsumerLease<'_, E> {
+        loop {
+            let producer_sequence = self.producer_sequence.load(Ordering::Acquire);
+            let next_sequence = self.last_processed_sequence + 1;
+            if next_sequence <= producer_sequence {
+                let event_ptr = self.ring_buffer.get(next_sequence) as *const E;
+                return MmapConsumerLease {
+                    consumer: self,
+                    sequence: next_sequence,
+                    event_ptr,
+                };
             }
             std::hint::spin_loop();
         }

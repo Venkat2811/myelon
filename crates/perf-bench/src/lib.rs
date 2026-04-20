@@ -3,6 +3,7 @@
 //! This crate provides multiprocess coordination, event types, payload
 //! generators, and reporting utilities used by all bench files.
 
+pub mod allocation;
 pub mod bench_log;
 pub mod codec_bench;
 pub mod codec_payloads;

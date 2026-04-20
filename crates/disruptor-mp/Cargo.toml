@@ -12,6 +12,10 @@ keywords      = ["disruptor", "ringbuffer", "message", "mpmc"]
 [lib]
 name = "disruptor_mp"
 
+[features]
+default = []
+dst = ["dep:dst-fixtures"]
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 # ============================================================================
@@ -29,6 +33,7 @@ once_cell = "1.19"
 shared_memory = { version = "0.12.4" }
 memmap2       = { version = "0.9.5" }
 libc          = { version = "0.2.173" }
+dst-fixtures  = { path = "../dst-fixtures", optional = true }
 
 # ============================================================================
 # PLATFORM-SPECIFIC DEPENDENCIES

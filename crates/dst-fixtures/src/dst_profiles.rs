@@ -134,10 +134,15 @@ const READINESS_ASSERTIONS: &[ProfileAssertion] = &[
     ProfileAssertion::NoStaleOverwrite,
 ];
 
-const PROD_BEFORE_TESTS: &[&str] = &["true_multiprocess_spsc_wraparound_and_startup_race"];
+const PROD_BEFORE_TESTS: &[&str] = &[
+    "dst_failure_class_producer_before_consumers_shm",
+    "dst_failure_class_producer_before_consumers_mmap",
+    "dst_failure_class_producer_before_consumers_shm_broadcast",
+];
 const LATE_CONSUMER_TESTS: &[&str] = &[
-    "true_multiprocess_spsc_wraparound_and_startup_race",
-    "true_multiprocess_startup_determinism_loop",
+    "dst_failure_class_late_consumer_attach_mmap",
+    "dst_failure_class_late_consumer_attach_shm",
+    "dst_failure_class_late_consumer_attach_shm_broadcast",
 ];
 const CREATE_ATTACH_TESTS: &[&str] = &[
     "true_multiprocess_startup_determinism_loop",

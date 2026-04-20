@@ -514,6 +514,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "dst-runner"
+version = "0.1.0"
+dependencies = [
+ "disruptor-mp",
+ "dst-fixtures",
+ "libc",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "either"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -809,11 +821,14 @@ dependencies = [
 name = "myelon"
 version = "0.1.0"
 dependencies = [
+ "bincode",
  "disruptor-mp",
  "dst-fixtures",
+ "dst-runner",
  "flatbuffers",
  "rkyv",
  "serde",
+ "serde_json",
  "trybuild",
 ]
 

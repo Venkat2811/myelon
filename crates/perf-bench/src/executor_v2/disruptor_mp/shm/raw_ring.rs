@@ -8,10 +8,6 @@
 //! Run:   cargo bench -p myelon-bench --bench raw_ring_shm
 //! Signal only: cargo bench -p myelon-bench --bench raw_ring_shm -- --class signal
 
-use disruptor_mp::{
-    attach_shared_consumer, build_shared_single_producer, AutoWaitStrategy, CoordinationMode,
-    SharedConsumer, SharedDisruptorBuilder, SharedMemoryConfig,
-};
 use crate::coordination::BenchmarkCoordination;
 use crate::events::nanos_now;
 use crate::harness::{self, IpcBenchmark, ScenarioChildren};
@@ -19,6 +15,10 @@ use crate::latency::LatencyRecorder;
 use crate::report_v2::BackendKind;
 use crate::reporting::{self, BenchReport};
 use crate::scenario_v2::raw_ring::{RawRingScenarioSpec, RawRingSelection};
+use disruptor_mp::{
+    attach_shared_consumer, build_shared_single_producer, AutoWaitStrategy, CoordinationMode,
+    SharedConsumer, SharedDisruptorBuilder, SharedMemoryConfig,
+};
 use std::time::{Duration, Instant};
 
 const DISCOVERY_SCAN_SLEEP: Duration = Duration::from_millis(150);
@@ -435,8 +435,12 @@ fn multi_signal_consumer() -> Result<(), Box<dyn std::error::Error>> {
     let warmup = harness::read_env_u64("BENCH_WARMUP", 100_000);
 
     let consumer_name = multi_consumer_id(consumer_id);
-    let mut consumer =
-        attach_consumer_with_timeout::<SignalEvent>(&segment, buffer, &consumer_name, Duration::from_secs(15))?;
+    let mut consumer = attach_consumer_with_timeout::<SignalEvent>(
+        &segment,
+        buffer,
+        &consumer_name,
+        Duration::from_secs(15),
+    )?;
 
     let warmup_deadline = harness::spin_deadline();
     let mut warmup_count = 0u64;
@@ -458,10 +462,7 @@ fn multi_signal_consumer() -> Result<(), Box<dyn std::error::Error>> {
             break;
         }
         if warmup_count + consumed == before_progress {
-            harness::check_deadline(
-                warmup_deadline,
-                "raw_ring_shm multi_signal_consumer warmup",
-            );
+            harness::check_deadline(warmup_deadline, "raw_ring_shm multi_signal_consumer warmup");
             std::hint::spin_loop();
         }
     }
@@ -580,8 +581,12 @@ fn multi_message_consumer() -> Result<(), Box<dyn std::error::Error>> {
     let record_latency = harness::read_env_usize("BENCH_RECORD_LATENCY", 0) == 1;
 
     let consumer_name = multi_consumer_id(consumer_id);
-    let mut consumer =
-        attach_consumer_with_timeout::<MessageEvent>(&segment, buffer, &consumer_name, Duration::from_secs(15))?;
+    let mut consumer = attach_consumer_with_timeout::<MessageEvent>(
+        &segment,
+        buffer,
+        &consumer_name,
+        Duration::from_secs(15),
+    )?;
 
     // Warmup
     let warmup_deadline = harness::spin_deadline();
@@ -800,7 +805,6 @@ impl IpcBenchmark for Scenario {
             .filter_map(|entry| entry.latency.clone())
             .max_by_key(|stats| stats.p99_ns)
     }
-
 }
 
 // ============================================================

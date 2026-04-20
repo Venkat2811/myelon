@@ -138,6 +138,10 @@ pub struct VerificationMetrics {
 pub struct DerivedMetrics {
     pub pct_of_raw_ring: Option<f64>,
     pub speedup_vs_bincode: Option<f64>,
+    pub access_avg_ns: Option<f64>,
+    pub access_vs_decode_speedup: Option<f64>,
+    pub alloc_count: Option<u64>,
+    pub alloc_bytes: Option<u64>,
     pub hw_bandwidth_limit_gbps: Option<f64>,
     pub hw_efficiency_pct: Option<f64>,
 }

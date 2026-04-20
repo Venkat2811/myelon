@@ -75,6 +75,14 @@ pub struct BenchResults {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub speedup_vs_bincode: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access_avg_ns: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access_vs_decode_speedup: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alloc_count: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alloc_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hw_bandwidth_limit_gbps: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hw_efficiency_pct: Option<f64>,
@@ -443,6 +451,10 @@ pub fn make_result(spec: BenchResultSpec) -> BenchResult {
             phase_timing: None,
             pct_of_raw_ring: None,
             speedup_vs_bincode: None,
+            access_avg_ns: None,
+            access_vs_decode_speedup: None,
+            alloc_count: None,
+            alloc_bytes: None,
             hw_bandwidth_limit_gbps: None,
             hw_efficiency_pct: None,
             per_consumer: Vec::new(),

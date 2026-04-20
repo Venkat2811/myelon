@@ -148,8 +148,8 @@ results:
 	@mkdir -p $(OUT_DIR)
 	@echo "=== Full Benchmark Matrix ==="
 	@echo "Output: $(OUT_DIR)/"
-	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/raw_ring_shm.json $(BENCH) --bench raw_ring_shm
-	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/raw_ring_mmap.json $(BENCH) --bench raw_ring_mmap
+	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/raw_ring_shm.json $(BENCH) --bench raw_ring_shm -- --timeout 300
+	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/raw_ring_mmap.json $(BENCH) --bench raw_ring_mmap -- --timeout 300
 	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/framed_shm.json $(BENCH) --bench framed_shm
 	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/framed_mmap.json $(BENCH) --bench framed_mmap
 	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/codec_e2e_shm.json $(BENCH) --bench codec_e2e_shm

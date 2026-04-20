@@ -85,6 +85,14 @@ fn throughput_markdown(report: &ReportBundle) -> String {
         mode: String,
         #[tabled(rename = "Consumers")]
         consumers: usize,
+        #[tabled(rename = "Access")]
+        access_avg: String,
+        #[tabled(rename = "Access x")]
+        access_speedup: String,
+        #[tabled(rename = "Allocs")]
+        alloc_count: String,
+        #[tabled(rename = "Alloc bytes")]
+        alloc_bytes: String,
         #[tabled(rename = "Prod ops/s")]
         prod_ops: String,
         #[tabled(rename = "Cons ops/s")]
@@ -114,6 +122,26 @@ fn throughput_markdown(report: &ReportBundle) -> String {
                     .unwrap_or_else(|| "-".to_string()),
                 mode: measurement_label(scenario),
                 consumers: scenario.config.workload.num_consumers,
+                access_avg: outcome
+                    .derived
+                    .access_avg_ns
+                    .map(format_avg_ns)
+                    .unwrap_or_else(|| "-".to_string()),
+                access_speedup: outcome
+                    .derived
+                    .access_vs_decode_speedup
+                    .map(|value| format!("{value:.1}x"))
+                    .unwrap_or_else(|| "-".to_string()),
+                alloc_count: outcome
+                    .derived
+                    .alloc_count
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "-".to_string()),
+                alloc_bytes: outcome
+                    .derived
+                    .alloc_bytes
+                    .map(format_alloc_bytes)
+                    .unwrap_or_else(|| "-".to_string()),
                 prod_ops: crate::events::format_throughput(outcome.producer.throughput_ops_sec),
                 cons_ops: crate::events::format_throughput(
                     outcome.consumers.average_throughput_ops_sec,
@@ -171,5 +199,23 @@ fn measurement_label(scenario: &super::model::ScenarioReport) -> String {
         super::model::MeasurementKind::LayoutValidation => "layout_validation".to_string(),
         super::model::MeasurementKind::CoAware { target_rate } => format!("co_aware@{target_rate}"),
         super::model::MeasurementKind::Unknown(other) => other.clone(),
+    }
+}
+
+fn format_avg_ns(value: f64) -> String {
+    if value < 1_000.0 {
+        format!("{value:.1}ns")
+    } else {
+        crate::latency::format_ns(value.round() as u64)
+    }
+}
+
+fn format_alloc_bytes(bytes: u64) -> String {
+    if bytes >= 1_000_000 {
+        format!("{:.1}MB", bytes as f64 / 1_000_000.0)
+    } else if bytes >= 1_000 {
+        format!("{:.1}KB", bytes as f64 / 1_000.0)
+    } else {
+        format!("{bytes}B")
     }
 }

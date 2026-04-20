@@ -100,6 +100,11 @@ name = "myelon_framed_sweep"
 path = "benches/sweep/myelon_framed_sweep.rs"
 harness = false
 
+[[bench]]
+name = "typed_zero_copy_sweep"
+path = "benches/sweep/typed_zero_copy_sweep.rs"
+harness = false
+
 # --- cross-cutting ---
 
 [[bench]]

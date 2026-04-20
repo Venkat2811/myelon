@@ -78,6 +78,14 @@ fn render_throughput_summary(report: &ReportBundle) -> String {
         codec: String,
         #[tabled(rename = "Cons")]
         consumers: usize,
+        #[tabled(rename = "Access")]
+        access_avg: String,
+        #[tabled(rename = "Access x")]
+        access_speedup: String,
+        #[tabled(rename = "Allocs")]
+        alloc_count: String,
+        #[tabled(rename = "Alloc bytes")]
+        alloc_bytes: String,
         #[tabled(rename = "Prod ops/s")]
         prod_ops: String,
         #[tabled(rename = "Cons ops/s")]
@@ -119,6 +127,26 @@ fn render_throughput_summary(report: &ReportBundle) -> String {
                     .map(codec_label)
                     .unwrap_or_else(|| "-".to_string()),
                 consumers: scenario.config.workload.num_consumers,
+                access_avg: outcome
+                    .derived
+                    .access_avg_ns
+                    .map(format_avg_ns)
+                    .unwrap_or_else(|| "-".to_string()),
+                access_speedup: outcome
+                    .derived
+                    .access_vs_decode_speedup
+                    .map(|value| format!("{value:.1}x"))
+                    .unwrap_or_else(|| "-".to_string()),
+                alloc_count: outcome
+                    .derived
+                    .alloc_count
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "-".to_string()),
+                alloc_bytes: outcome
+                    .derived
+                    .alloc_bytes
+                    .map(human_alloc_bytes)
+                    .unwrap_or_else(|| "-".to_string()),
                 prod_ops: format_throughput(outcome.producer.throughput_ops_sec),
                 cons_ops: format_throughput(outcome.consumers.average_throughput_ops_sec),
                 p50: latency(|stats| stats.p50_ns),
@@ -151,9 +179,27 @@ fn codec_label(codec: &CodecKind) -> String {
     }
 }
 
+fn format_avg_ns(value: f64) -> String {
+    if value < 1_000.0 {
+        format!("{value:.1}ns")
+    } else {
+        format_ns(value.round() as u64)
+    }
+}
+
+fn human_alloc_bytes(bytes: u64) -> String {
+    if bytes >= 1_000_000 {
+        format!("{:.1}MB", bytes as f64 / 1_000_000.0)
+    } else if bytes >= 1_000 {
+        format!("{:.1}KB", bytes as f64 / 1_000.0)
+    } else {
+        format!("{bytes}B")
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::report_v2::{LayoutTargetMeasurement, ReportBundle};
+    use crate::report_v2::{LayoutTargetMeasurement, ReportBundle, RunMetadata};
     use crate::scenario_v2::layout;
 
     #[test]
@@ -169,5 +215,84 @@ mod tests {
         let table = report.render_summary_table();
         assert!(table.contains("typed-shm-consumer-attach"));
         assert!(table.contains("PASS"));
+    }
+
+    #[test]
+    fn renders_access_columns_in_summary_table() {
+        let report = ReportBundle {
+            metadata: RunMetadata::capture(),
+            scenarios: vec![crate::report_v2::ScenarioReport {
+                identity: crate::report_v2::ScenarioIdentity {
+                    benchmark_id: "myelon-bench/typed_zero_copy_sweep/demo".into(),
+                    suite: "myelon-bench".into(),
+                    benchmark: "typed_zero_copy_sweep".into(),
+                    family: crate::report_v2::ScenarioFamily::MyelonLayerSweep,
+                    scenario: "typed_zero_copy_rkyv_shm_1KB_1p1c".into(),
+                    backend: crate::report_v2::BackendKind::Shm,
+                    layer: "typed_zero_copy".into(),
+                    codec: Some(crate::report_v2::CodecKind::Rkyv),
+                },
+                config: crate::report_v2::ScenarioConfig {
+                    measurement: crate::report_v2::MeasurementKind::MaxThroughput,
+                    transport: crate::report_v2::model::TransportSpec {
+                        wait_strategy: crate::report_v2::WaitStrategyKind::BusySpin,
+                        coordination: None,
+                        discovery: None,
+                        framing: None,
+                        zero_copy: Some(crate::report_v2::ZeroCopyKind::Enabled),
+                    },
+                    workload: crate::report_v2::model::WorkloadConfig {
+                        message_size_bytes: 1024,
+                        payload_bytes: 1024,
+                        buffer_depth: 1024,
+                        num_messages: 1000,
+                        warmup_messages: 100,
+                        num_producers: 1,
+                        num_consumers: 1,
+                        batch_size: Some(8),
+                    },
+                },
+                outcome: crate::report_v2::ScenarioOutcome::Throughput(
+                    crate::report_v2::ThroughputOutcome {
+                        producer: crate::report_v2::ProducerMetrics {
+                            throughput_ops_sec: 1000.0,
+                            bandwidth_bytes_sec: None,
+                            data_rate_gbps: None,
+                            data_rate_mbps: 1.0,
+                        },
+                        consumers: crate::report_v2::ConsumerAggregate {
+                            average_throughput_ops_sec: 1000.0,
+                            min_throughput_ops_sec: None,
+                            max_throughput_ops_sec: None,
+                            total_throughput_ops_sec: None,
+                            average_bandwidth_bytes_sec: None,
+                            average_data_rate_gbps: None,
+                            checksum_total: None,
+                        },
+                        per_consumer: Vec::new(),
+                        verification: crate::report_v2::VerificationMetrics {
+                            passed: true,
+                            messages_processed: 1000,
+                        },
+                        latency: None,
+                        phase_timing: None,
+                        derived: crate::report_v2::DerivedMetrics {
+                            access_avg_ns: Some(123.4),
+                            access_vs_decode_speedup: Some(5.6),
+                            alloc_count: Some(0),
+                            alloc_bytes: Some(0),
+                            ..Default::default()
+                        },
+                    },
+                ),
+                metadata: crate::report_v2::RunMetadata::capture(),
+            }],
+        };
+        let table = report.render_summary_table();
+        assert!(table.contains("Access"));
+        assert!(table.contains("123.4ns"));
+        assert!(table.contains("5.6x"));
+        assert!(table.contains("Allocs"));
+        assert!(table.contains("0B"));
     }
 }

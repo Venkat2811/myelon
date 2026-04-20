@@ -3,8 +3,10 @@
 //! Eliminates 5 copies of TestPayload + make_payloads + encode/access functions
 //! from codec/shm, codec/mmap, codec/nofrag_shm, sweep/myelon_layers, sweep/nofrag_all.
 
+use crate::allocation::measure_allocations;
 use myelon::codec::{Codec, CodecError, ZeroCopyCodec};
 use std::hint::black_box;
+use std::time::Instant;
 
 /// Common benchmark payload — mimics a Competitor Sequence with token_ids and block_table.
 #[derive(
@@ -292,6 +294,137 @@ pub fn encoded_len(codec: &str, payloads: &[TestPayload]) -> usize {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AccessTelemetry {
+    pub access_avg_ns: f64,
+    pub decode_avg_ns: f64,
+    pub access_vs_decode_speedup: f64,
+    pub access_alloc_count: u64,
+    pub access_alloc_bytes: u64,
+    pub decode_alloc_count: u64,
+    pub decode_alloc_bytes: u64,
+}
+
+pub fn measure_zero_copy_telemetry(codec: &str, payloads: &[TestPayload]) -> AccessTelemetry {
+    match codec {
+        "rkyv" => measure_rkyv_zero_copy_telemetry(payloads),
+        "flatbuf" => measure_flatbuf_zero_copy_telemetry(payloads),
+        other => panic!("unsupported zero-copy telemetry codec '{other}'"),
+    }
+}
+
+fn timing_iterations(encoded_len: usize) -> usize {
+    if encoded_len <= 4 * 1024 {
+        50_000
+    } else if encoded_len <= 64 * 1024 {
+        10_000
+    } else if encoded_len <= 256 * 1024 {
+        2_000
+    } else {
+        500
+    }
+}
+
+fn warmup_iterations(iterations: usize) -> usize {
+    (iterations / 10).clamp(100, 5_000)
+}
+
+fn measure_rkyv_zero_copy_telemetry(payloads: &[TestPayload]) -> AccessTelemetry {
+    let encoded = RkyvBatch(payloads.to_vec()).encode().expect("rkyv encode");
+    let bytes = encoded.as_slice();
+    let iterations = timing_iterations(bytes.len());
+    let warmup = warmup_iterations(iterations);
+
+    for _ in 0..warmup {
+        let archived = RkyvBatch::access(bytes).expect("rkyv access");
+        black_box(checksum_archived_rkyv(archived));
+        let decoded = RkyvBatch::decode(bytes).expect("rkyv decode");
+        black_box(checksum_payloads(&decoded.0));
+    }
+
+    let (_, access_alloc) = measure_allocations(|| {
+        let archived = RkyvBatch::access(bytes).expect("rkyv access");
+        black_box(checksum_archived_rkyv(archived));
+    });
+    let (_, decode_alloc) = measure_allocations(|| {
+        let decoded = RkyvBatch::decode(bytes).expect("rkyv decode");
+        black_box(checksum_payloads(&decoded.0));
+    });
+
+    let start = Instant::now();
+    for _ in 0..iterations {
+        let archived = RkyvBatch::access(bytes).expect("rkyv access");
+        black_box(checksum_archived_rkyv(archived));
+    }
+    let access_avg_ns = start.elapsed().as_nanos() as f64 / iterations as f64;
+
+    let start = Instant::now();
+    for _ in 0..iterations {
+        let decoded = RkyvBatch::decode(bytes).expect("rkyv decode");
+        black_box(checksum_payloads(&decoded.0));
+    }
+    let decode_avg_ns = start.elapsed().as_nanos() as f64 / iterations as f64;
+
+    AccessTelemetry {
+        access_avg_ns,
+        decode_avg_ns,
+        access_vs_decode_speedup: decode_avg_ns / access_avg_ns,
+        access_alloc_count: access_alloc.alloc_count,
+        access_alloc_bytes: access_alloc.alloc_bytes,
+        decode_alloc_count: decode_alloc.alloc_count,
+        decode_alloc_bytes: decode_alloc.alloc_bytes,
+    }
+}
+
+fn measure_flatbuf_zero_copy_telemetry(payloads: &[TestPayload]) -> AccessTelemetry {
+    let encoded = FlatbufBatch(payloads.to_vec())
+        .encode()
+        .expect("flatbuf encode");
+    let bytes = encoded.as_slice();
+    let iterations = timing_iterations(bytes.len());
+    let warmup = warmup_iterations(iterations);
+
+    for _ in 0..warmup {
+        let archived = FlatbufBatch::access(bytes).expect("flatbuf access");
+        black_box(checksum_flatbuf_root(archived));
+        let decoded = FlatbufBatch::decode(bytes).expect("flatbuf decode");
+        black_box(checksum_payloads(&decoded.0));
+    }
+
+    let (_, access_alloc) = measure_allocations(|| {
+        let archived = FlatbufBatch::access(bytes).expect("flatbuf access");
+        black_box(checksum_flatbuf_root(archived));
+    });
+    let (_, decode_alloc) = measure_allocations(|| {
+        let decoded = FlatbufBatch::decode(bytes).expect("flatbuf decode");
+        black_box(checksum_payloads(&decoded.0));
+    });
+
+    let start = Instant::now();
+    for _ in 0..iterations {
+        let archived = FlatbufBatch::access(bytes).expect("flatbuf access");
+        black_box(checksum_flatbuf_root(archived));
+    }
+    let access_avg_ns = start.elapsed().as_nanos() as f64 / iterations as f64;
+
+    let start = Instant::now();
+    for _ in 0..iterations {
+        let decoded = FlatbufBatch::decode(bytes).expect("flatbuf decode");
+        black_box(checksum_payloads(&decoded.0));
+    }
+    let decode_avg_ns = start.elapsed().as_nanos() as f64 / iterations as f64;
+
+    AccessTelemetry {
+        access_avg_ns,
+        decode_avg_ns,
+        access_vs_decode_speedup: decode_avg_ns / access_avg_ns,
+        access_alloc_count: access_alloc.alloc_count,
+        access_alloc_bytes: access_alloc.alloc_bytes,
+        decode_alloc_count: decode_alloc.alloc_count,
+        decode_alloc_bytes: decode_alloc.alloc_bytes,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -356,6 +489,30 @@ mod tests {
         assert_eq!(payloads.len(), 8);
         assert_eq!(payloads[0].token_ids.len(), 128);
         assert_eq!(payloads[0].block_table.len(), 8);
+    }
+
+    #[test]
+    fn zero_copy_telemetry_reports_speedup_for_rkyv() {
+        let telemetry = measure_zero_copy_telemetry("rkyv", &make_payloads(8));
+        assert!(telemetry.access_avg_ns > 0.0);
+        assert!(telemetry.decode_avg_ns > 0.0);
+        assert!(telemetry.access_vs_decode_speedup > 1.0);
+        assert_eq!(telemetry.access_alloc_count, 0);
+        assert_eq!(telemetry.access_alloc_bytes, 0);
+        assert!(telemetry.decode_alloc_count > 0);
+        assert!(telemetry.decode_alloc_bytes > 0);
+    }
+
+    #[test]
+    fn zero_copy_telemetry_reports_speedup_for_flatbuf() {
+        let telemetry = measure_zero_copy_telemetry("flatbuf", &make_payloads(8));
+        assert!(telemetry.access_avg_ns > 0.0);
+        assert!(telemetry.decode_avg_ns > 0.0);
+        assert!(telemetry.access_vs_decode_speedup > 1.0);
+        assert_eq!(telemetry.access_alloc_count, 0);
+        assert_eq!(telemetry.access_alloc_bytes, 0);
+        assert!(telemetry.decode_alloc_count > 0);
+        assert!(telemetry.decode_alloc_bytes > 0);
     }
 
     #[test]

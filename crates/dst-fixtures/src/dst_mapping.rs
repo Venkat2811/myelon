@@ -32,8 +32,16 @@ impl FailureClassCoverage {
     }
 }
 
-const PRODUCER_FIRST_CASES: &[&str] = &["true_multiprocess_spsc_wraparound_and_startup_race"];
-const LATE_CONSUMER_ATTACH_CASES: &[&str] = &["true_multiprocess_spsc_wraparound_and_startup_race"];
+const PRODUCER_FIRST_CASES: &[&str] = &[
+    "dst_failure_class_producer_before_consumers_shm",
+    "dst_failure_class_producer_before_consumers_mmap",
+    "dst_failure_class_producer_before_consumers_shm_broadcast",
+];
+const LATE_CONSUMER_ATTACH_CASES: &[&str] = &[
+    "dst_failure_class_late_consumer_attach_mmap",
+    "dst_failure_class_late_consumer_attach_shm",
+    "dst_failure_class_late_consumer_attach_shm_broadcast",
+];
 const CREATE_ATTACH_CHURN_CASES: &[&str] = &[
     "true_multiprocess_startup_determinism_loop",
     "cursor_new_or_attach_must_attach_existing_segment",

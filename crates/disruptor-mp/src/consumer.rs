@@ -6,6 +6,7 @@
 
 use crate::{SharedCursor, SharedRingBuffer};
 use disruptor_core::Sequence;
+use std::ops::Deref;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
@@ -22,6 +23,46 @@ pub struct SharedConsumer<E> {
     last_processed_sequence: Sequence,
     /// Consumer readiness counter for internal coordination (optional)
     consumers_ready: Option<SharedCursor>,
+}
+
+pub struct SharedConsumerLease<'a, E>
+where
+    E: Copy + Default,
+{
+    consumer: &'a mut SharedConsumer<E>,
+    sequence: Sequence,
+    event_ptr: *const E,
+}
+
+impl<E> SharedConsumerLease<'_, E>
+where
+    E: Copy + Default,
+{
+    pub fn sequence(&self) -> Sequence {
+        self.sequence
+    }
+}
+
+impl<E> Deref for SharedConsumerLease<'_, E>
+where
+    E: Copy + Default,
+{
+    type Target = E;
+
+    fn deref(&self) -> &Self::Target {
+        // Safety: the lease keeps the consumer sequence unpublished until drop,
+        // so the producer cannot reuse the slot backing `event_ptr`.
+        unsafe { &*self.event_ptr }
+    }
+}
+
+impl<E> Drop for SharedConsumerLease<'_, E>
+where
+    E: Copy + Default,
+{
+    fn drop(&mut self) {
+        self.consumer.publish_consumed_sequence(self.sequence);
+    }
 }
 
 impl<E> SharedConsumer<E>
@@ -119,6 +160,20 @@ where
         Some((next_sequence, event))
     }
 
+    /// Try to lease the next available event without copying it out of the ring slot.
+    ///
+    /// The returned lease publishes consumer progress only when dropped, which keeps
+    /// the backing slot valid for the lease lifetime.
+    pub fn try_consume_next_leased(&mut self) -> Option<SharedConsumerLease<'_, E>> {
+        let (next_sequence, _) = self.available_batch_bounds()?;
+        let event_ptr = self.ring_buffer.get(next_sequence) as *const E;
+        Some(SharedConsumerLease {
+            consumer: self,
+            sequence: next_sequence,
+            event_ptr,
+        })
+    }
+
     #[inline]
     fn available_batch_bounds(&self) -> Option<(Sequence, Sequence)> {
         assert!(
@@ -205,8 +260,27 @@ where
             if let Some((seq, event)) = self.try_consume_next() {
                 return (seq, event);
             }
+            #[cfg(feature = "dst")]
+            if dst_fixtures::dst_buggify::buggify(file!(), line!()) {
+                std::thread::yield_now();
+            }
             // High performance: Use spin_loop for maximum throughput
             // This matches the performance of manual polling approach
+            std::hint::spin_loop();
+        }
+    }
+
+    /// Wait for and lease the next event (blocking).
+    pub fn consume_next_leased(&mut self) -> SharedConsumerLease<'_, E> {
+        loop {
+            if let Some((next_sequence, _)) = self.available_batch_bounds() {
+                let event_ptr = self.ring_buffer.get(next_sequence) as *const E;
+                return SharedConsumerLease {
+                    consumer: self,
+                    sequence: next_sequence,
+                    event_ptr,
+                };
+            }
             std::hint::spin_loop();
         }
     }
@@ -221,6 +295,21 @@ where
             }
             // CPU efficient: Use sleep to reduce CPU usage (lower throughput)
             // TODO: Implement proper blocking with futex/condition variables
+            std::thread::sleep(super::wait::SLEEP_CONFIG.consume_sleep_duration());
+        }
+    }
+
+    /// Wait for and lease the next event (blocking with sleep for CPU efficiency).
+    pub fn consume_next_leased_with_sleep(&mut self) -> SharedConsumerLease<'_, E> {
+        loop {
+            if let Some((next_sequence, _)) = self.available_batch_bounds() {
+                let event_ptr = self.ring_buffer.get(next_sequence) as *const E;
+                return SharedConsumerLease {
+                    consumer: self,
+                    sequence: next_sequence,
+                    event_ptr,
+                };
+            }
             std::thread::sleep(super::wait::SLEEP_CONFIG.consume_sleep_duration());
         }
     }
@@ -298,6 +387,11 @@ where
     where
         F: FnMut(&E, Sequence),
     {
+        #[cfg(feature = "dst")]
+        if dst_fixtures::dst_buggify::buggify(file!(), line!()) {
+            return 0;
+        }
+
         let mut processed = 0usize;
 
         while let Some((lower, upper)) = self.available_batch_bounds() {
