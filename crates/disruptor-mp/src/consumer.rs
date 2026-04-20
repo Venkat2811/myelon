@@ -8,7 +8,6 @@ use crate::{SharedCursor, SharedRingBuffer};
 use disruptor_core::Sequence;
 use std::ops::Deref;
 use std::sync::atomic::Ordering;
-use std::time::Duration;
 
 /// Consumer for multi-process disruptor with broadcast semantics
 /// Each consumer maintains its own sequence and sees all events
@@ -98,18 +97,6 @@ where
 
         // Automatically signal readiness if coordination is available
         consumer.signal_readiness();
-
-        // If we couldn't attach initially, try a few more times with delays
-        // This handles the case where the producer creates the coordination structure
-        // after the consumer starts
-        if let (true, Some(name)) = (consumer.consumers_ready.is_none(), base_name.as_ref()) {
-            for attempt in 1..=5 {
-                std::thread::sleep(Duration::from_millis(attempt * 100));
-                if consumer.try_attach_coordination(name) {
-                    break;
-                }
-            }
-        }
 
         consumer
     }

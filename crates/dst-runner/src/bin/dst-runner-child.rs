@@ -1,6 +1,6 @@
 use disruptor_mp::{
     attach_shared_consumer, build_shared_single_producer, MmapConsumer, MmapProducer,
-    MmapTransportLayout,
+    MmapTransportLayout, RequiredConsumerLivenessConfig,
 };
 use dst_fixtures::dst_contract::ProcessRole;
 use dst_runner::{payload_bytes, stable_payload_hash, BackendKind, ChildReport, OracleMessage};
@@ -106,6 +106,38 @@ where
     }
 }
 
+fn required_consumer_liveness_config() -> Option<RequiredConsumerLivenessConfig> {
+    let raw_ids = env::var("DST_REQUIRED_CONSUMER_IDS").ok()?;
+    let required_consumer_ids = raw_ids
+        .split(',')
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    if required_consumer_ids.is_empty() {
+        return None;
+    }
+
+    Some(
+        RequiredConsumerLivenessConfig::new(required_consumer_ids)
+            .with_startup_wait_timeout(Duration::from_millis(parse_env_or(
+                "DST_REQUIRED_STARTUP_WAIT_MS",
+                100u64,
+            )))
+            .with_progress_timeout(Duration::from_millis(parse_env_or(
+                "DST_REQUIRED_PROGRESS_TIMEOUT_MS",
+                20u64,
+            )))
+            .with_progress_check_interval(Duration::from_millis(parse_env_or(
+                "DST_REQUIRED_PROGRESS_CHECK_INTERVAL_MS",
+                1u64,
+            )))
+            .with_shutdown_grace_period(Duration::from_millis(parse_env_or(
+                "DST_REQUIRED_SHUTDOWN_GRACE_MS",
+                200u64,
+            ))),
+    )
+}
+
 fn parse_backend() -> BackendKind {
     match env::var("DST_CHILD_BACKEND")
         .expect("DST_CHILD_BACKEND should be set")
@@ -207,6 +239,9 @@ fn run_shm_producer() -> ChildReport {
     let mut producer = builder
         .build_producer(RawRingEvent::default)
         .expect("shared producer should build");
+    if let Some(config) = required_consumer_liveness_config() {
+        producer.enable_required_consumer_liveness(config);
+    }
 
     let mut messages = Vec::with_capacity(message_count as usize);
     let mut checksum_total = 0u64;
@@ -216,7 +251,13 @@ fn run_shm_producer() -> ChildReport {
         if corrupt_at_sequence == Some(sequence) && payload_size > 0 {
             event.payload[0] ^= 0x5a;
         }
-        producer.publish(|slot| *slot = event);
+        if env::var("DST_REQUIRED_CONSUMER_IDS").is_ok() {
+            producer
+                .publish_managed(|slot| *slot = event)
+                .expect("managed shared publish should succeed");
+        } else {
+            producer.publish(|slot| *slot = event);
+        }
         checksum_total = checksum_total.wrapping_add(oracle.payload_hash);
         messages.push(oracle);
         write_checkpoint(&ChildReport {
@@ -350,6 +391,9 @@ fn run_mmap_producer() -> ChildReport {
     let mut producer =
         MmapProducer::<RawRingEvent>::create(child_layout(), ring_depth, RawRingEvent::default)
             .expect("mmap producer should build");
+    if let Some(config) = required_consumer_liveness_config() {
+        producer.enable_required_consumer_liveness(config);
+    }
     if wait_for_consumers_ready {
         assert!(
             producer.wait_for_consumers_ready(consumer_count as i64, Duration::from_secs(15)),
@@ -365,7 +409,13 @@ fn run_mmap_producer() -> ChildReport {
         if corrupt_at_sequence == Some(sequence) && payload_size > 0 {
             event.payload[0] ^= 0x5a;
         }
-        producer.publish(|slot| *slot = event);
+        if env::var("DST_REQUIRED_CONSUMER_IDS").is_ok() {
+            producer
+                .publish_managed(|slot| *slot = event)
+                .expect("managed mmap publish should succeed");
+        } else {
+            producer.publish(|slot| *slot = event);
+        }
         checksum_total = checksum_total.wrapping_add(oracle.payload_hash);
         messages.push(oracle);
         write_checkpoint(&ChildReport {

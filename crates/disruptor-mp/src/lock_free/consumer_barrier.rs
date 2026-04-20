@@ -213,6 +213,17 @@ impl SharedConsumerBarrier {
         }
     }
 
+    /// Return the latest visible sequence for a known consumer id.
+    pub fn consumer_sequence(&mut self, consumer_id: &str) -> Option<Sequence> {
+        if !self.consumer_cursors.contains_key(consumer_id) && !self.discover_consumer_id(consumer_id)
+        {
+            return None;
+        }
+        self.consumer_cursors
+            .get(consumer_id)
+            .map(|cursor| cursor.load(Ordering::Acquire))
+    }
+
     /// Access readiness counter used during startup coordination.
     pub fn get_consumer_readiness_counter(&self) -> Option<&SharedCursor> {
         self.consumers_ready.as_ref()

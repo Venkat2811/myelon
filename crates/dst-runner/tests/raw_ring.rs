@@ -2,13 +2,35 @@ use dst_fixtures::dst_contract::FailureClass;
 use dst_fixtures::dst_buggify::ScopedBuggify;
 use dst_runner::{
     BackendKind, DstConfig, DstProperty, DstRunner, DstRunnerError, OracleViolation,
-    RawRingHarness, TransportKind,
+    RawRingHarness, RequiredConsumerLivenessPolicy, TransportKind,
 };
+use std::sync::{LazyLock, Mutex, MutexGuard};
+use std::ops::Deref;
 use std::time::Duration;
 
-fn harness() -> RawRingHarness {
-    RawRingHarness::new(env!("CARGO_BIN_EXE_dst-runner-child"))
-        .with_timeout(Duration::from_secs(45))
+static RAW_RING_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+struct LockedHarness {
+    _guard: MutexGuard<'static, ()>,
+    inner: RawRingHarness,
+}
+
+impl Deref for LockedHarness {
+    type Target = RawRingHarness;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+fn harness() -> LockedHarness {
+    LockedHarness {
+        _guard: RAW_RING_TEST_LOCK
+            .lock()
+            .expect("raw-ring dst test lock should not be poisoned"),
+        inner: RawRingHarness::new(env!("CARGO_BIN_EXE_dst-runner-child"))
+            .with_timeout(Duration::from_secs(45)),
+    }
 }
 
 fn fuzz_config(seed: u64, nightly: bool) -> DstConfig {
@@ -75,6 +97,28 @@ fn run_failure_case(
                 "{class:?} should pass for backend {backend:?} with {consumer_count} consumers: {err:?}"
             )
         })
+}
+
+fn required_consumer_policy(shutdown_grace_ms: u64) -> RequiredConsumerLivenessPolicy {
+    RequiredConsumerLivenessPolicy {
+        startup_wait_ms: 200,
+        progress_timeout_ms: 20,
+        progress_check_interval_ms: 1,
+        shutdown_grace_ms,
+        consumer_kill_after_ms: 60,
+        consumer_restart_delay_ms: 80,
+        required_consumer_missing_slots: 0,
+        restart_with_wrong_consumer_id: false,
+    }
+}
+
+fn required_consumer_stress_config(seed: u64, backend: BackendKind) -> DstConfig {
+    DstConfig::raw_ring_from_seed(seed)
+        .with_backend(backend)
+        .with_ring_depth(64)
+        .with_payload_size(128)
+        .with_consumer_count(2)
+        .with_message_count(4096)
 }
 
 #[test]
@@ -369,6 +413,130 @@ fn dst_failure_class_consumer_crash_and_restart_shm() {
     assert!(report
         .assertions
         .sometimes_satisfied("consumer restart executed"));
+}
+
+#[test]
+fn dst_required_consumer_liveness_recovers_same_id_restart_shm() {
+    let config = required_consumer_stress_config(0x1708_2, BackendKind::Shm);
+    let mut runner = DstRunner::with_config(config);
+    let report = runner
+        .run_failure_class_with_required_consumer_liveness(
+            FailureClass::ConsumerCrashAndRestart,
+            TransportKind::RawRing,
+            &harness(),
+            required_consumer_policy(1500),
+        )
+        .expect("same-id restart within grace should pass");
+    assert_eq!(
+        report.failure_class,
+        Some(FailureClass::ConsumerCrashAndRestart)
+    );
+    for consumer in &report.consumers {
+        assert_eq!(consumer.messages.len(), 4096);
+    }
+}
+
+#[test]
+fn dst_required_consumer_liveness_recovers_same_id_restart_mmap() {
+    let config = required_consumer_stress_config(0x1708_3, BackendKind::Mmap);
+    let mut runner = DstRunner::with_config(config);
+    let report = runner
+        .run_failure_class_with_required_consumer_liveness(
+            FailureClass::ConsumerCrashAndRestart,
+            TransportKind::RawRing,
+            &harness(),
+            required_consumer_policy(1500),
+        )
+        .expect("same-id restart within grace should pass");
+    assert_eq!(
+        report.failure_class,
+        Some(FailureClass::ConsumerCrashAndRestart)
+    );
+    for consumer in &report.consumers {
+        assert_eq!(consumer.messages.len(), 4096);
+    }
+}
+
+#[test]
+fn dst_required_consumer_liveness_fails_late_restart_shm() {
+    let config = required_consumer_stress_config(0x1708_4, BackendKind::Shm);
+    let mut runner = DstRunner::with_config(config);
+    let mut policy = required_consumer_policy(20);
+    policy.consumer_kill_after_ms = 200;
+    policy.consumer_restart_delay_ms = 800;
+    let error = runner
+        .run_failure_class_with_required_consumer_liveness(
+            FailureClass::ConsumerCrashAndRestart,
+            TransportKind::RawRing,
+            &harness(),
+            policy,
+        )
+        .expect_err("late restart should fail after grace expires");
+
+    match error {
+        DstRunnerError::ChildFailed { stderr, .. } => {
+            assert!(
+                stderr.contains("Required consumer stall detected")
+                    || stderr.contains("GracefulShutdownTriggered"),
+                "stderr should include required-consumer shutdown context: {stderr}"
+            );
+        }
+        other => panic!("unexpected error: {other:?}"),
+    }
+}
+
+#[test]
+fn dst_required_consumer_liveness_fails_startup_when_required_consumer_never_appears() {
+    let config = required_consumer_stress_config(0x1708_5, BackendKind::Shm);
+    let mut runner = DstRunner::with_config(config);
+    let mut policy = required_consumer_policy(1500);
+    policy.required_consumer_missing_slots = 1;
+    let error = runner
+        .run_property_with_required_consumer_liveness(
+            DstProperty::MessageIntegrity,
+            TransportKind::RawRing,
+            &harness(),
+            policy,
+        )
+        .expect_err("missing required consumer id should fail startup");
+
+    match error {
+        DstRunnerError::ChildFailed { stderr, .. } => {
+            assert!(
+                stderr.contains("StartupTimeout")
+                    || stderr.contains("required consumers did not appear before startup timeout"),
+                "stderr should include startup-timeout context: {stderr}"
+            );
+        }
+        other => panic!("unexpected error: {other:?}"),
+    }
+}
+
+#[test]
+fn dst_required_consumer_liveness_rejects_wrong_id_restart() {
+    let config = required_consumer_stress_config(0x1708_6, BackendKind::Shm);
+    let mut runner = DstRunner::with_config(config);
+    let mut policy = required_consumer_policy(1500);
+    policy.restart_with_wrong_consumer_id = true;
+    let error = runner
+        .run_failure_class_with_required_consumer_liveness(
+            FailureClass::ConsumerCrashAndRestart,
+            TransportKind::RawRing,
+            &harness(),
+            policy,
+        )
+        .expect_err("restart under a different consumer id must not clear the stall");
+
+    match error {
+        DstRunnerError::ChildFailed { stderr, .. } => {
+            assert!(
+                stderr.contains("Required consumer stall detected")
+                    || stderr.contains("GracefulShutdownTriggered"),
+                "stderr should include required-consumer shutdown context: {stderr}"
+            );
+        }
+        other => panic!("unexpected error: {other:?}"),
+    }
 }
 
 #[test]

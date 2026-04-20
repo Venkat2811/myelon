@@ -402,6 +402,8 @@ impl fmt::Display for MmapCursorConfig {
 mod tests {
     use super::*;
     use crate::MissingFreeSlots;
+    use crate::RequiredConsumerError;
+    use crate::RequiredConsumerLivenessConfig;
     use crate::RingBufferFull;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Arc;
@@ -428,6 +430,459 @@ mod tests {
     struct TestEvent {
         sequence: i64,
         data: i64,
+    }
+
+    fn attach_named_consumer(
+        name: &str,
+        buffer_size: usize,
+        consumer_id: &str,
+    ) -> SharedConsumer<TestEvent> {
+        let config = SharedMemoryConfig {
+            name: name.to_string(),
+            buffer_size,
+            element_size: std::mem::size_of::<TestEvent>(),
+            create: false,
+        };
+
+        SharedDisruptorBuilder::new(config)
+            .with_consumer_id(consumer_id)
+            .build_consumer()
+            .unwrap()
+    }
+
+    #[test]
+    fn managed_publish_reports_missing_required_consumer_at_startup() {
+        let name = unique_test_segment("req_cons_start");
+        let buffer_size = 8;
+
+        let mut producer = build_shared_single_producer::<TestEvent>(&name, buffer_size)
+            .enable_discovery(2)
+            .with_coordination(CoordinationMode::Immediate)
+            .build_producer(TestEvent::default)
+            .unwrap();
+        producer.enable_required_consumer_liveness(
+            RequiredConsumerLivenessConfig::new(vec!["c1".into(), "c2".into()])
+                .with_startup_wait_timeout(Duration::from_millis(50))
+                .with_progress_timeout(Duration::from_millis(20))
+                .with_progress_check_interval(Duration::from_millis(1))
+                .with_shutdown_grace_period(Duration::from_millis(10)),
+        );
+
+        let _consumer1 = attach_named_consumer(&name, buffer_size, "c1");
+
+        let error = producer
+            .publish_managed(|event| {
+                event.sequence = 1;
+                event.data = 100;
+            })
+            .expect_err("managed publish should fail when c2 never appears");
+
+        match error {
+            RequiredConsumerError::StartupTimeout { missing } => {
+                assert_eq!(missing, vec!["c2".to_string()]);
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn managed_batch_publish_reports_missing_required_consumer_at_startup() {
+        let name = unique_test_segment("req_cons_batch_start");
+        let buffer_size = 8;
+
+        let mut producer = build_shared_single_producer::<TestEvent>(&name, buffer_size)
+            .enable_discovery(2)
+            .with_coordination(CoordinationMode::Immediate)
+            .build_producer(TestEvent::default)
+            .unwrap();
+        producer.enable_required_consumer_liveness(
+            RequiredConsumerLivenessConfig::new(vec!["c1".into(), "c2".into()])
+                .with_startup_wait_timeout(Duration::from_millis(50))
+                .with_progress_timeout(Duration::from_millis(20))
+                .with_progress_check_interval(Duration::from_millis(1))
+                .with_shutdown_grace_period(Duration::from_millis(10)),
+        );
+
+        let _consumer1 = attach_named_consumer(&name, buffer_size, "c1");
+
+        let error = producer
+            .publish_batch_managed(2, |event, index| {
+                event.sequence = index as i64;
+                event.data = (index as i64) * 10;
+            })
+            .expect_err("managed batch publish should fail when c2 never appears");
+
+        match error {
+            RequiredConsumerError::StartupTimeout { missing } => {
+                assert_eq!(missing, vec!["c2".to_string()]);
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn managed_publish_shuts_down_when_required_consumer_stalls() {
+        let name = unique_test_segment("req_cons_fail");
+        let buffer_size = 4;
+
+        let mut producer = build_shared_single_producer::<TestEvent>(&name, buffer_size)
+            .enable_discovery(2)
+            .with_coordination(CoordinationMode::Immediate)
+            .build_producer(TestEvent::default)
+            .unwrap();
+        producer.enable_required_consumer_liveness(
+            RequiredConsumerLivenessConfig::new(vec!["c1".into(), "c2".into()])
+                .with_startup_wait_timeout(Duration::from_millis(100))
+                .with_progress_timeout(Duration::from_millis(20))
+                .with_progress_check_interval(Duration::from_millis(1))
+                .with_shutdown_grace_period(Duration::from_millis(20)),
+        );
+
+        let stop_consumer1 = Arc::new(AtomicBool::new(false));
+        let stop_consumer1_thread = Arc::clone(&stop_consumer1);
+        let name_for_thread = name.clone();
+        let consumer1_thread = thread::spawn(move || {
+            let mut consumer1 = attach_named_consumer(&name_for_thread, buffer_size, "c1");
+            while !stop_consumer1_thread.load(Ordering::Acquire) {
+                if consumer1.try_consume_next().is_none() {
+                    thread::sleep(Duration::from_millis(1));
+                }
+            }
+        });
+
+        let mut consumer2 = attach_named_consumer(&name, buffer_size, "c2");
+
+        producer
+            .publish_managed(|event| {
+                event.sequence = 0;
+                event.data = 0;
+            })
+            .unwrap();
+        let _ = consumer2.consume_next();
+        drop(consumer2);
+
+        for i in 1..=buffer_size {
+            producer
+                .publish_managed(|event| {
+                    event.sequence = i as i64;
+                    event.data = (i as i64) * 10;
+                })
+                .unwrap();
+        }
+
+        let error = producer
+            .publish_managed(|event| {
+                event.sequence = 99;
+                event.data = 990;
+            })
+            .expect_err("managed publish should fail once c2 stops advancing");
+
+        stop_consumer1.store(true, Ordering::Release);
+        consumer1_thread.join().unwrap();
+
+        match error {
+            RequiredConsumerError::GracefulShutdownTriggered { consumer_id, .. } => {
+                assert_eq!(consumer_id, "c2");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn managed_publish_recovers_when_same_consumer_id_rejoins() {
+        let name = unique_test_segment("req_cons_rejn");
+        let buffer_size = 4;
+
+        let mut producer = build_shared_single_producer::<TestEvent>(&name, buffer_size)
+            .enable_discovery(2)
+            .with_coordination(CoordinationMode::Immediate)
+            .build_producer(TestEvent::default)
+            .unwrap();
+        producer.enable_required_consumer_liveness(
+            RequiredConsumerLivenessConfig::new(vec!["c1".into(), "c2".into()])
+                .with_startup_wait_timeout(Duration::from_millis(100))
+                .with_progress_timeout(Duration::from_millis(20))
+                .with_progress_check_interval(Duration::from_millis(1))
+                .with_shutdown_grace_period(Duration::from_millis(200)),
+        );
+
+        let stop_consumer1 = Arc::new(AtomicBool::new(false));
+        let stop_consumer1_thread = Arc::clone(&stop_consumer1);
+        let name_for_thread = name.clone();
+        let consumer1_thread = thread::spawn(move || {
+            let mut consumer1 = attach_named_consumer(&name_for_thread, buffer_size, "c1");
+            while !stop_consumer1_thread.load(Ordering::Acquire) {
+                if consumer1.try_consume_next().is_none() {
+                    thread::sleep(Duration::from_millis(1));
+                }
+            }
+        });
+
+        let mut consumer2 = attach_named_consumer(&name, buffer_size, "c2");
+
+        producer
+            .publish_managed(|event| {
+                event.sequence = 0;
+                event.data = 0;
+            })
+            .unwrap();
+        let _ = consumer2.consume_next();
+        drop(consumer2);
+
+        for i in 1..=buffer_size {
+            producer
+                .publish_managed(|event| {
+                    event.sequence = i as i64;
+                    event.data = (i as i64) * 10;
+                })
+                .unwrap();
+        }
+
+        let name_for_rejoin = name.clone();
+        let rejoin_thread = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(40));
+            let mut rejoined = attach_named_consumer(&name_for_rejoin, buffer_size, "c2");
+            let deadline = Instant::now() + Duration::from_millis(500);
+            let mut consumed = 0usize;
+            while Instant::now() < deadline && consumed < buffer_size + 2 {
+                if rejoined.try_consume_next().is_some() {
+                    consumed += 1;
+                } else {
+                    thread::sleep(Duration::from_millis(1));
+                }
+            }
+            consumed
+        });
+
+        let sequence = producer
+            .publish_managed(|event| {
+                event.sequence = 99;
+                event.data = 990;
+            })
+            .expect("same-id rejoin should recover before shutdown");
+
+        stop_consumer1.store(true, Ordering::Release);
+        consumer1_thread.join().unwrap();
+        let rejoined_consumed = rejoin_thread.join().unwrap();
+
+        assert!(sequence >= buffer_size as i64);
+        assert!(rejoined_consumed > 0, "rejoined c2 should consume backlog");
+    }
+
+    #[test]
+    fn managed_publish_rejects_different_consumer_id_rejoin() {
+        let name = unique_test_segment("req_cons_diff");
+        let buffer_size = 4;
+
+        let mut producer = build_shared_single_producer::<TestEvent>(&name, buffer_size)
+            .enable_discovery(2)
+            .with_coordination(CoordinationMode::Immediate)
+            .build_producer(TestEvent::default)
+            .unwrap();
+        producer.enable_required_consumer_liveness(
+            RequiredConsumerLivenessConfig::new(vec!["c1".into(), "c2".into()])
+                .with_startup_wait_timeout(Duration::from_millis(100))
+                .with_progress_timeout(Duration::from_millis(20))
+                .with_progress_check_interval(Duration::from_millis(1))
+                .with_shutdown_grace_period(Duration::from_millis(200)),
+        );
+
+        let stop_consumer1 = Arc::new(AtomicBool::new(false));
+        let stop_consumer1_thread = Arc::clone(&stop_consumer1);
+        let name_for_thread = name.clone();
+        let consumer1_thread = thread::spawn(move || {
+            let mut consumer1 = attach_named_consumer(&name_for_thread, buffer_size, "c1");
+            while !stop_consumer1_thread.load(Ordering::Acquire) {
+                if consumer1.try_consume_next().is_none() {
+                    thread::sleep(Duration::from_millis(1));
+                }
+            }
+        });
+
+        let mut consumer2 = attach_named_consumer(&name, buffer_size, "c2");
+        producer
+            .publish_managed(|event| {
+                event.sequence = 0;
+                event.data = 0;
+            })
+            .unwrap();
+        let _ = consumer2.consume_next();
+        drop(consumer2);
+
+        for i in 1..=buffer_size {
+            producer
+                .publish_managed(|event| {
+                    event.sequence = i as i64;
+                    event.data = (i as i64) * 10;
+                })
+                .unwrap();
+        }
+
+        let name_for_wrong_rejoin = name.clone();
+        let wrong_rejoin_thread = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(40));
+            let mut wrong_consumer = attach_named_consumer(&name_for_wrong_rejoin, buffer_size, "c3");
+            let deadline = Instant::now() + Duration::from_millis(500);
+            let mut consumed = 0usize;
+            while Instant::now() < deadline && consumed < buffer_size + 2 {
+                if wrong_consumer.try_consume_next().is_some() {
+                    consumed += 1;
+                } else {
+                    thread::sleep(Duration::from_millis(1));
+                }
+            }
+            consumed
+        });
+
+        let error = producer
+            .publish_managed(|event| {
+                event.sequence = 99;
+                event.data = 990;
+            })
+            .expect_err("wrong-id rejoin must not clear the c2 stall");
+
+        stop_consumer1.store(true, Ordering::Release);
+        consumer1_thread.join().unwrap();
+        let wrong_rejoin_consumed = wrong_rejoin_thread.join().unwrap();
+
+        assert!(
+            wrong_rejoin_consumed > 0,
+            "a new consumer id may still read the broadcast stream"
+        );
+        match error {
+            RequiredConsumerError::GracefulShutdownTriggered { consumer_id, .. } => {
+                assert_eq!(consumer_id, "c2");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn managed_publish_rejoin_after_grace_period_still_fails() {
+        let name = unique_test_segment("req_cons_late");
+        let buffer_size = 4;
+
+        let mut producer = build_shared_single_producer::<TestEvent>(&name, buffer_size)
+            .enable_discovery(2)
+            .with_coordination(CoordinationMode::Immediate)
+            .build_producer(TestEvent::default)
+            .unwrap();
+        producer.enable_required_consumer_liveness(
+            RequiredConsumerLivenessConfig::new(vec!["c1".into(), "c2".into()])
+                .with_startup_wait_timeout(Duration::from_millis(100))
+                .with_progress_timeout(Duration::from_millis(20))
+                .with_progress_check_interval(Duration::from_millis(1))
+                .with_shutdown_grace_period(Duration::from_millis(60)),
+        );
+
+        let stop_consumer1 = Arc::new(AtomicBool::new(false));
+        let stop_consumer1_thread = Arc::clone(&stop_consumer1);
+        let name_for_thread = name.clone();
+        let consumer1_thread = thread::spawn(move || {
+            let mut consumer1 = attach_named_consumer(&name_for_thread, buffer_size, "c1");
+            while !stop_consumer1_thread.load(Ordering::Acquire) {
+                if consumer1.try_consume_next().is_none() {
+                    thread::sleep(Duration::from_millis(1));
+                }
+            }
+        });
+
+        let mut consumer2 = attach_named_consumer(&name, buffer_size, "c2");
+        producer
+            .publish_managed(|event| {
+                event.sequence = 0;
+                event.data = 0;
+            })
+            .unwrap();
+        let _ = consumer2.consume_next();
+        drop(consumer2);
+
+        for i in 1..=buffer_size {
+            producer
+                .publish_managed(|event| {
+                    event.sequence = i as i64;
+                    event.data = (i as i64) * 10;
+                })
+                .unwrap();
+        }
+
+        let name_for_rejoin = name.clone();
+        let rejoin_thread = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(140));
+            let mut rejoined = attach_named_consumer(&name_for_rejoin, buffer_size, "c2");
+            let deadline = Instant::now() + Duration::from_millis(300);
+            let mut consumed = 0usize;
+            while Instant::now() < deadline && consumed < buffer_size + 2 {
+                if rejoined.try_consume_next().is_some() {
+                    consumed += 1;
+                } else {
+                    thread::sleep(Duration::from_millis(1));
+                }
+            }
+            consumed
+        });
+
+        let error = producer
+            .publish_managed(|event| {
+                event.sequence = 99;
+                event.data = 990;
+            })
+            .expect_err("late same-id rejoin must not rescue the topology after grace expires");
+
+        stop_consumer1.store(true, Ordering::Release);
+        consumer1_thread.join().unwrap();
+        let rejoined_consumed = rejoin_thread.join().unwrap();
+
+        assert!(rejoined_consumed > 0, "late rejoined consumer may still drain retained backlog");
+        match error {
+            RequiredConsumerError::GracefulShutdownTriggered { consumer_id, .. } => {
+                assert_eq!(consumer_id, "c2");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn managed_publish_does_not_fail_while_topology_is_idle() {
+        let name = unique_test_segment("req_cons_idle");
+        let buffer_size = 8;
+
+        let mut producer = build_shared_single_producer::<TestEvent>(&name, buffer_size)
+            .enable_discovery(2)
+            .with_coordination(CoordinationMode::Immediate)
+            .build_producer(TestEvent::default)
+            .unwrap();
+        producer.enable_required_consumer_liveness(
+            RequiredConsumerLivenessConfig::new(vec!["c1".into(), "c2".into()])
+                .with_startup_wait_timeout(Duration::from_millis(100))
+                .with_progress_timeout(Duration::from_millis(20))
+                .with_progress_check_interval(Duration::from_millis(1))
+                .with_shutdown_grace_period(Duration::from_millis(50)),
+        );
+
+        let mut consumer1 = attach_named_consumer(&name, buffer_size, "c1");
+        let mut consumer2 = attach_named_consumer(&name, buffer_size, "c2");
+
+        producer
+            .publish_managed(|event| {
+                event.sequence = 1;
+                event.data = 10;
+            })
+            .unwrap();
+        assert_eq!(consumer1.consume_next().0, 0);
+        assert_eq!(consumer2.consume_next().0, 0);
+
+        thread::sleep(Duration::from_millis(75));
+
+        producer
+            .publish_managed(|event| {
+                event.sequence = 2;
+                event.data = 20;
+            })
+            .expect("idle topology must not trigger stall shutdown");
+
+        assert_eq!(consumer1.consume_next().0, 1);
+        assert_eq!(consumer2.consume_next().0, 1);
     }
 
     // ============================================================================

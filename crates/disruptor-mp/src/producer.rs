@@ -5,6 +5,9 @@
 //! and discovery modes for different deployment scenarios.
 
 use super::consumer_barrier::{DiscoveryMode, SharedConsumerBarrier};
+use crate::required_consumer::{
+    RequiredConsumerError, RequiredConsumerLivenessConfig, RequiredConsumerLivenessState,
+};
 use crate::{SharedCursor, SharedRingBuffer};
 use disruptor_core::{MissingFreeSlots, RingBufferFull, Sequence};
 use std::sync::atomic::Ordering;
@@ -67,6 +70,8 @@ pub struct SharedProducer<E> {
     sequence_clear_of_consumers: Sequence,
     /// Whether we've completed initial coordination
     pub(crate) coordination_completed: bool,
+    /// Optional producer-side liveness policy for a required consumer set.
+    required_consumer_liveness: Option<RequiredConsumerLivenessState>,
 }
 
 impl<E> SharedProducer<E>
@@ -118,6 +123,7 @@ where
             sequence: 0,
             sequence_clear_of_consumers,
             coordination_completed: false,
+            required_consumer_liveness: None,
         }
     }
 
@@ -345,6 +351,73 @@ impl<E> SharedProducer<E>
 where
     E: Copy + Default,
 {
+    /// Enable producer-side liveness enforcement for a required consumer set.
+    pub fn enable_required_consumer_liveness(
+        &mut self,
+        config: RequiredConsumerLivenessConfig,
+    ) -> &mut Self {
+        self.required_consumer_liveness = Some(RequiredConsumerLivenessState::new(config));
+        self
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn ensure_required_consumers_ready(&mut self) -> Result<(), RequiredConsumerError> {
+        let Some(mut state) = self.required_consumer_liveness.take() else {
+            return Ok(());
+        };
+        if state.startup_completed() {
+            self.required_consumer_liveness = Some(state);
+            return Ok(());
+        }
+
+        let deadline = Instant::now()
+            .checked_add(state.startup_wait_timeout())
+            .expect("startup_wait_timeout does not fit in Instant");
+
+        loop {
+            let missing = state.missing_required_consumers(|consumer_id| {
+                self.discover_consumer_id(consumer_id)
+            });
+            if missing.is_empty() {
+                let now = Instant::now();
+                state.seed_progress(now, |consumer_id| self.consumer_sequence(consumer_id));
+                state.mark_startup_completed(now);
+                self.required_consumer_liveness = Some(state);
+                return Ok(());
+            }
+
+            if Instant::now() >= deadline {
+                let error = RequiredConsumerError::StartupTimeout { missing };
+                self.required_consumer_liveness = Some(state);
+                return Err(error);
+            }
+
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn check_required_consumer_liveness(&mut self) -> Result<(), RequiredConsumerError> {
+        let Some(mut state) = self.required_consumer_liveness.take() else {
+            return Ok(());
+        };
+
+        let now = Instant::now();
+        let producer_sequence = self.last_published_sequence();
+        let failure = state.evaluate_blocked(now, producer_sequence, |consumer_id| {
+            self.consumer_sequence(consumer_id)
+        });
+        self.required_consumer_liveness = Some(state);
+
+        if let Some(error) = failure {
+            return Err(error);
+        }
+
+        Ok(())
+    }
+
     /// Attempt to publish an event but give up after `timeout`.
     /// Returns Ok(sequence) on success or Err(PublishTimeoutError::Timeout) if the timeout expired.
     pub fn publish_with_timeout<F>(
@@ -375,6 +448,60 @@ where
         // Publish the event
         let sequence = self.apply_update(update);
         Ok(sequence)
+    }
+
+    /// Publish one event with required-consumer liveness enforcement.
+    ///
+    /// Existing `publish()` semantics remain unchanged. This managed path is opt-in and returns a
+    /// structured error when startup or recovery requirements are not satisfied.
+    pub fn publish_managed<F>(&mut self, update: F) -> Result<Sequence, RequiredConsumerError>
+    where
+        F: FnOnce(&mut E),
+    {
+        self.ensure_required_consumers_ready()?;
+
+        let mut update = Some(update);
+        loop {
+            if self.next_sequences(1).is_ok() {
+                #[cfg(feature = "dst")]
+                if dst_fixtures::dst_buggify::buggify(file!(), line!()) {
+                    std::thread::yield_now();
+                }
+                let sequence = self.apply_update(update.take().expect("managed update is consumed once"));
+                return Ok(sequence);
+            }
+
+            self.check_required_consumer_liveness()?;
+            std::thread::yield_now();
+        }
+    }
+
+    /// Publish a batch with required-consumer liveness enforcement.
+    ///
+    /// Batch size zero preserves the existing producer semantics and returns the previously
+    /// published sequence without performing liveness checks.
+    pub fn publish_batch_managed<F>(
+        &mut self,
+        n: usize,
+        update_fn: F,
+    ) -> Result<Sequence, RequiredConsumerError>
+    where
+        F: Fn(&mut E, usize),
+    {
+        if n == 0 {
+            return Ok(self.sequence - 1);
+        }
+
+        self.ensure_required_consumers_ready()?;
+
+        loop {
+            if self.next_sequences(n).is_ok() {
+                return Ok(self.apply_batch_updates(n, &update_fn));
+            }
+
+            self.check_required_consumer_liveness()?;
+            std::thread::yield_now();
+        }
     }
 }
 
@@ -433,6 +560,11 @@ where
             }
             std::thread::sleep(Duration::from_millis(25));
         }
+    }
+
+    /// Return the latest visible sequence for a specific consumer id.
+    pub fn consumer_sequence(&mut self, consumer_id: &str) -> Option<Sequence> {
+        self.consumer_barrier.consumer_sequence(consumer_id)
     }
 
     /// Wait until the provided sequence is consumed by all known consumers or timeout.

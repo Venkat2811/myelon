@@ -93,6 +93,19 @@ struct RawRingExecutionPolicy {
     publish_pause_every: usize,
     publish_pause_micros: u64,
     injected_fault: Option<RawRingInjectedFault>,
+    required_consumer_liveness: Option<RequiredConsumerLivenessPolicy>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct RequiredConsumerLivenessPolicy {
+    pub startup_wait_ms: u64,
+    pub progress_timeout_ms: u64,
+    pub progress_check_interval_ms: u64,
+    pub shutdown_grace_ms: u64,
+    pub consumer_kill_after_ms: u64,
+    pub consumer_restart_delay_ms: u64,
+    pub required_consumer_missing_slots: usize,
+    pub restart_with_wrong_consumer_id: bool,
 }
 
 #[derive(Debug)]
@@ -131,6 +144,7 @@ impl RawRingExecutionPolicy {
             publish_pause_every: 0,
             publish_pause_micros: 0,
             injected_fault: None,
+            required_consumer_liveness: None,
         }
     }
 }
@@ -182,6 +196,22 @@ impl DstRunner {
         }
     }
 
+    pub fn run_property_with_required_consumer_liveness(
+        &mut self,
+        property: DstProperty,
+        transport: TransportKind,
+        harness: &RawRingHarness,
+        required_consumer_liveness: RequiredConsumerLivenessPolicy,
+    ) -> Result<DstRunReport, DstRunnerError> {
+        let mut policy = RawRingExecutionPolicy::steady_state();
+        policy.required_consumer_liveness = Some(required_consumer_liveness);
+
+        match transport {
+            TransportKind::RawRing => self.run_raw_ring_case(property, None, harness, policy),
+            other => Err(DstRunnerError::UnsupportedTransport(other)),
+        }
+    }
+
     pub fn run_failure_class(
         &mut self,
         class: FailureClass,
@@ -198,6 +228,7 @@ impl DstRunner {
                 publish_pause_every: 0,
                 publish_pause_micros: 0,
                 injected_fault: None,
+                required_consumer_liveness: None,
             },
             FailureClass::LateConsumerAttach => RawRingExecutionPolicy {
                 spawn_consumers_first: false,
@@ -208,6 +239,7 @@ impl DstRunner {
                 publish_pause_every: 16,
                 publish_pause_micros: 750,
                 injected_fault: None,
+                required_consumer_liveness: None,
             },
             FailureClass::CreateAttachChurn => RawRingExecutionPolicy {
                 spawn_consumers_first: true,
@@ -222,6 +254,7 @@ impl DstRunner {
                     after_ms: 40,
                     suspend_ms: 120,
                 }),
+                required_consumer_liveness: None,
             },
             FailureClass::ProducerCrashAndRestart => RawRingExecutionPolicy {
                 spawn_consumers_first: true,
@@ -235,6 +268,7 @@ impl DstRunner {
                     after_ms: 60,
                     restart_delay_ms: 80,
                 }),
+                required_consumer_liveness: None,
             },
             FailureClass::DiscoveryVisibilityLag => RawRingExecutionPolicy {
                 spawn_consumers_first: false,
@@ -245,6 +279,7 @@ impl DstRunner {
                 publish_pause_every: 16,
                 publish_pause_micros: 1000,
                 injected_fault: None,
+                required_consumer_liveness: None,
             },
             FailureClass::ConsumerCrashAndRestart => RawRingExecutionPolicy {
                 spawn_consumers_first: true,
@@ -259,6 +294,7 @@ impl DstRunner {
                     after_ms: 60,
                     restart_delay_ms: 80,
                 }),
+                required_consumer_liveness: None,
             },
             FailureClass::ReadinessGateViolation => RawRingExecutionPolicy {
                 spawn_consumers_first: false,
@@ -269,6 +305,7 @@ impl DstRunner {
                 publish_pause_every: 0,
                 publish_pause_micros: 0,
                 injected_fault: None,
+                required_consumer_liveness: None,
             },
             _ => {
                 return Err(DstRunnerError::InvalidConfig(format!(
@@ -276,6 +313,118 @@ impl DstRunner {
                 )))
             }
         };
+
+        match transport {
+            TransportKind::RawRing => {
+                self.run_raw_ring_case(DstProperty::MessageIntegrity, Some(class), harness, policy)
+            }
+            other => Err(DstRunnerError::UnsupportedTransport(other)),
+        }
+    }
+
+    pub fn run_failure_class_with_required_consumer_liveness(
+        &mut self,
+        class: FailureClass,
+        transport: TransportKind,
+        harness: &RawRingHarness,
+        required_consumer_liveness: RequiredConsumerLivenessPolicy,
+    ) -> Result<DstRunReport, DstRunnerError> {
+        let mut policy = match class {
+            FailureClass::ProducerBeforeConsumers => RawRingExecutionPolicy {
+                spawn_consumers_first: false,
+                wait_for_consumers_ready: false,
+                startup_delay_ms: 140,
+                consumer_spawn_stagger_ms: 10,
+                producer_hold_ms: 400,
+                publish_pause_every: 0,
+                publish_pause_micros: 0,
+                injected_fault: None,
+                required_consumer_liveness: None,
+            },
+            FailureClass::LateConsumerAttach => RawRingExecutionPolicy {
+                spawn_consumers_first: false,
+                wait_for_consumers_ready: false,
+                startup_delay_ms: 60,
+                consumer_spawn_stagger_ms: 10,
+                producer_hold_ms: 250,
+                publish_pause_every: 16,
+                publish_pause_micros: 750,
+                injected_fault: None,
+                required_consumer_liveness: None,
+            },
+            FailureClass::CreateAttachChurn => RawRingExecutionPolicy {
+                spawn_consumers_first: true,
+                wait_for_consumers_ready: true,
+                startup_delay_ms: 80,
+                consumer_spawn_stagger_ms: 10,
+                producer_hold_ms: 250,
+                publish_pause_every: 8,
+                publish_pause_micros: 1000,
+                injected_fault: Some(RawRingInjectedFault::ConsumerSuspendAndResume {
+                    consumer_index: 0,
+                    after_ms: 40,
+                    suspend_ms: 120,
+                }),
+                required_consumer_liveness: None,
+            },
+            FailureClass::ProducerCrashAndRestart => RawRingExecutionPolicy {
+                spawn_consumers_first: true,
+                wait_for_consumers_ready: true,
+                startup_delay_ms: 80,
+                consumer_spawn_stagger_ms: 10,
+                producer_hold_ms: 200,
+                publish_pause_every: 8,
+                publish_pause_micros: 1000,
+                injected_fault: Some(RawRingInjectedFault::ProducerKillAndRestart {
+                    after_ms: 60,
+                    restart_delay_ms: 80,
+                }),
+                required_consumer_liveness: None,
+            },
+            FailureClass::DiscoveryVisibilityLag => RawRingExecutionPolicy {
+                spawn_consumers_first: false,
+                wait_for_consumers_ready: false,
+                startup_delay_ms: 40,
+                consumer_spawn_stagger_ms: 50,
+                producer_hold_ms: 300,
+                publish_pause_every: 16,
+                publish_pause_micros: 1000,
+                injected_fault: None,
+                required_consumer_liveness: None,
+            },
+            FailureClass::ConsumerCrashAndRestart => RawRingExecutionPolicy {
+                spawn_consumers_first: true,
+                wait_for_consumers_ready: true,
+                startup_delay_ms: 80,
+                consumer_spawn_stagger_ms: 10,
+                producer_hold_ms: 250,
+                publish_pause_every: 8,
+                publish_pause_micros: 1000,
+                injected_fault: Some(RawRingInjectedFault::ConsumerKillAndRestart {
+                    consumer_index: 0,
+                    after_ms: required_consumer_liveness.consumer_kill_after_ms,
+                    restart_delay_ms: required_consumer_liveness.consumer_restart_delay_ms,
+                }),
+                required_consumer_liveness: None,
+            },
+            FailureClass::ReadinessGateViolation => RawRingExecutionPolicy {
+                spawn_consumers_first: false,
+                wait_for_consumers_ready: true,
+                startup_delay_ms: 200,
+                consumer_spawn_stagger_ms: 10,
+                producer_hold_ms: 250,
+                publish_pause_every: 0,
+                publish_pause_micros: 0,
+                injected_fault: None,
+                required_consumer_liveness: None,
+            },
+            _ => {
+                return Err(DstRunnerError::InvalidConfig(format!(
+                    "failure class {class:?} is not implemented in the first raw-ring slice"
+                )))
+            }
+        };
+        policy.required_consumer_liveness = Some(required_consumer_liveness);
 
         match transport {
             TransportKind::RawRing => {
@@ -601,14 +750,21 @@ impl DstRunner {
                 );
                 *partial_producer_report = self.kill_child_immediately(producer, "producer")?;
                 *restarted_producer = true;
-                let published = partial_producer_report
-                    .as_ref()
-                    .map(|report| report.messages.len() as u64)
-                    .unwrap_or(0);
+                let published = restart_sequence_start(
+                    partial_producer_report.as_ref(),
+                    partial_consumer_reports,
+                );
                 if published >= self.config.message_count {
                     return Err(DstRunnerError::InvalidConfig(
                         "producer kill-and-restart fault fired after producer completed".into(),
                     ));
+                }
+                if let Some(producer_report) = partial_producer_report.as_mut() {
+                    backfill_report_from_consumers(
+                        producer_report,
+                        partial_consumer_reports,
+                        published,
+                    );
                 }
                 for (consumer_index, consumer) in consumers.iter_mut().enumerate() {
                     self.trace.push(
@@ -709,6 +865,15 @@ impl DstRunner {
                     self.kill_child_immediately(consumer, &format!("consumer-{consumer_index}"))?;
                 restarted_consumers[consumer_index] = true;
                 thread::sleep(Duration::from_millis(restart_delay_ms));
+                let restart_consumer_prefix = if policy
+                    .required_consumer_liveness
+                    .map(|required| required.restart_with_wrong_consumer_id)
+                    .unwrap_or(false)
+                {
+                    format!("{consumer_prefix}_wrong")
+                } else {
+                    consumer_prefix.to_string()
+                };
                 let restarted = self.spawn_raw_ring_child(
                     harness,
                     run_root,
@@ -716,7 +881,7 @@ impl DstRunner {
                     "consumer",
                     ring_depth,
                     Some(consumer_index),
-                    consumer_prefix,
+                    &restart_consumer_prefix,
                     policy,
                     producer_report_path,
                     RawRingChildOverrides {
@@ -847,6 +1012,29 @@ impl DstRunner {
             .env("DST_REPORT_PATH", &report_path)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+
+        if let Some(required) = policy.required_consumer_liveness {
+            let mut required_consumer_ids = (0..self.config.consumer_count)
+                .map(|index| format!("{consumer_prefix}_{index}"))
+                .collect::<Vec<_>>();
+            for index in 0..required.required_consumer_missing_slots {
+                required_consumer_ids.push(format!("{consumer_prefix}_missing_{index}"));
+            }
+            cmd.env("DST_REQUIRED_CONSUMER_IDS", required_consumer_ids.join(","))
+                .env("DST_REQUIRED_STARTUP_WAIT_MS", required.startup_wait_ms.to_string())
+                .env(
+                    "DST_REQUIRED_PROGRESS_TIMEOUT_MS",
+                    required.progress_timeout_ms.to_string(),
+                )
+                .env(
+                    "DST_REQUIRED_PROGRESS_CHECK_INTERVAL_MS",
+                    required.progress_check_interval_ms.to_string(),
+                )
+                .env(
+                    "DST_REQUIRED_SHUTDOWN_GRACE_MS",
+                    required.shutdown_grace_ms.to_string(),
+                );
+        }
 
         if let Some(message_count) = overrides.producer_message_count {
             cmd.env("DST_PRODUCER_MESSAGE_COUNT", message_count.to_string());
@@ -1074,7 +1262,10 @@ fn merge_child_reports(
         );
     }
 
-    merged.messages.extend(suffix.messages);
+    let overlap_cutoff = merged.messages.last().map(|message| message.sequence);
+    merged.messages.extend(suffix.messages.into_iter().filter(|message| {
+        overlap_cutoff.map(|cutoff| message.sequence > cutoff).unwrap_or(true)
+    }));
     merged.checksum_total = merged
         .messages
         .iter()
@@ -1095,6 +1286,48 @@ struct RawRingChildOverrides {
     allow_corruption_validation: bool,
 }
 
+fn restart_sequence_start(
+    producer: Option<&ChildReport>,
+    partial_consumers: &[Option<ChildReport>],
+) -> u64 {
+    let producer_next = producer.and_then(report_next_sequence).unwrap_or(0);
+    let consumer_next = partial_consumers
+        .iter()
+        .filter_map(|report| report.as_ref().and_then(report_next_sequence))
+        .max()
+        .unwrap_or(0);
+    producer_next.max(consumer_next)
+}
+
+fn backfill_report_from_consumers(
+    producer: &mut ChildReport,
+    partial_consumers: &[Option<ChildReport>],
+    published: u64,
+) {
+    let next_missing = report_next_sequence(producer).unwrap_or(0);
+    if next_missing >= published {
+        return;
+    }
+
+    let mut recovered = partial_consumers
+        .iter()
+        .filter_map(|report| report.as_ref())
+        .flat_map(|report| report.messages.iter().cloned())
+        .filter(|message| message.sequence >= next_missing && message.sequence < published)
+        .collect::<Vec<_>>();
+    recovered.sort_by_key(|message| message.sequence);
+    recovered.dedup_by_key(|message| message.sequence);
+    producer.messages.extend(recovered);
+    producer.checksum_total = producer
+        .messages
+        .iter()
+        .fold(0u64, |sum, message| sum.wrapping_add(message.payload_hash));
+}
+
+fn report_next_sequence(report: &ChildReport) -> Option<u64> {
+    report.messages.last().map(|message| message.sequence + 1)
+}
+
 fn concat_child_reports(prefix: Option<ChildReport>, suffix: ChildReport) -> ChildReport {
     let mut merged = prefix.unwrap_or_else(|| ChildReport {
         role: suffix.role.clone(),
@@ -1104,7 +1337,10 @@ fn concat_child_reports(prefix: Option<ChildReport>, suffix: ChildReport) -> Chi
         attached_after_ms: suffix.attached_after_ms,
     });
 
-    merged.messages.extend(suffix.messages);
+    let overlap_cutoff = merged.messages.last().map(|message| message.sequence);
+    merged.messages.extend(suffix.messages.into_iter().filter(|message| {
+        overlap_cutoff.map(|cutoff| message.sequence > cutoff).unwrap_or(true)
+    }));
     merged.checksum_total = merged
         .messages
         .iter()
@@ -1119,12 +1355,70 @@ fn concat_child_reports(prefix: Option<ChildReport>, suffix: ChildReport) -> Chi
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::oracle::OracleMessage;
+    use dst_fixtures::dst_contract::ProcessRole;
+
+    fn report(sequences: &[u64]) -> ChildReport {
+        ChildReport {
+            role: ProcessRole::Producer,
+            messages: sequences
+                .iter()
+                .map(|sequence| OracleMessage {
+                    sequence: *sequence,
+                    payload_hash: sequence.wrapping_add(1),
+                    payload_len: 16,
+                    timestamp_ns: *sequence,
+                })
+                .collect(),
+            checksum_total: 0,
+            backpressure_events: 0,
+            attached_after_ms: 0,
+        }
+    }
 
     #[test]
     fn runner_from_seed_is_deterministic() {
         assert_eq!(
             DstRunner::from_seed(42).config,
             DstRunner::from_seed(42).config
+        );
+    }
+
+    #[test]
+    fn merge_child_reports_drops_overlap_at_restart_boundary() {
+        let producer = report(&[0, 1, 2, 3, 4, 5, 6, 7]);
+        let prefix = Some(report(&[0, 1, 2, 3]));
+        let suffix = report(&[3, 4, 5, 6, 7]);
+        let merged = merge_child_reports(&producer, prefix, suffix);
+        assert_eq!(
+            merged
+                .messages
+                .iter()
+                .map(|message| message.sequence)
+                .collect::<Vec<_>>(),
+            vec![0, 1, 2, 3, 4, 5, 6, 7]
+        );
+    }
+
+    #[test]
+    fn restart_sequence_start_uses_max_observed_consumer_sequence() {
+        let producer = report(&[0, 1, 2, 3]);
+        let consumers = vec![Some(report(&[0, 1, 2, 3, 4, 5])), None];
+        assert_eq!(restart_sequence_start(Some(&producer), &consumers), 6);
+    }
+
+    #[test]
+    fn backfill_report_from_consumers_recovers_missing_tail() {
+        let mut producer = report(&[0, 1, 2]);
+        let consumers = vec![Some(report(&[0, 1, 2, 3, 4]))];
+        backfill_report_from_consumers(&mut producer, &consumers, 5);
+        assert_eq!(
+            producer
+                .messages
+                .iter()
+                .map(|message| message.sequence)
+                .collect::<Vec<_>>(),
+            vec![0, 1, 2, 3, 4]
         );
     }
 }

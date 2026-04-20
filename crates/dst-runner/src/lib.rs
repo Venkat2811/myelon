@@ -12,4 +12,4 @@ pub use oracle::{
     payload_bytes, stable_payload_hash, MessageOracle, OracleMessage, OracleViolation,
 };
 pub use report::{ChildReport, DstProperty, DstRunReport, TransportKind};
-pub use runner::{DstRunner, DstRunnerError, RawRingHarness};
+pub use runner::{DstRunner, DstRunnerError, RawRingHarness, RequiredConsumerLivenessPolicy};

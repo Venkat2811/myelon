@@ -21,9 +21,14 @@ mod mmap_producer;
 mod mmap_ringbuffer;
 #[path = "backend/mmap/transport.rs"]
 mod mmap_transport;
+mod required_consumer;
 mod segment_name;
 mod shared_memory_layout;
 pub use api::*;
+pub use required_consumer::{
+    RequiredConsumerAlert, RequiredConsumerAlertHook, RequiredConsumerError,
+    RequiredConsumerFailureAction, RequiredConsumerLivenessConfig,
+};
 pub use segment_name::*;
 
 /// Returns true when `value` is an exact multiple of `divisor`.

@@ -121,6 +121,37 @@ impl MmapConsumerBarrier {
         Ok(discovered)
     }
 
+    /// Attach a specific consumer cursor by stable consumer id.
+    pub fn discover_consumer_id(&mut self, consumer_id: &str) -> bool {
+        if self.consumer_cursors.contains_key(consumer_id) {
+            return true;
+        }
+
+        match self
+            .layout
+            .consumer_cursor_config(consumer_id, false)
+            .and_then(|config| MmapCursor::attach(config))
+        {
+            Ok(cursor) => {
+                self.consumer_cursors
+                    .insert(consumer_id.to_string(), cursor);
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    /// Return the latest visible sequence for a known consumer id.
+    pub fn consumer_sequence(&mut self, consumer_id: &str) -> Option<i64> {
+        if !self.consumer_cursors.contains_key(consumer_id) && !self.discover_consumer_id(consumer_id)
+        {
+            return None;
+        }
+        self.consumer_cursors
+            .get(consumer_id)
+            .map(|cursor| cursor.load(Ordering::Acquire))
+    }
+
     /// Return the minimum visible consumer sequence after a discovery pass.
     pub fn min_consumer_sequence(&mut self) -> MultiProcessResult<i64> {
         self.discover_consumers()?;
