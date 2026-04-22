@@ -21,18 +21,10 @@ use std::time::{Duration, Instant};
 // ============================================================
 
 #[repr(C, align(64))]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 struct SignalEvent {
     sequence: u64,
     data: u64,
-}
-impl Default for SignalEvent {
-    fn default() -> Self {
-        Self {
-            sequence: 0,
-            data: 0,
-        }
-    }
 }
 
 type Ev64 = BenchEvent<48>;
@@ -53,6 +45,10 @@ fn child_layout() -> MmapTransportLayout {
     harness::mmap_layout_from_env("SWEEP_ROOT", "SWEEP_SEGMENT")
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "sweep child launch keeps scenario parameters explicit for shell-free process setup"
+)]
 fn spawn_sweep_child(
     exe: &std::path::Path,
     role: &str,
@@ -87,8 +83,7 @@ fn signal_producer() -> Result<(), Box<dyn std::error::Error>> {
     let consumers = harness::read_env_usize("SWEEP_CONSUMERS", 1);
     let warmup = 100_000u64;
     layout.ensure_directories()?;
-    let mut producer =
-        MmapProducer::<SignalEvent>::create(layout, buffer, || SignalEvent::default())?;
+    let mut producer = MmapProducer::<SignalEvent>::create(layout, buffer, SignalEvent::default)?;
     if !producer.wait_for_consumers_ready(consumers as i64, Duration::from_secs(30)) {
         return Err("timeout".into());
     }

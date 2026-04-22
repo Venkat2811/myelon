@@ -76,6 +76,26 @@ path = "benches/myelon/framed/mmap.rs"
 harness = false
 
 [[bench]]
+name = "competitive_framed_shm"
+path = "benches/myelon/framed/competitive_shm.rs"
+harness = false
+
+[[bench]]
+name = "competitive_raw_myelon_shm"
+path = "benches/myelon/raw/competitive_shm.rs"
+harness = false
+
+[[bench]]
+name = "competitive_framed_mmap"
+path = "benches/myelon/framed/competitive_mmap.rs"
+harness = false
+
+[[bench]]
+name = "competitive_raw_myelon_mmap"
+path = "benches/myelon/raw/competitive_mmap.rs"
+harness = false
+
+[[bench]]
 name = "codec_e2e_shm"
 path = "benches/myelon/codec/shm.rs"
 harness = false
@@ -83,6 +103,26 @@ harness = false
 [[bench]]
 name = "codec_e2e_mmap"
 path = "benches/myelon/codec/mmap.rs"
+harness = false
+
+[[bench]]
+name = "competitive_codec_shm"
+path = "benches/myelon/codec/competitive_shm.rs"
+harness = false
+
+[[bench]]
+name = "competitive_codec_mmap"
+path = "benches/myelon/codec/competitive_mmap.rs"
+harness = false
+
+[[bench]]
+name = "competitive_typed_zero_copy_shm"
+path = "benches/myelon/codec/competitive_typed_zero_copy_shm.rs"
+harness = false
+
+[[bench]]
+name = "competitive_typed_zero_copy_mmap"
+path = "benches/myelon/codec/competitive_typed_zero_copy_mmap.rs"
 harness = false
 
 [[bench]]

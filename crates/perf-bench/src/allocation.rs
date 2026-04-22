@@ -1,5 +1,6 @@
 use std::alloc::{GlobalAlloc, Layout, System};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::cell::Cell;
+use std::thread_local;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AllocationMetrics {
@@ -15,9 +16,11 @@ struct AllocationSnapshot {
 
 struct TrackingAllocator;
 
-static TRACKING_DEPTH: AtomicUsize = AtomicUsize::new(0);
-static ALLOC_COUNT: AtomicU64 = AtomicU64::new(0);
-static ALLOC_BYTES: AtomicU64 = AtomicU64::new(0);
+thread_local! {
+    static TRACKING_DEPTH: Cell<usize> = const { Cell::new(0) };
+    static ALLOC_COUNT: Cell<u64> = const { Cell::new(0) };
+    static ALLOC_BYTES: Cell<u64> = const { Cell::new(0) };
+}
 
 #[global_allocator]
 static GLOBAL_ALLOCATOR: TrackingAllocator = TrackingAllocator;
@@ -26,8 +29,8 @@ unsafe impl GlobalAlloc for TrackingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         let ptr = System.alloc(layout);
         if !ptr.is_null() && tracking_enabled() {
-            ALLOC_COUNT.fetch_add(1, Ordering::Relaxed);
-            ALLOC_BYTES.fetch_add(layout.size() as u64, Ordering::Relaxed);
+            ALLOC_COUNT.with(|count| count.set(count.get() + 1));
+            ALLOC_BYTES.with(|bytes| bytes.set(bytes.get() + layout.size() as u64));
         }
         ptr
     }
@@ -39,8 +42,8 @@ unsafe impl GlobalAlloc for TrackingAllocator {
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         let out = System.realloc(ptr, layout, new_size);
         if !out.is_null() && tracking_enabled() {
-            ALLOC_COUNT.fetch_add(1, Ordering::Relaxed);
-            ALLOC_BYTES.fetch_add(new_size as u64, Ordering::Relaxed);
+            ALLOC_COUNT.with(|count| count.set(count.get() + 1));
+            ALLOC_BYTES.with(|bytes| bytes.set(bytes.get() + new_size as u64));
         }
         out
     }
@@ -48,19 +51,19 @@ unsafe impl GlobalAlloc for TrackingAllocator {
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
         let ptr = System.alloc_zeroed(layout);
         if !ptr.is_null() && tracking_enabled() {
-            ALLOC_COUNT.fetch_add(1, Ordering::Relaxed);
-            ALLOC_BYTES.fetch_add(layout.size() as u64, Ordering::Relaxed);
+            ALLOC_COUNT.with(|count| count.set(count.get() + 1));
+            ALLOC_BYTES.with(|bytes| bytes.set(bytes.get() + layout.size() as u64));
         }
         ptr
     }
 }
 
 pub fn measure_allocations<R>(f: impl FnOnce() -> R) -> (R, AllocationMetrics) {
-    TRACKING_DEPTH.fetch_add(1, Ordering::SeqCst);
+    TRACKING_DEPTH.with(|depth| depth.set(depth.get() + 1));
     let before = snapshot();
     let result = f();
     let after = snapshot();
-    TRACKING_DEPTH.fetch_sub(1, Ordering::SeqCst);
+    TRACKING_DEPTH.with(|depth| depth.set(depth.get().saturating_sub(1)));
     (
         result,
         AllocationMetrics {
@@ -72,13 +75,13 @@ pub fn measure_allocations<R>(f: impl FnOnce() -> R) -> (R, AllocationMetrics) {
 
 fn snapshot() -> AllocationSnapshot {
     AllocationSnapshot {
-        alloc_count: ALLOC_COUNT.load(Ordering::SeqCst),
-        alloc_bytes: ALLOC_BYTES.load(Ordering::SeqCst),
+        alloc_count: ALLOC_COUNT.with(|count| count.get()),
+        alloc_bytes: ALLOC_BYTES.with(|bytes| bytes.get()),
     }
 }
 
 fn tracking_enabled() -> bool {
-    TRACKING_DEPTH.load(Ordering::Relaxed) > 0
+    TRACKING_DEPTH.with(|depth| depth.get() > 0)
 }
 
 #[cfg(test)]

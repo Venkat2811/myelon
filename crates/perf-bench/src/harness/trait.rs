@@ -88,7 +88,7 @@ pub trait IpcBenchmark {
         consumers
             .iter()
             .filter_map(|entry| entry.latency.clone())
-            .last()
+            .next_back()
     }
 
     fn average_consumer_ops(&self, consumers: &[ConsumerOutput]) -> f64 {

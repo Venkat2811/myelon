@@ -3,10 +3,12 @@ use std::env;
 use std::fmt::Display;
 use std::process::{Child, Command, Output, Stdio};
 use std::str::FromStr;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::thread;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 const DEADLOCK_PREFIX: &str = "TDL";
+static SEGMENT_COUNTER: AtomicU32 = AtomicU32::new(0);
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -38,11 +40,19 @@ fn event_checksum(sequence: u64) -> u64 {
 }
 
 fn unique_segment(prefix: &str) -> String {
-    let timestamp_ns = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system clock should be after UNIX_EPOCH")
-        .as_nanos();
-    format!("{prefix}_{}_{}", std::process::id(), timestamp_ns)
+    let pid = std::process::id() % 10_000;
+    let suffix = SEGMENT_COUNTER.fetch_add(1, Ordering::Relaxed) % 10_000;
+    let compact_prefix: String = prefix
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .take(3)
+        .collect();
+    let compact_prefix = if compact_prefix.is_empty() {
+        DEADLOCK_PREFIX.to_lowercase()
+    } else {
+        compact_prefix.to_lowercase()
+    };
+    format!("{compact_prefix}{pid:04}{suffix:04}")
 }
 
 fn spawn_child(mode: &str, segment: &str, case: CaseSpec, consumer_id: Option<&str>) -> Child {

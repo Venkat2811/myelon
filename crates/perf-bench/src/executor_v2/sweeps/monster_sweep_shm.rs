@@ -33,18 +33,10 @@ use std::time::{Duration, Instant};
 /// Signal event: 64B cache-line-aligned, only 16B of data written.
 /// This is the disruptor signaling ceiling — same as raw_ring_shm signal class.
 #[repr(C, align(64))]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 struct SignalEvent {
     sequence: u64,
     data: u64,
-}
-impl Default for SignalEvent {
-    fn default() -> Self {
-        Self {
-            sequence: 0,
-            data: 0,
-        }
-    }
 }
 
 type Ev64 = BenchEvent<48>;
@@ -141,7 +133,7 @@ fn signal_producer() -> Result<(), Box<dyn std::error::Error>> {
     let mut producer = build_shared_single_producer::<SignalEvent>(&segment, buffer)
         .enable_discovery(1)
         .with_coordination(CoordinationMode::Immediate)
-        .build_producer(|| SignalEvent::default())?;
+        .build_producer(SignalEvent::default)?;
 
     let coord = BenchmarkCoordination::create(&segment)?;
     if !coord.wait_for_consumers(1, Duration::from_secs(30)) {

@@ -130,7 +130,7 @@ impl MmapConsumerBarrier {
         match self
             .layout
             .consumer_cursor_config(consumer_id, false)
-            .and_then(|config| MmapCursor::attach(config))
+            .and_then(MmapCursor::attach)
         {
             Ok(cursor) => {
                 self.consumer_cursors
@@ -143,7 +143,8 @@ impl MmapConsumerBarrier {
 
     /// Return the latest visible sequence for a known consumer id.
     pub fn consumer_sequence(&mut self, consumer_id: &str) -> Option<i64> {
-        if !self.consumer_cursors.contains_key(consumer_id) && !self.discover_consumer_id(consumer_id)
+        if !self.consumer_cursors.contains_key(consumer_id)
+            && !self.discover_consumer_id(consumer_id)
         {
             return None;
         }

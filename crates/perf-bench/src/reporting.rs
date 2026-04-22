@@ -73,7 +73,11 @@ pub struct BenchResults {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pct_of_raw_ring: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delta_vs_raw_ring_pct: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub speedup_vs_bincode: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delta_vs_bincode_pct: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub access_avg_ns: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -321,12 +325,18 @@ impl BenchReport {
                     ))
                     .map(|baseline| result.results.consumer_throughput_ops_sec / baseline * 100.0)
             };
+            result.results.delta_vs_raw_ring_pct =
+                result.results.pct_of_raw_ring.map(|value| value - 100.0);
 
             result.results.speedup_vs_bincode = codec_speedup_key(result).and_then(|key| {
                 bincode_baselines
                     .get(&key)
                     .map(|baseline| result.results.consumer_throughput_ops_sec / baseline)
             });
+            result.results.delta_vs_bincode_pct = result
+                .results
+                .speedup_vs_bincode
+                .map(|value| (value - 1.0) * 100.0);
         }
     }
 }
@@ -397,6 +407,8 @@ fn infer_benchmark_name(result: &BenchResult) -> Option<&str> {
 fn codec_speedup_key(result: &BenchResult) -> Option<String> {
     let codec = result.codec.as_ref()?;
     let benchmark = infer_benchmark_name(result).unwrap_or(&result.benchmark_id);
+    let benchmark_family = codec_speedup_benchmark_family(benchmark);
+    let layer_family = codec_speedup_layer_family(&result.layer);
     let scenario_key = if result.scenario.contains(codec) {
         result.scenario.replacen(codec, "__codec__", 1)
     } else {
@@ -404,9 +416,26 @@ fn codec_speedup_key(result: &BenchResult) -> Option<String> {
     };
 
     Some(format!(
-        "{benchmark}|{}|{}|{}|{}|{scenario_key}",
-        result.backend, result.layer, result.measurement_mode, result.config.num_consumers,
+        "{benchmark_family}|{}|{}|{}|{}|{scenario_key}",
+        result.backend, layer_family, result.measurement_mode, result.config.num_consumers,
     ))
+}
+
+fn codec_speedup_benchmark_family(benchmark: &str) -> &str {
+    match benchmark {
+        "competitive_codec_shm"
+        | "competitive_codec_mmap"
+        | "competitive_typed_zero_copy_shm"
+        | "competitive_typed_zero_copy_mmap" => "competitive_codec_family",
+        other => other,
+    }
+}
+
+fn codec_speedup_layer_family(layer: &str) -> &str {
+    match layer {
+        "typed" | "typed_zero_copy" | "typed_zero_copy_flatbuf" => "typed_family",
+        other => other,
+    }
 }
 
 pub fn make_result(spec: BenchResultSpec) -> BenchResult {
@@ -450,7 +479,9 @@ pub fn make_result(spec: BenchResultSpec) -> BenchResult {
             consumer_checksum_total: None,
             phase_timing: None,
             pct_of_raw_ring: None,
+            delta_vs_raw_ring_pct: None,
             speedup_vs_bincode: None,
+            delta_vs_bincode_pct: None,
             access_avg_ns: None,
             access_vs_decode_speedup: None,
             alloc_count: None,
@@ -586,6 +617,10 @@ fn detect_git_commit() -> Option<String> {
 mod tests {
     use super::*;
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "reporting tests build explicit benchmark dimensions for table coverage"
+    )]
     fn make_test_result(
         bench_name: &str,
         scenario: &str,
@@ -788,6 +823,28 @@ mod tests {
         );
         raw.results.consumer_avg_data_rate_gbps = Some(2.88);
 
+        let mut raw_single = make_test_result(
+            "raw_ring_shm",
+            "message_1p1c_144B",
+            "shm",
+            "raw_ring",
+            None,
+            "max_throughput",
+            BenchTransportSpec::benchmark_shm(1)
+                .with_zero_copy(false)
+                .with_framing("none"),
+            144,
+            144,
+            1024,
+            100_000,
+            1000,
+            1,
+            19_000_000.0,
+            19_000_000.0,
+            None,
+        );
+        raw_single.results.consumer_avg_data_rate_gbps = Some(2.736);
+
         let mut bincode = make_test_result(
             "codec_e2e_shm",
             "codec_e2e_1p2c_8seq_bincode",
@@ -809,6 +866,28 @@ mod tests {
             None,
         );
         bincode.results.consumer_avg_data_rate_gbps = Some(0.00216);
+
+        let mut raw_myelon = make_test_result(
+            "competitive_raw_myelon_shm",
+            "competitive_raw_myelon_pingpong_1p2c_144B",
+            "shm",
+            "raw_myelon",
+            None,
+            "max_throughput",
+            BenchTransportSpec::benchmark_shm(2)
+                .with_zero_copy(false)
+                .with_framing("none"),
+            144,
+            144,
+            1024,
+            100_000,
+            1000,
+            2,
+            19_600_000.0,
+            19_600_000.0,
+            None,
+        );
+        raw_myelon.results.consumer_avg_data_rate_gbps = Some(2.8224);
 
         let mut rkyv = make_test_result(
             "codec_e2e_shm",
@@ -832,12 +911,65 @@ mod tests {
         );
         rkyv.results.consumer_avg_data_rate_gbps = Some(0.002592);
 
+        let mut zero_copy_rkyv = make_test_result(
+            "competitive_typed_zero_copy_shm",
+            "competitive_codec_pingpong_1p1c_rkyv_b8",
+            "shm",
+            "typed_zero_copy",
+            Some("rkyv"),
+            "max_throughput",
+            BenchTransportSpec::unified_competitive()
+                .with_zero_copy(true)
+                .with_framing("fixed_64k"),
+            384,
+            144,
+            1024,
+            100_000,
+            10_000,
+            1,
+            18_500.0,
+            18_500.0,
+            None,
+        );
+        zero_copy_rkyv.results.consumer_avg_data_rate_gbps = Some(0.002664);
+
+        let mut competitive_bincode = make_test_result(
+            "competitive_codec_shm",
+            "competitive_codec_pingpong_1p1c_bincode_b8",
+            "shm",
+            "typed",
+            Some("bincode"),
+            "max_throughput",
+            BenchTransportSpec::unified_competitive()
+                .with_zero_copy(false)
+                .with_framing("fixed_64k"),
+            512,
+            144,
+            1024,
+            100_000,
+            10_000,
+            1,
+            16_500.0,
+            16_500.0,
+            None,
+        );
+        competitive_bincode.results.consumer_avg_data_rate_gbps = Some(0.002376);
+
         let mut report = BenchReport::new();
         report.add(raw);
+        report.add(raw_single);
+        report.add(raw_myelon);
         report.add(bincode);
+        report.add(competitive_bincode);
         report.add(rkyv);
+        report.add(zero_copy_rkyv);
 
         let finalized = report.finalized();
+        let raw_myelon = finalized
+            .results
+            .iter()
+            .find(|result| result.layer == "raw_myelon")
+            .unwrap();
         let bincode = finalized
             .results
             .iter()
@@ -848,6 +980,11 @@ mod tests {
             .iter()
             .find(|result| result.codec.as_deref() == Some("rkyv"))
             .unwrap();
+        let zero_copy_rkyv = finalized
+            .results
+            .iter()
+            .find(|result| result.layer == "typed_zero_copy")
+            .unwrap();
 
         assert_eq!(
             bincode.config.coordination.as_deref(),
@@ -857,9 +994,18 @@ mod tests {
         assert_eq!(bincode.config.zero_copy, Some(false));
         assert_eq!(bincode.config.framing.as_deref(), Some("fixed_64k"));
         assert_eq!(bincode.results.speedup_vs_bincode, Some(1.0));
+        assert_eq!(bincode.results.delta_vs_bincode_pct, Some(0.0));
+        assert!(raw_myelon.results.pct_of_raw_ring.unwrap() > 95.0);
+        assert!(raw_myelon.results.delta_vs_raw_ring_pct.unwrap() > -5.0);
+        assert!(raw_myelon.results.delta_vs_raw_ring_pct.unwrap() < 0.0);
         assert!(rkyv.results.speedup_vs_bincode.unwrap() > 1.0);
+        assert!(rkyv.results.delta_vs_bincode_pct.unwrap() > 0.0);
         assert!(rkyv.results.pct_of_raw_ring.unwrap() > 0.0);
+        assert!(rkyv.results.delta_vs_raw_ring_pct.unwrap() < 0.0);
         assert!(rkyv.results.hw_efficiency_pct.unwrap() > 0.0);
+        assert!(zero_copy_rkyv.results.speedup_vs_bincode.unwrap() > 1.0);
+        assert!(zero_copy_rkyv.results.delta_vs_bincode_pct.unwrap() > 0.0);
+        assert!(zero_copy_rkyv.results.pct_of_raw_ring.unwrap() > 0.0);
     }
 
     #[test]

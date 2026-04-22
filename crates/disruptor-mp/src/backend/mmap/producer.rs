@@ -143,9 +143,8 @@ where
             .expect("startup_wait_timeout does not fit in Instant");
 
         loop {
-            let missing = state.missing_required_consumers(|consumer_id| {
-                self.discover_consumer_id(consumer_id)
-            });
+            let missing = state
+                .missing_required_consumers(|consumer_id| self.discover_consumer_id(consumer_id));
             if missing.is_empty() {
                 let now = std::time::Instant::now();
                 state.seed_progress(now, |consumer_id| self.consumer_sequence(consumer_id));
@@ -596,7 +595,8 @@ mod tests {
         let stop_consumer1_thread = Arc::clone(&stop_consumer1);
         let layout_for_thread = layout.clone();
         let consumer1_thread = std::thread::spawn(move || {
-            let mut consumer1 = MmapConsumer::<TestEvent>::attach(layout_for_thread, 4, "c1").unwrap();
+            let mut consumer1 =
+                MmapConsumer::<TestEvent>::attach(layout_for_thread, 4, "c1").unwrap();
             while !stop_consumer1_thread.load(Ordering::Acquire) {
                 if consumer1.try_consume_next().is_none() {
                     std::thread::sleep(Duration::from_millis(1));
@@ -655,7 +655,8 @@ mod tests {
         let stop_consumer1_thread = Arc::clone(&stop_consumer1);
         let layout_for_thread = layout.clone();
         let consumer1_thread = std::thread::spawn(move || {
-            let mut consumer1 = MmapConsumer::<TestEvent>::attach(layout_for_thread, 4, "c1").unwrap();
+            let mut consumer1 =
+                MmapConsumer::<TestEvent>::attach(layout_for_thread, 4, "c1").unwrap();
             while !stop_consumer1_thread.load(Ordering::Acquire) {
                 if consumer1.try_consume_next().is_none() {
                     std::thread::sleep(Duration::from_millis(1));
@@ -686,7 +687,8 @@ mod tests {
         let layout_for_rejoin = layout.clone();
         let rejoin_thread = std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(40));
-            let mut rejoined = MmapConsumer::<TestEvent>::attach(layout_for_rejoin, 4, "c2").unwrap();
+            let mut rejoined =
+                MmapConsumer::<TestEvent>::attach(layout_for_rejoin, 4, "c2").unwrap();
             let deadline = Instant::now() + Duration::from_millis(500);
             let mut consumed = 0usize;
             while Instant::now() < deadline && consumed < 6 {

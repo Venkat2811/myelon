@@ -215,7 +215,8 @@ impl SharedConsumerBarrier {
 
     /// Return the latest visible sequence for a known consumer id.
     pub fn consumer_sequence(&mut self, consumer_id: &str) -> Option<Sequence> {
-        if !self.consumer_cursors.contains_key(consumer_id) && !self.discover_consumer_id(consumer_id)
+        if !self.consumer_cursors.contains_key(consumer_id)
+            && !self.discover_consumer_id(consumer_id)
         {
             return None;
         }

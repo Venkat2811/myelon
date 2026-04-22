@@ -4,11 +4,13 @@ use disruptor_mp::{
 use std::env;
 use std::process::{Child, Command, Output, Stdio};
 use std::str;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::thread;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 const CHILD_TEST_NAME: &str = "mp_child_entry";
 const PREFIX: &str = "TMC";
+static SEGMENT_COUNTER: AtomicU32 = AtomicU32::new(0);
 
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -42,11 +44,18 @@ fn expected_checksum(events: u64) -> u64 {
 
 fn unique_segment(prefix: &str) -> String {
     let pid = std::process::id() % 10_000;
-    let timestamp_nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system time should be after epoch")
-        .as_nanos();
-    format!("{prefix}_{pid:04}_{timestamp_nanos}")
+    let suffix = SEGMENT_COUNTER.fetch_add(1, Ordering::Relaxed) % 10_000;
+    let compact_prefix: String = prefix
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .take(3)
+        .collect();
+    let compact_prefix = if compact_prefix.is_empty() {
+        PREFIX.to_lowercase()
+    } else {
+        compact_prefix.to_lowercase()
+    };
+    format!("{compact_prefix}{pid:04}{suffix:04}")
 }
 
 struct ChildSpec<'a> {

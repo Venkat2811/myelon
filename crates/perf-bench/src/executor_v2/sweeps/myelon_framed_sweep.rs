@@ -28,7 +28,7 @@ use std::time::{Duration, Instant};
 const MMAP_BACKLOG_CHECK_INTERVAL: u64 = 32;
 
 thread_local! {
-    static INTENDED_SEND_TIMESTAMP_NS: Cell<Option<u64>> = Cell::new(None);
+    static INTENDED_SEND_TIMESTAMP_NS: Cell<Option<u64>> = const { Cell::new(None) };
 }
 
 #[repr(C)]

@@ -47,7 +47,7 @@ fn producer_process() -> Result<(), Box<dyn std::error::Error>> {
     let mut producer = build_shared_single_producer::<Event>(&segment, BUFFER_SIZE)
         .enable_discovery(num_consumers)
         .with_coordination(CoordinationMode::Immediate)
-        .build_producer(|| Event::default())?;
+        .build_producer(Event::default)?;
 
     let coord = BenchmarkCoordination::create(&segment)?;
     if !coord.wait_for_consumers(num_consumers, Duration::from_secs(60)) {

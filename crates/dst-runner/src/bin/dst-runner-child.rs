@@ -267,7 +267,7 @@ fn run_shm_producer() -> ChildReport {
             backpressure_events: 0,
             attached_after_ms: 0,
         });
-        if pause_every > 0 && (sequence as usize + 1) % pause_every == 0 {
+        if pause_every > 0 && (sequence as usize + 1).is_multiple_of(pause_every) {
             thread::sleep(Duration::from_micros(pause_micros));
         }
     }
@@ -425,7 +425,7 @@ fn run_mmap_producer() -> ChildReport {
             backpressure_events: 0,
             attached_after_ms: 0,
         });
-        if pause_every > 0 && (sequence as usize + 1) % pause_every == 0 {
+        if pause_every > 0 && (sequence as usize + 1).is_multiple_of(pause_every) {
             thread::sleep(Duration::from_micros(pause_micros));
         }
     }

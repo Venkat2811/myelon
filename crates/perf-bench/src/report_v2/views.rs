@@ -43,6 +43,8 @@ impl ReportBundle {
             p99: String,
             #[tabled(rename = "% of Raw\nRing")]
             pct: String,
+            #[tabled(rename = "Delta\nvs Raw")]
+            delta: String,
         }
 
         let rows: Vec<Row> = self
@@ -88,6 +90,11 @@ impl ReportBundle {
                         .map(|stats| latency::format_ns(stats.p99_ns))
                         .unwrap_or_else(|| "-".to_string()),
                     pct,
+                    delta: outcome
+                        .derived
+                        .delta_vs_raw_ring_pct
+                        .map(|value| format!("{value:+.0}%"))
+                        .unwrap_or_else(|| "-".to_string()),
                 })
             })
             .collect();
@@ -128,6 +135,8 @@ impl ReportBundle {
             p99: String,
             #[tabled(rename = "% of\nRaw")]
             pct: String,
+            #[tabled(rename = "Delta\nvs Raw")]
+            delta: String,
         }
 
         let rows: Vec<Row> = self
@@ -180,6 +189,11 @@ impl ReportBundle {
                         .map(|stats| latency::format_ns(stats.p99_ns))
                         .unwrap_or_else(|| "-".to_string()),
                     pct,
+                    delta: outcome
+                        .derived
+                        .delta_vs_raw_ring_pct
+                        .map(|value| format!("{value:+.0}%"))
+                        .unwrap_or_else(|| "-".to_string()),
                 })
             })
             .collect();

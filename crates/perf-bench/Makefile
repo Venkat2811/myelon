@@ -27,17 +27,26 @@ smoke:
 	$(BENCH) --bench raw_ring_mmap -- --timeout 30 --class signal --consumers 1
 	$(BENCH) --bench framed_shm -- --timeout 30 --payload 1K_1c
 	$(BENCH) --bench framed_mmap -- --timeout 30 --payload 1K_1c
+	$(BENCH) --bench competitive_framed_shm -- --timeout 30 --payload 64B -n 1000 -w 100
+	$(BENCH) --bench competitive_framed_mmap -- --timeout 30 --payload 64B -n 1000 -w 100
 	$(BENCH) --bench codec_e2e_shm -- --timeout 30 --codec bincode --batch 8 --consumers 1
 	$(BENCH) --bench codec_e2e_mmap -- --timeout 30 --codec bincode --batch 8 --consumers 1
+	$(BENCH) --bench competitive_codec_shm -- --timeout 30 --codec bincode --batch 1 -n 1000 -w 100
+	$(BENCH) --bench competitive_codec_mmap -- --timeout 30 --codec bincode --batch 1 -n 1000 -w 100
+	$(BENCH) --bench competitive_typed_zero_copy_shm -- --timeout 30 --codec rkyv --batch 1 -n 1000 -w 100
+	$(BENCH) --bench competitive_typed_zero_copy_mmap -- --timeout 30 --codec rkyv --batch 1 -n 1000 -w 100
 	$(BENCH) --bench codec_nofrag_shm -- --timeout 30 --codec rkyv --batch 8 --consumers 1
 	$(BENCH) --bench wait_strategy_shm -- --timeout 30 quick
 	$(BENCH) --bench wait_strategy_mmap -- --timeout 30 quick
 	$(BENCH) --bench myelon_layers -- --timeout 30 --size 1KB --consumers 2 --layer raw_ring
+	$(BENCH) --bench myelon_layers -- --timeout 30 --size 1KB --consumers 2 --layer raw_myelon
 	$(BENCH) --bench nofrag_all -- --timeout 30 --size 1KB --consumers 2 --layer raw_ring --backend shm
 	$(BENCH) --bench monster_sweep_shm -- --timeout 30 --quick --size 64B --mode throughput
 	$(BENCH) --bench monster_sweep_mmap -- --timeout 30 --quick --size 64B --mode throughput
 	$(BENCH) --bench competitive_shm -- --timeout 30 -s 64 -n 1000 -w 100 --json --no-compare
 	$(BENCH) --bench competitive_mmap -- --timeout 30 -s 64 -n 1000 -w 100 --json --no-compare
+	$(BENCH) --bench competitive_raw_myelon_shm -- --timeout 30 -s 64 -n 1000 -w 100 --json --no-compare
+	$(BENCH) --bench competitive_raw_myelon_mmap -- --timeout 30 -s 64 -n 1000 -w 100 --json --no-compare
 	$(BENCH) --bench layout_validation --no-run
 	@echo "=== Smoke Test PASSED ==="
 
@@ -49,6 +58,28 @@ competitive:
 	$(BENCH) --bench competitive_mmap -- --timeout 60 -s 64 -n 100000 -w 10000 --no-compare
 	$(BENCH) --bench competitive_mmap -- --timeout 60 -s 64 -n 100000 -w 10000 --target-rate 20000 --no-compare
 	$(BENCH) --bench competitive_mmap -- --timeout 60 -s 64 -n 100000 -w 10000 --batch-timing --no-compare
+	$(BENCH) --bench competitive_raw_myelon_shm -- --timeout 60 -s 64 -n 100000 -w 10000 --no-compare
+	$(BENCH) --bench competitive_raw_myelon_shm -- --timeout 60 -s 64 -n 100000 -w 10000 --target-rate 20000 --no-compare
+	$(BENCH) --bench competitive_raw_myelon_shm -- --timeout 60 -s 64 -n 100000 -w 10000 --batch-timing --no-compare
+	$(BENCH) --bench competitive_raw_myelon_mmap -- --timeout 60 -s 64 -n 100000 -w 10000 --no-compare
+	$(BENCH) --bench competitive_raw_myelon_mmap -- --timeout 60 -s 64 -n 100000 -w 10000 --target-rate 20000 --no-compare
+	$(BENCH) --bench competitive_raw_myelon_mmap -- --timeout 60 -s 64 -n 100000 -w 10000 --batch-timing --no-compare
+	$(BENCH) --bench competitive_framed_shm -- --timeout 60 --payload 64B -n 100000 -w 10000
+	$(BENCH) --bench competitive_framed_shm -- --timeout 60 --payload 64B -n 100000 -w 10000 --mode co --target-rate 20000
+	$(BENCH) --bench competitive_framed_mmap -- --timeout 60 --payload 64B -n 100000 -w 10000
+	$(BENCH) --bench competitive_framed_mmap -- --timeout 60 --payload 64B -n 100000 -w 10000 --mode co --target-rate 20000
+	$(BENCH) --bench competitive_codec_shm -- --timeout 60 --codec bincode --batch 1 -n 100000 -w 10000
+	$(BENCH) --bench competitive_codec_shm -- --timeout 60 --codec bincode --batch 1 -n 100000 -w 10000 --mode co --target-rate 20000
+	$(BENCH) --bench competitive_codec_mmap -- --timeout 60 --codec bincode --batch 1 -n 100000 -w 10000
+	$(BENCH) --bench competitive_codec_mmap -- --timeout 60 --codec bincode --batch 1 -n 100000 -w 10000 --mode co --target-rate 20000
+	$(BENCH) --bench competitive_typed_zero_copy_shm -- --timeout 60 --codec rkyv --batch 1 -n 100000 -w 10000
+	$(BENCH) --bench competitive_typed_zero_copy_shm -- --timeout 60 --codec rkyv --batch 1 -n 100000 -w 10000 --mode co --target-rate 20000
+	$(BENCH) --bench competitive_typed_zero_copy_mmap -- --timeout 60 --codec rkyv --batch 1 -n 100000 -w 10000
+	$(BENCH) --bench competitive_typed_zero_copy_mmap -- --timeout 60 --codec rkyv --batch 1 -n 100000 -w 10000 --mode co --target-rate 20000
+	$(BENCH) --bench competitive_typed_zero_copy_shm -- --timeout 60 --codec flatbuf --batch 1 -n 100000 -w 10000
+	$(BENCH) --bench competitive_typed_zero_copy_shm -- --timeout 60 --codec flatbuf --batch 1 -n 100000 -w 10000 --mode co --target-rate 20000
+	$(BENCH) --bench competitive_typed_zero_copy_mmap -- --timeout 60 --codec flatbuf --batch 1 -n 100000 -w 10000
+	$(BENCH) --bench competitive_typed_zero_copy_mmap -- --timeout 60 --codec flatbuf --batch 1 -n 100000 -w 10000 --mode co --target-rate 20000
 
 # --- Myelon layer sweeps ---
 myelon-sweep:
@@ -152,11 +183,19 @@ results:
 	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/raw_ring_mmap.json $(BENCH) --bench raw_ring_mmap -- --timeout 300
 	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/framed_shm.json $(BENCH) --bench framed_shm
 	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/framed_mmap.json $(BENCH) --bench framed_mmap
+	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/competitive_framed_shm.json $(BENCH) --bench competitive_framed_shm -- --json --csv-out $(OUT_DIR)/competitive_framed_shm.csv --md-out $(OUT_DIR)/competitive_framed_shm.md
+	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/competitive_framed_mmap.json $(BENCH) --bench competitive_framed_mmap -- --json --csv-out $(OUT_DIR)/competitive_framed_mmap.csv --md-out $(OUT_DIR)/competitive_framed_mmap.md
 	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/codec_e2e_shm.json $(BENCH) --bench codec_e2e_shm
 	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/codec_e2e_mmap.json $(BENCH) --bench codec_e2e_mmap
+	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/competitive_codec_shm.json $(BENCH) --bench competitive_codec_shm -- --json --csv-out $(OUT_DIR)/competitive_codec_shm.csv --md-out $(OUT_DIR)/competitive_codec_shm.md
+	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/competitive_codec_mmap.json $(BENCH) --bench competitive_codec_mmap -- --json --csv-out $(OUT_DIR)/competitive_codec_mmap.csv --md-out $(OUT_DIR)/competitive_codec_mmap.md
+	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/competitive_typed_zero_copy_shm.json $(BENCH) --bench competitive_typed_zero_copy_shm -- --json --csv-out $(OUT_DIR)/competitive_typed_zero_copy_shm.csv --md-out $(OUT_DIR)/competitive_typed_zero_copy_shm.md
+	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/competitive_typed_zero_copy_mmap.json $(BENCH) --bench competitive_typed_zero_copy_mmap -- --json --csv-out $(OUT_DIR)/competitive_typed_zero_copy_mmap.csv --md-out $(OUT_DIR)/competitive_typed_zero_copy_mmap.md
 	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/codec_nofrag_shm.json $(BENCH) --bench codec_nofrag_shm
 	DISRUPTOR_MP_BENCHMARK_JSON_OUT=$(OUT_DIR)/competitive_shm.json $(BENCH) --bench competitive_shm -- --json-canonical --no-compare --csv-out $(OUT_DIR)/competitive_shm.csv --md-out $(OUT_DIR)/competitive_shm.md
 	DISRUPTOR_MP_BENCHMARK_JSON_OUT=$(OUT_DIR)/competitive_mmap.json $(BENCH) --bench competitive_mmap -- --json-canonical --no-compare --csv-out $(OUT_DIR)/competitive_mmap.csv --md-out $(OUT_DIR)/competitive_mmap.md
+	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/competitive_raw_myelon_shm.json $(BENCH) --bench competitive_raw_myelon_shm -- --json --csv-out $(OUT_DIR)/competitive_raw_myelon_shm.csv --md-out $(OUT_DIR)/competitive_raw_myelon_shm.md
+	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/competitive_raw_myelon_mmap.json $(BENCH) --bench competitive_raw_myelon_mmap -- --json --csv-out $(OUT_DIR)/competitive_raw_myelon_mmap.csv --md-out $(OUT_DIR)/competitive_raw_myelon_mmap.md
 	$(BENCH) --bench layout_validation -- --json-out $(OUT_DIR)/layout_validation.json --csv-out $(OUT_DIR)/layout_validation.csv --md-out $(OUT_DIR)/layout_validation.md
 	BENCH_MODE=full MYELON_BENCH_JSON_OUT=$(OUT_DIR)/wait_shm.json $(BENCH) --bench wait_strategy_shm
 	BENCH_MODE=full MYELON_BENCH_JSON_OUT=$(OUT_DIR)/wait_mmap.json $(BENCH) --bench wait_strategy_mmap

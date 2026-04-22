@@ -81,6 +81,10 @@ pub struct WorkloadConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "throughput reports dominate the model and are kept inline to avoid extra allocation churn"
+)]
 pub enum ScenarioOutcome {
     Throughput(ThroughputOutcome),
     Layout(LayoutOutcome),
@@ -137,7 +141,9 @@ pub struct VerificationMetrics {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DerivedMetrics {
     pub pct_of_raw_ring: Option<f64>,
+    pub delta_vs_raw_ring_pct: Option<f64>,
     pub speedup_vs_bincode: Option<f64>,
+    pub delta_vs_bincode_pct: Option<f64>,
     pub access_avg_ns: Option<f64>,
     pub access_vs_decode_speedup: Option<f64>,
     pub alloc_count: Option<u64>,

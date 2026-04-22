@@ -1,11 +1,11 @@
-use dst_fixtures::dst_contract::FailureClass;
 use dst_fixtures::dst_buggify::ScopedBuggify;
+use dst_fixtures::dst_contract::FailureClass;
 use dst_runner::{
     BackendKind, DstConfig, DstProperty, DstRunner, DstRunnerError, OracleViolation,
     RawRingHarness, RequiredConsumerLivenessPolicy, TransportKind,
 };
-use std::sync::{LazyLock, Mutex, MutexGuard};
 use std::ops::Deref;
+use std::sync::{LazyLock, Mutex, MutexGuard};
 use std::time::Duration;
 
 static RAW_RING_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
@@ -244,7 +244,7 @@ fn dst_failure_class_producer_before_consumers_shm() {
 #[test]
 fn dst_failure_class_producer_before_consumers_mmap() {
     let report = run_failure_case(
-        0x1705_1,
+        0x0001_7051,
         FailureClass::ProducerBeforeConsumers,
         BackendKind::Mmap,
         1,
@@ -260,7 +260,7 @@ fn dst_failure_class_producer_before_consumers_mmap() {
 #[test]
 fn dst_failure_class_producer_before_consumers_shm_broadcast() {
     let report = run_failure_case(
-        0x1705_2,
+        0x0001_7052,
         FailureClass::ProducerBeforeConsumers,
         BackendKind::Shm,
         3,
@@ -288,7 +288,7 @@ fn dst_failure_class_late_consumer_attach_mmap() {
 #[test]
 fn dst_failure_class_late_consumer_attach_shm() {
     let report = run_failure_case(
-        0x1706_3,
+        0x0001_7063,
         FailureClass::LateConsumerAttach,
         BackendKind::Shm,
         1,
@@ -301,7 +301,7 @@ fn dst_failure_class_late_consumer_attach_shm() {
 #[test]
 fn dst_failure_class_late_consumer_attach_shm_broadcast() {
     let report = run_failure_case(
-        0x1706_4,
+        0x0001_7064,
         FailureClass::LateConsumerAttach,
         BackendKind::Shm,
         3,
@@ -315,7 +315,7 @@ fn dst_failure_class_late_consumer_attach_shm_broadcast() {
 
 #[test]
 fn dst_failure_class_create_attach_churn_shm() {
-    let config = DstConfig::raw_ring_from_seed(0x1706_1)
+    let config = DstConfig::raw_ring_from_seed(0x0001_7061)
         .with_backend(BackendKind::Shm)
         .with_ring_depth(256)
         .with_payload_size(128)
@@ -338,7 +338,7 @@ fn dst_failure_class_create_attach_churn_shm() {
 
 #[test]
 fn dst_failure_class_producer_crash_and_restart_shm() {
-    let config = DstConfig::raw_ring_from_seed(0x1706_2)
+    let config = DstConfig::raw_ring_from_seed(0x0001_7062)
         .with_backend(BackendKind::Shm)
         .with_ring_depth(256)
         .with_payload_size(128)
@@ -417,7 +417,7 @@ fn dst_failure_class_consumer_crash_and_restart_shm() {
 
 #[test]
 fn dst_required_consumer_liveness_recovers_same_id_restart_shm() {
-    let config = required_consumer_stress_config(0x1708_2, BackendKind::Shm);
+    let config = required_consumer_stress_config(0x0001_7082, BackendKind::Shm);
     let mut runner = DstRunner::with_config(config);
     let report = runner
         .run_failure_class_with_required_consumer_liveness(
@@ -438,7 +438,7 @@ fn dst_required_consumer_liveness_recovers_same_id_restart_shm() {
 
 #[test]
 fn dst_required_consumer_liveness_recovers_same_id_restart_mmap() {
-    let config = required_consumer_stress_config(0x1708_3, BackendKind::Mmap);
+    let config = required_consumer_stress_config(0x0001_7083, BackendKind::Mmap);
     let mut runner = DstRunner::with_config(config);
     let report = runner
         .run_failure_class_with_required_consumer_liveness(
@@ -459,7 +459,7 @@ fn dst_required_consumer_liveness_recovers_same_id_restart_mmap() {
 
 #[test]
 fn dst_required_consumer_liveness_fails_late_restart_shm() {
-    let config = required_consumer_stress_config(0x1708_4, BackendKind::Shm);
+    let config = required_consumer_stress_config(0x0001_7084, BackendKind::Shm);
     let mut runner = DstRunner::with_config(config);
     let mut policy = required_consumer_policy(20);
     policy.consumer_kill_after_ms = 200;
@@ -487,7 +487,7 @@ fn dst_required_consumer_liveness_fails_late_restart_shm() {
 
 #[test]
 fn dst_required_consumer_liveness_fails_startup_when_required_consumer_never_appears() {
-    let config = required_consumer_stress_config(0x1708_5, BackendKind::Shm);
+    let config = required_consumer_stress_config(0x0001_7085, BackendKind::Shm);
     let mut runner = DstRunner::with_config(config);
     let mut policy = required_consumer_policy(1500);
     policy.required_consumer_missing_slots = 1;
@@ -514,7 +514,7 @@ fn dst_required_consumer_liveness_fails_startup_when_required_consumer_never_app
 
 #[test]
 fn dst_required_consumer_liveness_rejects_wrong_id_restart() {
-    let config = required_consumer_stress_config(0x1708_6, BackendKind::Shm);
+    let config = required_consumer_stress_config(0x0001_7086, BackendKind::Shm);
     let mut runner = DstRunner::with_config(config);
     let mut policy = required_consumer_policy(1500);
     policy.restart_with_wrong_consumer_id = true;
@@ -541,7 +541,7 @@ fn dst_required_consumer_liveness_rejects_wrong_id_restart() {
 
 #[test]
 fn dst_failure_class_readiness_gate_violation_shm() {
-    let config = DstConfig::raw_ring_from_seed(0x1708_1)
+    let config = DstConfig::raw_ring_from_seed(0x0001_7081)
         .with_backend(BackendKind::Shm)
         .with_ring_depth(256)
         .with_payload_size(128)

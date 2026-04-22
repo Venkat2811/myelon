@@ -79,14 +79,20 @@ impl RequiredConsumerLivenessConfig {
 
     /// Override the startup wait timeout for required consumer discovery.
     pub fn with_startup_wait_timeout(mut self, timeout: Duration) -> Self {
-        assert!(timeout > Duration::ZERO, "startup_wait_timeout must be positive");
+        assert!(
+            timeout > Duration::ZERO,
+            "startup_wait_timeout must be positive"
+        );
         self.startup_wait_timeout = timeout;
         self
     }
 
     /// Override the stall detection timeout for a required consumer.
     pub fn with_progress_timeout(mut self, timeout: Duration) -> Self {
-        assert!(timeout > Duration::ZERO, "progress_timeout must be positive");
+        assert!(
+            timeout > Duration::ZERO,
+            "progress_timeout must be positive"
+        );
         self.progress_timeout = timeout;
         self
     }
@@ -347,18 +353,26 @@ mod tests {
         state.seed_progress(start, |_| Some(7));
         state.mark_startup_completed(start);
 
-        let alert = state.evaluate_blocked(
-            start + Duration::from_millis(11),
-            8,
-            |consumer_id| if consumer_id == "c1" { Some(7) } else { Some(8) },
+        let alert = state.evaluate_blocked(start + Duration::from_millis(11), 8, |consumer_id| {
+            if consumer_id == "c1" {
+                Some(7)
+            } else {
+                Some(8)
+            }
+        });
+        assert!(
+            alert.is_none(),
+            "alert phase should not shutdown immediately"
         );
-        assert!(alert.is_none(), "alert phase should not shutdown immediately");
 
-        let shutdown = state.evaluate_blocked(
-            start + Duration::from_millis(17),
-            9,
-            |consumer_id| if consumer_id == "c1" { Some(7) } else { Some(9) },
-        );
+        let shutdown =
+            state.evaluate_blocked(start + Duration::from_millis(17), 9, |consumer_id| {
+                if consumer_id == "c1" {
+                    Some(7)
+                } else {
+                    Some(9)
+                }
+            });
         assert!(matches!(
             shutdown,
             Some(RequiredConsumerError::GracefulShutdownTriggered { consumer_id, .. })
@@ -373,46 +387,71 @@ mod tests {
         state.seed_progress(start, |_| Some(3));
         state.mark_startup_completed(start);
 
-        let _ = state.evaluate_blocked(
-            start + Duration::from_millis(11),
-            4,
-            |consumer_id| if consumer_id == "c1" { Some(3) } else { Some(4) },
-        );
+        let _ = state.evaluate_blocked(start + Duration::from_millis(11), 4, |consumer_id| {
+            if consumer_id == "c1" {
+                Some(3)
+            } else {
+                Some(4)
+            }
+        });
 
-        let recovered = state.evaluate_blocked(
-            start + Duration::from_millis(12),
-            5,
-            |consumer_id| if consumer_id == "c1" { Some(5) } else { Some(4) },
-        );
+        let recovered =
+            state.evaluate_blocked(start + Duration::from_millis(12), 5, |consumer_id| {
+                if consumer_id == "c1" {
+                    Some(5)
+                } else {
+                    Some(4)
+                }
+            });
         assert!(recovered.is_none());
 
-        let still_alive = state.evaluate_blocked(
-            start + Duration::from_millis(16),
-            5,
-            |consumer_id| if consumer_id == "c1" { Some(5) } else { Some(4) },
+        let still_alive =
+            state.evaluate_blocked(start + Duration::from_millis(16), 5, |consumer_id| {
+                if consumer_id == "c1" {
+                    Some(5)
+                } else {
+                    Some(4)
+                }
+            });
+        assert!(
+            still_alive.is_none(),
+            "progress should reset the stall window"
         );
-        assert!(still_alive.is_none(), "progress should reset the stall window");
     }
 
     #[test]
     fn caught_up_consumers_do_not_trip_stall_detection() {
         let mut state = RequiredConsumerLivenessState::new(test_config());
         let start = Instant::now();
-        state.seed_progress(start, |consumer_id| if consumer_id == "c1" { Some(4) } else { Some(0) });
+        state.seed_progress(start, |consumer_id| {
+            if consumer_id == "c1" {
+                Some(4)
+            } else {
+                Some(0)
+            }
+        });
         state.mark_startup_completed(start);
 
-        let alert = state.evaluate_blocked(
-            start + Duration::from_millis(17),
-            4,
-            |consumer_id| if consumer_id == "c1" { Some(4) } else { Some(0) },
+        let alert = state.evaluate_blocked(start + Duration::from_millis(17), 4, |consumer_id| {
+            if consumer_id == "c1" {
+                Some(4)
+            } else {
+                Some(0)
+            }
+        });
+        assert!(
+            alert.is_none(),
+            "first blocked observation should only start the grace window"
         );
-        assert!(alert.is_none(), "first blocked observation should only start the grace window");
 
-        let shutdown = state.evaluate_blocked(
-            start + Duration::from_millis(23),
-            4,
-            |consumer_id| if consumer_id == "c1" { Some(4) } else { Some(0) },
-        );
+        let shutdown =
+            state.evaluate_blocked(start + Duration::from_millis(23), 4, |consumer_id| {
+                if consumer_id == "c1" {
+                    Some(4)
+                } else {
+                    Some(0)
+                }
+            });
 
         assert!(matches!(
             shutdown,
@@ -425,28 +464,38 @@ mod tests {
     fn alert_hook_fires_once_per_stall_window() {
         let alerts: Arc<Mutex<Vec<RequiredConsumerAlert>>> = Arc::new(Mutex::new(Vec::new()));
         let hook_alerts = Arc::clone(&alerts);
-        let mut state = RequiredConsumerLivenessState::new(
-            test_config().with_alert_hook(Arc::new(move |alert| {
+        let mut state = RequiredConsumerLivenessState::new(test_config().with_alert_hook(
+            Arc::new(move |alert| {
                 hook_alerts.lock().unwrap().push(alert.clone());
-            })),
-        );
+            }),
+        ));
         let start = Instant::now();
         state.seed_progress(start, |_| Some(7));
         state.mark_startup_completed(start);
 
-        let first = state.evaluate_blocked(
-            start + Duration::from_millis(11),
-            8,
-            |consumer_id| if consumer_id == "c1" { Some(7) } else { Some(8) },
+        let first = state.evaluate_blocked(start + Duration::from_millis(11), 8, |consumer_id| {
+            if consumer_id == "c1" {
+                Some(7)
+            } else {
+                Some(8)
+            }
+        });
+        assert!(
+            first.is_none(),
+            "first stalled observation should only alert"
         );
-        assert!(first.is_none(), "first stalled observation should only alert");
 
-        let second = state.evaluate_blocked(
-            start + Duration::from_millis(13),
-            8,
-            |consumer_id| if consumer_id == "c1" { Some(7) } else { Some(8) },
+        let second = state.evaluate_blocked(start + Duration::from_millis(13), 8, |consumer_id| {
+            if consumer_id == "c1" {
+                Some(7)
+            } else {
+                Some(8)
+            }
+        });
+        assert!(
+            second.is_none(),
+            "same stall window should not emit a second alert"
         );
-        assert!(second.is_none(), "same stall window should not emit a second alert");
 
         let recorded = alerts.lock().unwrap().clone();
         assert_eq!(recorded.len(), 1, "stall hook should fire exactly once");

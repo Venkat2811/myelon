@@ -198,7 +198,7 @@ pub fn build_report(
         bench_name: backend.bench_name().to_string(),
         scenario: scenario_label(args),
         backend: backend.backend_name().to_string(),
-        layer: "competitive_pingpong".to_string(),
+        layer: "raw_ring".to_string(),
         codec: None,
         measurement_mode: measurement_mode(args),
         wait_strategy: args.wait_strategy.clone(),

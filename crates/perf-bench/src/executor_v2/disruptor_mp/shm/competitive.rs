@@ -5,6 +5,7 @@
 //! low-overhead batch-timing modes.
 
 #[allow(dead_code)]
+#[allow(clippy::duplicate_mod)]
 #[path = "../../../../../disruptor-mp/benches/ipc/competitive/common.rs"]
 mod common;
 #[path = "../../../../../disruptor-mp/benches/ipc/competitive/table.rs"]
@@ -28,6 +29,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
+type CompetitiveRunResult =
+    Result<(f64, Duration, Option<latency::LatencyStats>, bool, u64), Box<dyn std::error::Error>>;
 
 const DISCOVERY_SCAN_SLEEP: Duration = Duration::from_millis(150);
 const CONSUMER_PREFIX: &str = "cp";
@@ -295,7 +298,7 @@ fn run_warmup<const SIZE: usize>(
 fn run_throughput_mode<const SIZE: usize>(
     args: &Args,
     lanes: &mut [ShmLane<SIZE>],
-) -> Result<(f64, Duration, Option<latency::LatencyStats>, bool, u64), Box<dyn std::error::Error>> {
+) -> CompetitiveRunResult {
     let deadline = harness::spin_deadline();
     let benchmark_start = Instant::now();
     let mut recorder = LatencyRecorder::default_range();
@@ -361,7 +364,7 @@ fn run_throughput_mode<const SIZE: usize>(
 fn run_batch_timing_mode<const SIZE: usize>(
     args: &Args,
     lanes: &mut [ShmLane<SIZE>],
-) -> Result<(f64, Duration, Option<latency::LatencyStats>, bool, u64), Box<dyn std::error::Error>> {
+) -> CompetitiveRunResult {
     let deadline = harness::spin_deadline();
     let benchmark_start = Instant::now();
     let lane_count = lanes.len();
@@ -427,7 +430,7 @@ fn run_batch_timing_mode<const SIZE: usize>(
 fn run_fixed_rate_mode<const SIZE: usize>(
     args: &Args,
     lanes: &mut [ShmLane<SIZE>],
-) -> Result<(f64, Duration, Option<latency::LatencyStats>, bool, u64), Box<dyn std::error::Error>> {
+) -> CompetitiveRunResult {
     let target_rate = args
         .target_rate
         .ok_or("--target-rate is required for fixed-rate mode")?;
@@ -664,12 +667,13 @@ fn run_process_one(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         64 => run_benchmark::<64>(args, buffer_size),
         512 => run_benchmark::<512>(args, buffer_size),
         1024 => run_benchmark::<1024>(args, buffer_size),
+        2048 => run_benchmark::<2048>(args, buffer_size),
         4096 => run_benchmark::<4096>(args, buffer_size),
         16384 => run_benchmark::<16384>(args, buffer_size),
         65536 => run_benchmark::<65536>(args, buffer_size),
         131072 => run_benchmark::<131072>(args, buffer_size),
         _ => Err(format!(
-            "unsupported message size: {} (expected 64, 512, 1024, 4096, 16384, 65536, 131072)",
+            "unsupported message size: {} (expected 64, 512, 1024, 2048, 4096, 16384, 65536, 131072)",
             args.message_size
         )
         .into()),
@@ -706,6 +710,13 @@ fn run_process_two() -> Result<(), Box<dyn std::error::Error>> {
             &wait_strategy,
         ),
         1024 => echo_server::<1024>(
+            &ping_segment,
+            &pong_segment,
+            &coordination,
+            buffer_size,
+            &wait_strategy,
+        ),
+        2048 => echo_server::<2048>(
             &ping_segment,
             &pong_segment,
             &coordination,

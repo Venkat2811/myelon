@@ -3,7 +3,7 @@
 //! Answers: "How much overhead does each myelon abstraction layer add vs raw disruptor?"
 //!
 //! At each payload size, measures:
-//!   raw_ring:     BenchEvent<SIZE> directly on disruptor ring
+//!   raw_ring:     `BenchEvent<SIZE>` directly on disruptor ring
 //!   framed:       FramedTransport publish(&[u8]) over SHM ring (64KB frame)
 //!   framed_batch: FramedTransport batch recv (process_available_messages)
 //!   framed_right: FramedTransport with right-sized frame (no bandwidth waste)
@@ -34,6 +34,10 @@ use myelon::transport::{
     MyelonWaitStrategy, ReassemblyBuffer,
 };
 use myelon::typed_transport::{TypedConsumer, TypedProducer};
+use myelon::{
+    attach_shared_consumer as my_attach_shared_consumer,
+    build_shared_single_producer as my_build_shared_single_producer,
+};
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
@@ -404,6 +408,88 @@ raw_impl!(Ev4K, raw_prod_4k, raw_cons_4k);
 raw_impl!(Ev16K, raw_prod_16k, raw_cons_16k);
 raw_impl!(Ev64K, raw_prod_64k, raw_cons_64k);
 
+macro_rules! raw_myelon_impl {
+    ($ev:ty, $prod_fn:ident, $cons_fn:ident) => {
+        fn $prod_fn() -> Result<(), Box<dyn std::error::Error>> {
+            let segment = segment_from_env("BENCHMARK_SEGMENT_NAME");
+            let buffer = read_env_usize("BENCH_BUFFER", 4096);
+            let events = read_env_u64("BENCH_EVENTS", 100_000);
+            let num_consumers = read_env_usize("BENCH_CONSUMERS", 1);
+            let mut producer = my_build_shared_single_producer::<$ev>(&segment, buffer)
+                .enable_discovery(num_consumers)
+                .with_coordination(myelon::producer::CoordinationMode::Immediate)
+                .build_producer(|| <$ev>::default())?;
+            let coord = BenchmarkCoordination::create(&segment)?;
+            if !coord.wait_for_consumers(num_consumers, Duration::from_secs(30)) {
+                return Err(format!("timeout waiting for {num_consumers} consumers").into());
+            }
+            warm_discovery_scans(
+                || producer.min_gating_sequence(),
+                discovery_scan_rounds(num_consumers),
+            );
+            let start = Instant::now();
+            for i in 0..events {
+                producer.publish(|s| {
+                    s.sequence = i;
+                    s.timestamp_ns = nanos_now();
+                    s.payload.fill((i & 0xFF) as u8);
+                });
+            }
+            let elapsed = start.elapsed();
+            let output = ProducerOutput::from_elapsed(events, elapsed, std::mem::size_of::<$ev>());
+            println!("{}", serde_json::to_string(&output)?);
+            coord.signal_producer_done(events as i64);
+            coord.wait_for_consumers_done(num_consumers, Duration::from_secs(60));
+            Ok(())
+        }
+
+        fn $cons_fn() -> Result<(), Box<dyn std::error::Error>> {
+            let segment = segment_from_env("BENCHMARK_SEGMENT_NAME");
+            let consumer_id = read_env_usize("BENCH_CONSUMER_ID", 0);
+            let buffer = read_env_usize("BENCH_BUFFER", 4096);
+            let events = read_env_u64("BENCH_EVENTS", 100_000);
+            let coord =
+                BenchmarkCoordination::attach_with_timeout(&segment, Duration::from_secs(30))?;
+            let mut consumer =
+                my_attach_shared_consumer::<$ev>(&segment, buffer).build_consumer()?;
+            coord.signal_consumer_ready();
+            let mut consumed = 0u64;
+            let mut start: Option<Instant> = None;
+            let mut checksum = 0u64;
+            while consumed < events {
+                consumer.process_available(|s, _| {
+                    if start.is_none() {
+                        start = Some(Instant::now());
+                    }
+                    let payload_sum = access_raw(&s.payload);
+                    black_box(payload_sum);
+                    checksum = checksum.wrapping_add(payload_sum);
+                    consumed += 1;
+                });
+                if consumed < events {
+                    std::hint::spin_loop();
+                }
+            }
+            let elapsed = start.expect("consumer never received an event").elapsed();
+            let output = ConsumerOutput::from_elapsed(
+                consumer_id,
+                consumed,
+                elapsed,
+                std::mem::size_of::<$ev>(),
+                checksum,
+            );
+            println!("{}", serde_json::to_string(&output)?);
+            coord.signal_consumer_done(consumed as i64);
+            Ok(())
+        }
+    };
+}
+
+raw_myelon_impl!(Ev1K, my_raw_prod_1k, my_raw_cons_1k);
+raw_myelon_impl!(Ev4K, my_raw_prod_4k, my_raw_cons_4k);
+raw_myelon_impl!(Ev16K, my_raw_prod_16k, my_raw_cons_16k);
+raw_myelon_impl!(Ev64K, my_raw_prod_64k, my_raw_cons_64k);
+
 // ============================================================
 // Framed producer/consumer
 // ============================================================
@@ -741,9 +827,11 @@ impl IpcBenchmark for LayerScenario {
 
     fn transport_metadata(&self) -> reporting::BenchTransportSpec {
         match self.layer {
-            "raw_ring" => reporting::BenchTransportSpec::benchmark_shm(self.consumers)
-                .with_zero_copy(false)
-                .with_framing("none"),
+            "raw_ring" | "raw_myelon" => {
+                reporting::BenchTransportSpec::benchmark_shm(self.consumers)
+                    .with_zero_copy(false)
+                    .with_framing("none")
+            }
             "framed" => reporting::BenchTransportSpec::benchmark_shm(self.consumers)
                 .with_zero_copy(false)
                 .with_framing("fixed_64k"),
@@ -818,7 +906,13 @@ impl LayerScenario {
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "layer sweep scenarios intentionally spell out all fixed transport knobs"
+)]
 fn raw_scenario(
+    layer: &'static str,
+    segment_prefix: &'static str,
     size_tag: &'static str,
     payload_size: usize,
     prod_role: &'static str,
@@ -827,9 +921,9 @@ fn raw_scenario(
     buffer: usize,
 ) -> LayerScenario {
     LayerScenario {
-        layer: "raw_ring",
+        layer,
         codec: None,
-        segment_prefix: "ml_raw",
+        segment_prefix,
         size_tag,
         payload_size,
         events,
@@ -844,6 +938,10 @@ fn raw_scenario(
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "layer sweep scenarios intentionally spell out all fixed transport knobs"
+)]
 fn framed_scenario(
     layer: &'static str,
     segment_prefix: &'static str,
@@ -886,6 +984,14 @@ const CHILD_ROLES: &[harness::ChildRole] = &[
     harness::ChildRole::new("raw_cons_16k", raw_cons_16k),
     harness::ChildRole::new("raw_prod_64k", raw_prod_64k),
     harness::ChildRole::new("raw_cons_64k", raw_cons_64k),
+    harness::ChildRole::new("my_raw_prod_1k", my_raw_prod_1k),
+    harness::ChildRole::new("my_raw_cons_1k", my_raw_cons_1k),
+    harness::ChildRole::new("my_raw_prod_4k", my_raw_prod_4k),
+    harness::ChildRole::new("my_raw_cons_4k", my_raw_cons_4k),
+    harness::ChildRole::new("my_raw_prod_16k", my_raw_prod_16k),
+    harness::ChildRole::new("my_raw_cons_16k", my_raw_cons_16k),
+    harness::ChildRole::new("my_raw_prod_64k", my_raw_prod_64k),
+    harness::ChildRole::new("my_raw_cons_64k", my_raw_cons_64k),
     harness::ChildRole::new("framed_prod", framed_producer),
     harness::ChildRole::new("framed_cons", framed_consumer),
     harness::ChildRole::new("framed_batch_cons", framed_batch_consumer),
@@ -925,7 +1031,7 @@ impl harness::BenchHarness for MyelonLayersBench {
 
         if !selection.output_args.json_mode {
             println!("=== Myelon Layer Overhead Sweep ===");
-            println!("Compares raw disruptor ring vs FramedTransport vs TypedTransport+codec");
+            println!("Compares raw disruptor ring vs curated raw myelon vs higher myelon layers");
             println!("Full payload fill + consumer read. SHM backend.");
             println!();
         }
@@ -970,6 +1076,18 @@ impl harness::BenchHarness for MyelonLayersBench {
                     let buffer = variant.buffer_override.unwrap_or(spec.buffer_depth);
                     let mut scenario = match variant.kind {
                         sweep_specs::MyelonLayerVariantKind::Raw => raw_scenario(
+                            "raw_ring",
+                            variant.segment_prefix,
+                            spec.tag,
+                            spec.payload_bytes,
+                            variant.prod_role,
+                            variant.cons_role,
+                            spec.events,
+                            buffer,
+                        ),
+                        sweep_specs::MyelonLayerVariantKind::RawMyelon => raw_scenario(
+                            "raw_myelon",
+                            variant.segment_prefix,
                             spec.tag,
                             spec.payload_bytes,
                             variant.prod_role,

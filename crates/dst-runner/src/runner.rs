@@ -714,6 +714,10 @@ impl DstRunner {
         Ok(report)
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "fault orchestration needs explicit mutable access to process and partial-report state"
+    )]
     fn apply_runtime_faults(
         &mut self,
         harness: &RawRingHarness,
@@ -788,7 +792,11 @@ impl DstRunner {
                     BackendKind::Mmap => unique_segment("dst"),
                 };
                 let restart_consumer_prefix = format!("{consumer_prefix}_r");
-                for consumer_index in 0..self.config.consumer_count {
+                for (consumer_index, consumer_slot) in consumers
+                    .iter_mut()
+                    .enumerate()
+                    .take(self.config.consumer_count)
+                {
                     let restarted = self.spawn_raw_ring_child(
                         harness,
                         run_root,
@@ -813,7 +821,7 @@ impl DstRunner {
                         TraceStatus::Success,
                         "fault=producer_kill_and_restart",
                     );
-                    consumers[consumer_index] = restarted;
+                    *consumer_slot = restarted;
                 }
                 thread::sleep(Duration::from_millis(policy.startup_delay_ms));
                 let restarted = self.spawn_raw_ring_child(
@@ -937,6 +945,10 @@ impl DstRunner {
         Ok(())
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "child launch inputs are kept explicit so env wiring stays readable at each callsite"
+    )]
     fn spawn_raw_ring_child(
         &self,
         harness: &RawRingHarness,
@@ -1021,7 +1033,10 @@ impl DstRunner {
                 required_consumer_ids.push(format!("{consumer_prefix}_missing_{index}"));
             }
             cmd.env("DST_REQUIRED_CONSUMER_IDS", required_consumer_ids.join(","))
-                .env("DST_REQUIRED_STARTUP_WAIT_MS", required.startup_wait_ms.to_string())
+                .env(
+                    "DST_REQUIRED_STARTUP_WAIT_MS",
+                    required.startup_wait_ms.to_string(),
+                )
                 .env(
                     "DST_REQUIRED_PROGRESS_TIMEOUT_MS",
                     required.progress_timeout_ms.to_string(),
@@ -1263,9 +1278,13 @@ fn merge_child_reports(
     }
 
     let overlap_cutoff = merged.messages.last().map(|message| message.sequence);
-    merged.messages.extend(suffix.messages.into_iter().filter(|message| {
-        overlap_cutoff.map(|cutoff| message.sequence > cutoff).unwrap_or(true)
-    }));
+    merged
+        .messages
+        .extend(suffix.messages.into_iter().filter(|message| {
+            overlap_cutoff
+                .map(|cutoff| message.sequence > cutoff)
+                .unwrap_or(true)
+        }));
     merged.checksum_total = merged
         .messages
         .iter()
@@ -1338,9 +1357,13 @@ fn concat_child_reports(prefix: Option<ChildReport>, suffix: ChildReport) -> Chi
     });
 
     let overlap_cutoff = merged.messages.last().map(|message| message.sequence);
-    merged.messages.extend(suffix.messages.into_iter().filter(|message| {
-        overlap_cutoff.map(|cutoff| message.sequence > cutoff).unwrap_or(true)
-    }));
+    merged
+        .messages
+        .extend(suffix.messages.into_iter().filter(|message| {
+            overlap_cutoff
+                .map(|cutoff| message.sequence > cutoff)
+                .unwrap_or(true)
+        }));
     merged.checksum_total = merged
         .messages
         .iter()

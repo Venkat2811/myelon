@@ -3,11 +3,8 @@
 //! SHM FramedTransport in a true multiprocess setup and verifies
 //! byte-for-byte correctness.
 
-use myelon::transport::{
-    FixedFrame, FramedTransportConsumer, FramedTransportProducer, MyelonWaitStrategy,
-};
+use myelon::transport::{FixedFrame, FramedTransportProducer};
 use std::env;
-use std::io::Read as _;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -100,9 +97,7 @@ fn frag_consumer_child() {
 
     // Retry attach — use raw consumer for frame-level debugging
     use disruptor_mp::{SharedDisruptorBuilder, SharedMemoryConfig};
-    use myelon::transport::{
-        frame_flags, is_last_frame, is_single_frame, FrameMeta, FramedTransportFrame,
-    };
+    use myelon::transport::{is_last_frame, is_single_frame, FramedTransportFrame};
 
     let config = SharedMemoryConfig {
         name: segment.clone(),
@@ -122,7 +117,7 @@ fn frag_consumer_child() {
                 );
                 break c;
             }
-            Err(e) if Instant::now() < deadline => {
+            Err(_) if Instant::now() < deadline => {
                 std::thread::sleep(Duration::from_millis(25));
             }
             Err(e) => panic!("attach failed: {e}"),
@@ -167,11 +162,9 @@ fn frag_consumer_child() {
             return (kind, payload);
         }
 
-        let mut frame_count = 1u32;
         loop {
             let (_, frame) = raw_consumer.consume_next();
             let frame = frame.frame_meta();
-            frame_count += 1;
 
             if frame.msg_id != msg_id {
                 if msg_count < 40 {

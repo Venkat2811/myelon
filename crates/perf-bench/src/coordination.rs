@@ -240,7 +240,7 @@ unsafe impl Sync for UnifiedCoordination {}
 impl Drop for UnifiedCoordination {
     fn drop(&mut self) {
         if self.is_owner {
-            Self::force_unlink(&self._shmem.get_os_id().to_string());
+            Self::force_unlink(self._shmem.get_os_id());
         }
     }
 }

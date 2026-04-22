@@ -5,7 +5,7 @@ use super::model::{
 use crate::events::format_throughput;
 use crate::latency::format_ns;
 use std::collections::BTreeMap;
-use std::iter::repeat;
+use std::iter::repeat_n;
 
 const TREE_COL_BUF: usize = 4;
 // Width policy: never wrap or truncate the tree label column. Instead, widen the
@@ -175,6 +175,7 @@ impl ReportBundle {
                 "p50",
                 "p99",
                 "%raw",
+                "Δraw",
                 "hw%",
                 "codec%",
                 "acc ns",
@@ -201,6 +202,7 @@ impl ReportBundle {
                         p50,
                         p99,
                         pct_raw,
+                        delta_raw,
                         hw_pct,
                         codec_pct,
                         access_avg,
@@ -250,6 +252,11 @@ impl ReportBundle {
                                 .unwrap_or_else(|| "-".to_string()),
                             outcome
                                 .derived
+                                .delta_vs_raw_ring_pct
+                                .map(|pct| format!("{pct:+.0}%"))
+                                .unwrap_or_else(|| "-".to_string()),
+                            outcome
+                                .derived
                                 .hw_efficiency_pct
                                 .map(|pct| format!("{pct:.1}%"))
                                 .unwrap_or_else(|| "-".to_string()),
@@ -274,6 +281,7 @@ impl ReportBundle {
                             "-".to_string(),
                             scenario.config.workload.num_producers.to_string(),
                             scenario.config.workload.num_consumers.to_string(),
+                            "-".to_string(),
                             "-".to_string(),
                             "-".to_string(),
                             "-".to_string(),
@@ -311,6 +319,7 @@ impl ReportBundle {
                             p50,
                             p99,
                             pct_raw,
+                            delta_raw,
                             hw_pct,
                             codec_pct,
                             access_avg,
@@ -572,7 +581,7 @@ fn format_avg_ns(value: f64) -> String {
 fn right_pad_tree_name(buf: &mut String, max_name_span: &mut usize) {
     let buf_len = buf.chars().count();
     let pad_len = TREE_COL_BUF + max_name_span.saturating_sub(buf_len);
-    buf.extend(repeat(' ').take(pad_len));
+    buf.extend(repeat_n(' ', pad_len));
 
     if buf_len > *max_name_span {
         *max_name_span = buf_len;
@@ -597,7 +606,7 @@ fn write_tree_columns(buf: &mut String, columns: &[&str], widths: &mut [usize]) 
 
         if !is_last {
             if let Some(rem_width) = widths[index].checked_sub(value_width) {
-                buf.extend(repeat(' ').take(rem_width));
+                buf.extend(repeat_n(' ', rem_width));
             } else {
                 widths[index] = value_width;
             }
@@ -614,6 +623,10 @@ mod tests {
     use crate::scenario_v2::layout;
     use std::time::Duration;
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "tree rendering tests build explicit benchmark rows for readability"
+    )]
     fn make_test_result(
         bench_name: &str,
         scenario: &str,
@@ -686,10 +699,10 @@ mod tests {
         report.add(result);
         let tree = report.to_report_v2().render_tree();
         let expected = concat!(
-            "perf-bench/raw_ring_shm     payload │ depth │ P │ C │ prod ops/s │ cons ops/s │ prod BW │ cons BW │ p50   │ p99   │ %raw │ hw%  │ codec% │ acc ns  │ acc x │ coord │ disc  │ zc │ frame │ mode           │ wait\n",
+            "perf-bench/raw_ring_shm     payload │ depth │ P │ C │ prod ops/s │ cons ops/s │ prod BW │ cons BW │ p50   │ p99   │ %raw │ Δraw │ hw%  │ codec% │ acc ns  │ acc x │ coord │ disc  │ zc │ frame │ mode           │ wait\n",
             "╰─ shm\n",
             "   ╰─ raw_ring\n",
-            "      ╰─ signal 1p2c 64B    64B     │ 65K   │ 1 │ 2 │ 10.00M     │ 9.50M      │ 640MB/s │ 607MB/s │ 250ns │ 250ns │ 100% │ 0.2% │ -      │ 123.4ns │ 5.6x  │ bench │ on(2) │ no │ none  │ max_throughput │ BusySpin\n",
+            "      ╰─ signal 1p2c 64B    64B     │ 65K   │ 1 │ 2 │ 10.00M     │ 9.50M      │ 640MB/s │ 607MB/s │ 250ns │ 250ns │ 100% │ +0%  │ 0.2% │ -      │ 123.4ns │ 5.6x  │ bench │ on(2) │ no │ none  │ max_throughput │ BusySpin\n",
         );
         assert_eq!(tree, expected);
     }
@@ -720,7 +733,7 @@ mod tests {
             "competitive_shm",
             "competitive_pingpong_1p1c_64B",
             "shm",
-            "competitive",
+            "raw_ring",
             reporting::BenchTransportSpec::unified_competitive()
                 .with_zero_copy(false)
                 .with_framing("none"),
@@ -737,10 +750,10 @@ mod tests {
         report.add(result);
         let tree = report.to_report_v2().render_tree();
         let expected = concat!(
-            "perf-bench/competitive_shm                payload │ depth │ P │ C │ prod ops/s │ cons ops/s │ prod BW │ cons BW │ p50 │ p99 │ %raw │ hw%  │ codec% │ acc ns │ acc x │ coord   │ disc │ zc │ frame │ mode           │ wait\n",
+            "perf-bench/competitive_shm                payload │ depth │ P │ C │ prod ops/s │ cons ops/s │ prod BW │ cons BW │ p50 │ p99 │ %raw │ Δraw │ hw%  │ codec% │ acc ns │ acc x │ coord   │ disc │ zc │ frame │ mode           │ wait\n",
             "╰─ shm\n",
-            "   ╰─ competitive\n",
-            "      ╰─ competitive pingpong 1p1c 64B    64B     │ 1K    │ 1 │ 1 │ 4.20M      │ 4.20M      │ 269MB/s │ 269MB/s │ -   │ -   │ -    │ 0.1% │ -      │ -      │ -     │ unified │ off  │ no │ none  │ max_throughput │ BusySpin\n",
+            "   ╰─ raw_ring\n",
+            "      ╰─ competitive pingpong 1p1c 64B    64B     │ 1K    │ 1 │ 1 │ 4.20M      │ 4.20M      │ 269MB/s │ 269MB/s │ -   │ -   │ 100% │ +0%  │ 0.1% │ -      │ -      │ -     │ unified │ off  │ no │ none  │ max_throughput │ BusySpin\n",
         );
         assert_eq!(tree, expected);
     }

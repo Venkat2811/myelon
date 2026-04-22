@@ -95,19 +95,10 @@ impl Default for MessageEvent {
 /// Head-to-head with Alvarez Rosa V5 (305M) and Intel (452M) articles.
 /// 64 bytes total (16 data + 48 padding from alignment).
 #[repr(C, align(64))]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 struct SignalEvent {
     sequence: u64,
     data: u64,
-}
-
-impl Default for SignalEvent {
-    fn default() -> Self {
-        Self {
-            sequence: 0,
-            data: 0,
-        }
-    }
 }
 
 // ============================================================

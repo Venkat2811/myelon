@@ -180,15 +180,12 @@ fn test_dst_multiprocess_coverage_matrix_contains_expected_entries() {
         };
 
         assert!(
-            entry
-                .test_names
-                .iter()
-                .any(|name| {
-                    name.contains("true_multiprocess")
-                        || name.contains("ring_buffer")
-                        || name.contains("dst_failure_class_")
-                        || name.contains("cursor_")
-                }),
+            entry.test_names.iter().any(|name| {
+                name.contains("true_multiprocess")
+                    || name.contains("ring_buffer")
+                    || name.contains("dst_failure_class_")
+                    || name.contains("cursor_")
+            }),
             "class {class:?} should map to an implemented multiprocess regression test"
         );
 

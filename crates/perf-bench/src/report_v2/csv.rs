@@ -5,10 +5,10 @@ impl ReportBundle {
         let mut csv = String::from(
             "scenario,backend,layer,codec,mode,strategy,msg_bytes,payload_bytes,buffer,consumers,\
              coordination,discovery,zero_copy,framing,prod_ops,cons_ops,mbps,cons_min_ops,\
-             cons_max_ops,cons_total_ops,checksum_total,pct_raw,speedup_vs_bincode,access_avg_ns,\
-             access_vs_decode_speedup,alloc_count,alloc_bytes,hw_limit_gbps,hw_efficiency_pct,\
-             p50_ns,p99_ns,p999_ns,p9999_ns,p99999_ns,verified,layout_avg_ns,layout_budget_ns,\
-             layout_pass,layout_iterations\n",
+             cons_max_ops,cons_total_ops,checksum_total,pct_raw,delta_raw_pct,speedup_vs_bincode,\
+             delta_bincode_pct,access_avg_ns,access_vs_decode_speedup,alloc_count,alloc_bytes,\
+             hw_limit_gbps,hw_efficiency_pct,p50_ns,p99_ns,p999_ns,p9999_ns,p99999_ns,verified,\
+             layout_avg_ns,layout_budget_ns,layout_pass,layout_iterations\n",
         );
 
         for scenario in &self.scenarios {
@@ -67,8 +67,18 @@ impl ReportBundle {
                             .unwrap_or_default(),
                         outcome
                             .derived
+                            .delta_vs_raw_ring_pct
+                            .map(|value| format!("{value:.2}"))
+                            .unwrap_or_default(),
+                        outcome
+                            .derived
                             .speedup_vs_bincode
                             .map(|value| format!("{value:.4}"))
+                            .unwrap_or_default(),
+                        outcome
+                            .derived
+                            .delta_vs_bincode_pct
+                            .map(|value| format!("{value:.2}"))
                             .unwrap_or_default(),
                         outcome
                             .derived

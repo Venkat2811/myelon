@@ -53,6 +53,10 @@ fn monster_sweep_size_label(bytes: usize) -> &'static str {
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "catalog rows are constructed from explicit benchmark dimensions"
+)]
 fn push_monster_sweep_scenario(
     specs: &mut Vec<MonsterSweepScenarioSpec>,
     label: impl Into<String>,

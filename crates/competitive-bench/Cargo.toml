@@ -2,29 +2,22 @@
 name = "competitive-bench"
 version = "0.1.0"
 edition = "2021"
-description = "Competitive IPC benchmark suite — disruptor-mp vs crossbar, photon-ring, shmipc, Aeron, ZMQ"
+description = "Parity-oriented IPC benchmark orchestrator for mp_ipc_world_domination-style comparisons"
 license = "MIT"
 publish = false
 
 [dependencies]
-# Our transport
-disruptor_mp = { package = "disruptor-mp", path = "../disruptor-mp" }
-
-# Benchmark infrastructure (shared with perf-bench)
-hdrhistogram = "7.5"
-tabled = "0.20.0"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-chrono = "0.4"
-
-# Competitors (will be enabled as git submodules are added)
-# crossbar = { path = "submodules/crossbar" }
-# photon-ring = { path = "submodules/photon-ring" }
+chrono = { version = "0.4", default-features = true }
+clap = { version = "4", features = ["derive"] }
+crossbar = { path = "third_party/crossbar" }
+hdrhistogram = "7"
+rusteron-client = "0.1.162"
+rusteron-media-driver = "0.1.162"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+shmipc = "0.1.1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+zmq = "0.10.0"
 
 [lib]
 name = "competitive_bench"
-
-[[bench]]
-name = "pingpong_disruptor"
-path = "benches/pingpong_disruptor.rs"
-harness = false

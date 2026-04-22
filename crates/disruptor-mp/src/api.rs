@@ -721,7 +721,8 @@ mod tests {
         let name_for_wrong_rejoin = name.clone();
         let wrong_rejoin_thread = thread::spawn(move || {
             thread::sleep(Duration::from_millis(40));
-            let mut wrong_consumer = attach_named_consumer(&name_for_wrong_rejoin, buffer_size, "c3");
+            let mut wrong_consumer =
+                attach_named_consumer(&name_for_wrong_rejoin, buffer_size, "c3");
             let deadline = Instant::now() + Duration::from_millis(500);
             let mut consumed = 0usize;
             while Instant::now() < deadline && consumed < buffer_size + 2 {
@@ -833,7 +834,10 @@ mod tests {
         consumer1_thread.join().unwrap();
         let rejoined_consumed = rejoin_thread.join().unwrap();
 
-        assert!(rejoined_consumed > 0, "late rejoined consumer may still drain retained backlog");
+        assert!(
+            rejoined_consumed > 0,
+            "late rejoined consumer may still drain retained backlog"
+        );
         match error {
             RequiredConsumerError::GracefulShutdownTriggered { consumer_id, .. } => {
                 assert_eq!(consumer_id, "c2");

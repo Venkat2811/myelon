@@ -376,9 +376,8 @@ where
             .expect("startup_wait_timeout does not fit in Instant");
 
         loop {
-            let missing = state.missing_required_consumers(|consumer_id| {
-                self.discover_consumer_id(consumer_id)
-            });
+            let missing = state
+                .missing_required_consumers(|consumer_id| self.discover_consumer_id(consumer_id));
             if missing.is_empty() {
                 let now = Instant::now();
                 state.seed_progress(now, |consumer_id| self.consumer_sequence(consumer_id));
@@ -467,7 +466,8 @@ where
                 if dst_fixtures::dst_buggify::buggify(file!(), line!()) {
                     std::thread::yield_now();
                 }
-                let sequence = self.apply_update(update.take().expect("managed update is consumed once"));
+                let sequence =
+                    self.apply_update(update.take().expect("managed update is consumed once"));
                 return Ok(sequence);
             }
 

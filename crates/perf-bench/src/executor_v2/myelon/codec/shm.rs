@@ -35,7 +35,7 @@ type Frame = TimedFrame<FRAME_DATA_BYTES>;
 const BUFFER_DEPTH: usize = 1024;
 
 thread_local! {
-    static INTENDED_SEND_TIMESTAMP_NS: Cell<Option<u64>> = Cell::new(None);
+    static INTENDED_SEND_TIMESTAMP_NS: Cell<Option<u64>> = const { Cell::new(None) };
 }
 
 #[repr(C)]
@@ -147,7 +147,7 @@ fn producer_process() -> Result<(), Box<dyn std::error::Error>> {
         read_codec_env();
     let phase_timing = env::var("BENCH_PHASE_TIMING")
         .ok()
-        .map_or(false, |v| v == "1");
+        .is_some_and(|v| v == "1");
     let payloads = make_payloads(batch_size);
     let encoded_bytes = encoded_len(&codec, &payloads);
 
@@ -294,7 +294,7 @@ fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or(0);
     let phase_timing = env::var("BENCH_PHASE_TIMING")
         .ok()
-        .map_or(false, |v| v == "1");
+        .is_some_and(|v| v == "1");
     let coord = BenchmarkCoordination::attach_with_timeout(&segment, Duration::from_secs(30))?;
     let encoded_bytes = encoded_len(&codec, &make_payloads(batch_size));
 

@@ -128,7 +128,9 @@ fn adapt_outcome(result: &BenchResult) -> ScenarioOutcome {
         phase_timing: result.results.phase_timing.clone(),
         derived: DerivedMetrics {
             pct_of_raw_ring: result.results.pct_of_raw_ring,
+            delta_vs_raw_ring_pct: result.results.delta_vs_raw_ring_pct,
             speedup_vs_bincode: result.results.speedup_vs_bincode,
+            delta_vs_bincode_pct: result.results.delta_vs_bincode_pct,
             access_avg_ns: result.results.access_avg_ns,
             access_vs_decode_speedup: result.results.access_vs_decode_speedup,
             alloc_count: result.results.alloc_count,
@@ -213,7 +215,9 @@ fn adapt_scenario_back(scenario: &ScenarioReport) -> BenchResult {
                 consumer_checksum_total: outcome.consumers.checksum_total,
                 phase_timing: outcome.phase_timing.clone(),
                 pct_of_raw_ring: outcome.derived.pct_of_raw_ring,
+                delta_vs_raw_ring_pct: outcome.derived.delta_vs_raw_ring_pct,
                 speedup_vs_bincode: outcome.derived.speedup_vs_bincode,
+                delta_vs_bincode_pct: outcome.derived.delta_vs_bincode_pct,
                 access_avg_ns: outcome.derived.access_avg_ns,
                 access_vs_decode_speedup: outcome.derived.access_vs_decode_speedup,
                 alloc_count: outcome.derived.alloc_count,
@@ -291,7 +295,9 @@ fn adapt_scenario_back(scenario: &ScenarioReport) -> BenchResult {
                 consumer_checksum_total: None,
                 phase_timing: None,
                 pct_of_raw_ring: None,
+                delta_vs_raw_ring_pct: None,
                 speedup_vs_bincode: None,
+                delta_vs_bincode_pct: None,
                 access_avg_ns: None,
                 access_vs_decode_speedup: None,
                 alloc_count: None,
@@ -323,7 +329,16 @@ fn infer_family(benchmark: &str) -> ScenarioFamily {
     match benchmark {
         "raw_ring_shm" | "raw_ring_mmap" => ScenarioFamily::RawRing,
         "wait_strategy_shm" | "wait_strategy_mmap" => ScenarioFamily::WaitStrategy,
-        "competitive_shm" | "competitive_mmap" => ScenarioFamily::Competitive,
+        "competitive_shm"
+        | "competitive_mmap"
+        | "competitive_raw_myelon_shm"
+        | "competitive_raw_myelon_mmap"
+        | "competitive_framed_shm"
+        | "competitive_framed_mmap"
+        | "competitive_codec_shm"
+        | "competitive_codec_mmap"
+        | "competitive_typed_zero_copy_shm"
+        | "competitive_typed_zero_copy_mmap" => ScenarioFamily::Competitive,
         "framed_shm" | "framed_mmap" => ScenarioFamily::Framed,
         "codec_e2e_shm" | "codec_e2e_mmap" => ScenarioFamily::CodecE2E,
         "codec_nofrag_shm" => ScenarioFamily::CodecNoFrag,
@@ -520,6 +535,10 @@ mod tests {
     use crate::scenario_v2::layout;
     use std::time::Duration;
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "test fixture builder keeps benchmark dimensions explicit at callsites"
+    )]
     fn make_test_result(
         bench_name: &str,
         scenario: &str,
@@ -719,5 +738,17 @@ mod tests {
         );
         assert_eq!(compat.results[0].results.alloc_count, Some(0));
         assert_eq!(compat.results[0].results.alloc_bytes, Some(0));
+    }
+
+    #[test]
+    fn competitive_typed_zero_copy_benches_map_to_competitive_family() {
+        assert_eq!(
+            infer_family("competitive_typed_zero_copy_shm"),
+            ScenarioFamily::Competitive
+        );
+        assert_eq!(
+            infer_family("competitive_typed_zero_copy_mmap"),
+            ScenarioFamily::Competitive
+        );
     }
 }

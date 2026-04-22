@@ -100,8 +100,8 @@ pub fn run_main() {
         let _producer = build_shared_single_producer::<Event>(&segment, 1024)
             .build_producer(Event::default)
             .expect("create shm ring");
-        let _coordination = SharedCursor::new(&format!("{segment}_cr"), 0)
-            .expect("create shm readiness cursor");
+        let _coordination =
+            SharedCursor::new(&format!("{segment}_cr"), 0).expect("create shm readiness cursor");
 
         let avg_ns = measure_avg_ns(
             || {

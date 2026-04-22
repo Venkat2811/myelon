@@ -159,7 +159,10 @@ impl MmapCursor {
     /// This is the mmap equivalent of `SharedCursor::new_or_attach` and is required
     /// for restart paths where a logical consumer must reattach to its existing
     /// sequence cursor instead of truncating it back to the initial value.
-    pub fn new_or_attach(mut config: MmapCursorConfig, initial_value: i64) -> MultiProcessResult<Self> {
+    pub fn new_or_attach(
+        mut config: MmapCursorConfig,
+        initial_value: i64,
+    ) -> MultiProcessResult<Self> {
         if config.path.exists() {
             config.create = false;
             return Self::attach(config);

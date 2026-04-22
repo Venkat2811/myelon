@@ -15,6 +15,9 @@ pub struct LatencyStats {
     pub max_ns: u64,
     pub mean_ns: f64,
     pub stdev_ns: f64,
+    pub p1_ns: u64,
+    pub p10_ns: u64,
+    pub p25_ns: u64,
     pub p50_ns: u64,
     pub p90_ns: u64,
     pub p95_ns: u64,
@@ -22,6 +25,7 @@ pub struct LatencyStats {
     pub p999_ns: u64,
     pub p9999_ns: u64,
     pub p99999_ns: u64,
+    pub p999999_ns: u64,
 }
 
 /// Records per-event latency values and produces real percentiles.
@@ -80,6 +84,9 @@ impl LatencyRecorder {
             max_ns: self.histogram.max(),
             mean_ns: self.histogram.mean(),
             stdev_ns: self.histogram.stdev(),
+            p1_ns: self.histogram.value_at_percentile(1.0),
+            p10_ns: self.histogram.value_at_percentile(10.0),
+            p25_ns: self.histogram.value_at_percentile(25.0),
             p50_ns: self.histogram.value_at_percentile(50.0),
             p90_ns: self.histogram.value_at_percentile(90.0),
             p95_ns: self.histogram.value_at_percentile(95.0),
@@ -87,6 +94,7 @@ impl LatencyRecorder {
             p999_ns: self.histogram.value_at_percentile(99.9),
             p9999_ns: self.histogram.value_at_percentile(99.99),
             p99999_ns: self.histogram.value_at_percentile(99.999),
+            p999999_ns: self.histogram.value_at_percentile(99.9999),
         })
     }
 
@@ -105,7 +113,10 @@ impl LatencyStats {
     /// Format as a compact one-line summary.
     pub fn summary(&self) -> String {
         format!(
-            "P50={} P90={} P95={} P99={} P99.9={} P99.99={} P99.999={} mean={:.0} min={} max={} (n={})",
+            "P1={} P10={} P25={} P50={} P90={} P95={} P99={} P99.9={} P99.99={} P99.999={} P99.9999={} mean={:.0} min={} max={} (n={})",
+            format_ns(self.p1_ns),
+            format_ns(self.p10_ns),
+            format_ns(self.p25_ns),
             format_ns(self.p50_ns),
             format_ns(self.p90_ns),
             format_ns(self.p95_ns),
@@ -113,6 +124,7 @@ impl LatencyStats {
             format_ns(self.p999_ns),
             format_ns(self.p9999_ns),
             format_ns(self.p99999_ns),
+            format_ns(self.p999999_ns),
             self.mean_ns,
             format_ns(self.min_ns),
             format_ns(self.max_ns),

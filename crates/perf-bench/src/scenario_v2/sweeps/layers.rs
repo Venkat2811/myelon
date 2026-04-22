@@ -13,6 +13,7 @@ pub struct NofragVariantSpec {
 #[derive(Debug, Clone, Copy)]
 pub enum MyelonLayerVariantKind {
     Raw,
+    RawMyelon,
     Framed,
     LayerScenario {
         codec_env: Option<&'static str>,
@@ -39,6 +40,16 @@ pub fn myelon_raw_roles(size_tag: &str) -> (&'static str, &'static str) {
         "16KB" => ("raw_prod_16k", "raw_cons_16k"),
         "64KB" => ("raw_prod_64k", "raw_cons_64k"),
         _ => ("raw_prod_1k", "raw_cons_1k"),
+    }
+}
+
+pub fn myelon_curated_raw_roles(size_tag: &str) -> (&'static str, &'static str) {
+    match size_tag {
+        "1KB" => ("my_raw_prod_1k", "my_raw_cons_1k"),
+        "4KB" => ("my_raw_prod_4k", "my_raw_cons_4k"),
+        "16KB" => ("my_raw_prod_16k", "my_raw_cons_16k"),
+        "64KB" => ("my_raw_prod_64k", "my_raw_cons_64k"),
+        _ => ("my_raw_prod_1k", "my_raw_cons_1k"),
     }
 }
 
@@ -171,6 +182,7 @@ pub fn nofrag_variant_specs(size_tag: &str) -> [NofragVariantSpec; 6] {
 
 pub fn myelon_layer_variant_specs(size_tag: &str) -> Vec<MyelonLayerVariantSpec> {
     let raw_roles = myelon_raw_roles(size_tag);
+    let raw_myelon_roles = myelon_curated_raw_roles(size_tag);
     let rkyv_roles = myelon_rkyv_nofrag_roles(size_tag);
     let mut specs = vec![
         MyelonLayerVariantSpec {
@@ -182,6 +194,16 @@ pub fn myelon_layer_variant_specs(size_tag: &str) -> Vec<MyelonLayerVariantSpec>
             cons_role: raw_roles.1,
             buffer_override: None,
             kind: MyelonLayerVariantKind::Raw,
+        },
+        MyelonLayerVariantSpec {
+            layer: "raw_myelon",
+            codec: None,
+            summary_label: "raw_myelon:",
+            segment_prefix: "ml_mraw",
+            prod_role: raw_myelon_roles.0,
+            cons_role: raw_myelon_roles.1,
+            buffer_override: None,
+            kind: MyelonLayerVariantKind::RawMyelon,
         },
         MyelonLayerVariantSpec {
             layer: "framed",
@@ -314,8 +336,9 @@ mod tests {
     #[test]
     fn myelon_layer_variant_specs_cover_expected_layers() {
         let specs_16k = myelon_layer_variant_specs("16KB");
-        assert_eq!(specs_16k.len(), 7);
+        assert_eq!(specs_16k.len(), 8);
         assert!(specs_16k.iter().any(|spec| spec.layer == "raw_ring"));
+        assert!(specs_16k.iter().any(|spec| spec.layer == "raw_myelon"));
         assert!(specs_16k.iter().any(|spec| spec.layer == "framed"));
         assert!(specs_16k.iter().any(|spec| spec.layer == "framed_batch"));
         assert!(specs_16k.iter().any(|spec| spec.layer == "framed_right"));
@@ -325,7 +348,8 @@ mod tests {
             .any(|spec| spec.layer == "typed_zero_copy_flatbuf"));
 
         let specs_64k = myelon_layer_variant_specs("64KB");
-        assert_eq!(specs_64k.len(), 6);
+        assert_eq!(specs_64k.len(), 7);
+        assert!(specs_64k.iter().any(|spec| spec.layer == "raw_myelon"));
         assert!(!specs_64k.iter().any(|spec| spec.layer == "framed_right"));
     }
 }
