@@ -2,6 +2,7 @@
 #
 # Usage:
 #   make smoke          # Quick smoke test (~60s)
+#   make simple-smoke   # Ultra-quick exact-size raw+signal smoke
 #   make competitive    # Competitive ping-pong benches
 #   make myelon-sweep   # Framed + zero-copy myelon sweeps
 #   make all-multi      # Multi-consumer coverage matrix
@@ -17,8 +18,30 @@
 BENCH = cargo bench -p perf-bench
 OUT_DIR ?= /tmp/perf_bench_results
 PROFILE ?= bench
+SIMPLE_SMOKE_SIZES ?= 32 64 128 1024 2048 4096
+SIMPLE_SMOKE_MESSAGES ?= 1000
+SIMPLE_SMOKE_WARMUP ?= 100
+SIMPLE_SMOKE_RATE ?= 400000
+SIMPLE_SMOKE_SIGNAL_EVENTS ?= 1000000
 
-.PHONY: smoke competitive myelon-sweep all-multi sweep sweep-quick layers nofrag wait wait-full codec codec-phase framed raw layout repeatability all results clean
+.PHONY: smoke simple-smoke competitive myelon-sweep all-multi sweep sweep-quick layers nofrag wait wait-full codec codec-phase framed raw layout repeatability all results clean
+
+simple-smoke:
+	@echo "=== Simple Smoke ==="
+	$(BENCH) --bench raw_ring_shm -- --timeout 30 --class signal --consumers 1 --events $(SIMPLE_SMOKE_SIGNAL_EVENTS)
+	$(BENCH) --bench raw_ring_mmap -- --timeout 30 --class signal --consumers 1 --events $(SIMPLE_SMOKE_SIGNAL_EVENTS)
+	@set -e; \
+	for sz in $(SIMPLE_SMOKE_SIZES); do \
+		$(BENCH) --bench competitive_shm -- --timeout 30 --no-compare -s $$sz -n $(SIMPLE_SMOKE_MESSAGES) -w $(SIMPLE_SMOKE_WARMUP); \
+		$(BENCH) --bench competitive_mmap -- --timeout 30 --no-compare -s $$sz -n $(SIMPLE_SMOKE_MESSAGES) -w $(SIMPLE_SMOKE_WARMUP); \
+		$(BENCH) --bench competitive_raw_myelon_shm -- --timeout 30 --no-compare -s $$sz -n $(SIMPLE_SMOKE_MESSAGES) -w $(SIMPLE_SMOKE_WARMUP); \
+		$(BENCH) --bench competitive_raw_myelon_mmap -- --timeout 30 --no-compare -s $$sz -n $(SIMPLE_SMOKE_MESSAGES) -w $(SIMPLE_SMOKE_WARMUP); \
+		$(BENCH) --bench competitive_shm -- --timeout 30 --no-compare -s $$sz -n $(SIMPLE_SMOKE_MESSAGES) -w $(SIMPLE_SMOKE_WARMUP) --target-rate $(SIMPLE_SMOKE_RATE); \
+		$(BENCH) --bench competitive_mmap -- --timeout 30 --no-compare -s $$sz -n $(SIMPLE_SMOKE_MESSAGES) -w $(SIMPLE_SMOKE_WARMUP) --target-rate $(SIMPLE_SMOKE_RATE); \
+		$(BENCH) --bench competitive_raw_myelon_shm -- --timeout 30 --no-compare -s $$sz -n $(SIMPLE_SMOKE_MESSAGES) -w $(SIMPLE_SMOKE_WARMUP) --target-rate $(SIMPLE_SMOKE_RATE); \
+		$(BENCH) --bench competitive_raw_myelon_mmap -- --timeout 30 --no-compare -s $$sz -n $(SIMPLE_SMOKE_MESSAGES) -w $(SIMPLE_SMOKE_WARMUP) --target-rate $(SIMPLE_SMOKE_RATE); \
+	done
+	@echo "=== Simple Smoke PASSED ==="
 
 # --- Smoke test: ~60 seconds, validates all binaries produce output ---
 smoke:

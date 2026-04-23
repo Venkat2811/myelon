@@ -510,7 +510,7 @@ mod tests {
 
     #[test]
     fn zero_copy_telemetry_reports_speedup_for_flatbuf() {
-        let telemetry = measure_zero_copy_telemetry("flatbuf", &make_payloads(8));
+        let telemetry = measure_zero_copy_telemetry("flatbuf", &make_payloads(64));
         assert!(telemetry.access_avg_ns > 0.0);
         assert!(telemetry.decode_avg_ns > 0.0);
         assert!(telemetry.access_vs_decode_speedup > 1.0);

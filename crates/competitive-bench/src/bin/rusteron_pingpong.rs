@@ -3,6 +3,7 @@ use hdrhistogram::Histogram;
 use rusteron_client::*;
 use rusteron_media_driver::{AeronCError, AeronDriver, AeronDriverContext};
 use serde::{Deserialize, Serialize};
+use std::ffi::CString;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -10,9 +11,10 @@ use std::time::{Duration, Instant};
 
 const PING_STREAM_ID: i32 = 10_002;
 const PONG_STREAM_ID: i32 = 10_003;
-static PING_CHANNEL: &std::ffi::CStr = AERON_IPC_STREAM; // aeron:ipc
-static PONG_CHANNEL: &std::ffi::CStr = AERON_IPC_STREAM; // aeron:ipc
 const FRAGMENT_COUNT_LIMIT: usize = 10;
+const MAX_FRAGMENT_POLL_LIMIT: usize = 65_536;
+const MIN_TERM_LENGTH: usize = 64 * 1024;
+const MAX_TERM_LENGTH: usize = 1024 * 1024 * 1024;
 
 #[derive(Parser, Debug, Clone)]
 #[command(author, version, about = "Rusteron/Aeron IPC 2-process ping-pong", long_about = None)]
@@ -54,6 +56,24 @@ struct Args {
 fn driver_dir_for_base(base: &str) -> String {
     // Keep it simple and predictable on Linux
     format!("/dev/shm/{}", base)
+}
+
+fn term_length_for_message_size(message_size: usize) -> usize {
+    let required = message_size.max(1).saturating_mul(8).max(MIN_TERM_LENGTH);
+    required.next_power_of_two().min(MAX_TERM_LENGTH)
+}
+
+fn ipc_channel_for_message_size(message_size: usize) -> CString {
+    let term_length = term_length_for_message_size(message_size);
+    CString::new(format!("aeron:ipc?term-length={term_length}")).expect("valid IPC URI")
+}
+
+fn fragment_poll_limit(message_size: usize, max_payload: usize) -> usize {
+    let max_payload = max_payload.max(1);
+    let fragments = message_size.max(1).div_ceil(max_payload);
+    FRAGMENT_COUNT_LIMIT
+        .max(fragments.saturating_mul(2))
+        .min(MAX_FRAGMENT_POLL_LIMIT)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -168,6 +188,30 @@ impl AeronFragmentHandlerCallback for PongRoundTripHandler {
     }
 }
 
+fn server_uses_fragment_assembler(message_size: usize, max_payload: usize) -> bool {
+    message_size > max_payload
+}
+
+struct ServerCtx {
+    publisher: AeronPublication,
+    buffer_claim: AeronBufferClaim,
+    max_payload: usize,
+}
+
+fn on_server_message(ctx: &mut ServerCtx, buffer: &[u8], _header: AeronHeader) {
+    if buffer.len() <= ctx.max_payload {
+        while ctx.publisher.try_claim(buffer.len(), &ctx.buffer_claim) < 0 {}
+        ctx.buffer_claim.data_mut().copy_from_slice(buffer);
+        ctx.buffer_claim.commit().expect("server claim commit");
+    } else {
+        while ctx
+            .publisher
+            .offer(buffer, Handlers::no_reserved_value_supplier_handler())
+            < 0
+        {}
+    }
+}
+
 fn run_server(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     // 1) Launch embedded driver with shared directory
     let (stop, _handle, dir) = configure_driver(&args.base);
@@ -177,13 +221,18 @@ fn run_server(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let aeron = Aeron::new(&ctx)?;
     aeron.start()?;
 
+    let ping_channel = ipc_channel_for_message_size(args.message_size);
+    let pong_channel = ipc_channel_for_message_size(args.message_size);
+
     // 3) Create echo endpoints: sub on PONG, pub on PING
     let ping_pub = aeron
-        .async_add_publication(PING_CHANNEL, PING_STREAM_ID)?
+        .async_add_publication(&ping_channel, PING_STREAM_ID)?
         .poll_blocking(Duration::from_secs(5))?;
+    let max_payload = ping_pub.get_constants().unwrap().max_payload_length as usize;
+    let poll_limit = fragment_poll_limit(args.message_size, max_payload);
     let pong_sub = aeron
         .async_add_subscription(
-            PONG_CHANNEL,
+            &pong_channel,
             PONG_STREAM_ID,
             Handlers::no_available_image_handler(),
             Handlers::no_unavailable_image_handler(),
@@ -191,18 +240,37 @@ fn run_server(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         .poll_blocking(Duration::from_secs(5))?;
 
     // 4) Echo loop
-    let handler = Handler::leak(PongRoundTripHandler {
-        publisher: Some(ping_pub.clone()),
-        buffer_claim: Default::default(),
-    });
-
-    loop {
-        let fragments = pong_sub.poll(Some(&handler), FRAGMENT_COUNT_LIMIT)?;
-        if fragments == 0 {
-            std::hint::spin_loop();
+    if server_uses_fragment_assembler(args.message_size, max_payload) {
+        let mut assembler = AeronFragmentClosureAssembler::new()?;
+        let mut ctx = ServerCtx {
+            publisher: ping_pub.clone(),
+            buffer_claim: Default::default(),
+            max_payload,
+        };
+        loop {
+            let fragments =
+                pong_sub.poll(assembler.process(&mut ctx, on_server_message), poll_limit)?;
+            if fragments == 0 {
+                std::hint::spin_loop();
+            }
+            if !stop.load(Ordering::Acquire) {
+                // Keep running until externally killed; this check is for symmetry
+            }
         }
-        if !stop.load(Ordering::Acquire) {
-            // Keep running until externally killed; this check is for symmetry
+    } else {
+        let handler = Handler::leak(PongRoundTripHandler {
+            publisher: Some(ping_pub.clone()),
+            buffer_claim: Default::default(),
+        });
+
+        loop {
+            let fragments = pong_sub.poll(Some(&handler), poll_limit)?;
+            if fragments == 0 {
+                std::hint::spin_loop();
+            }
+            if !stop.load(Ordering::Acquire) {
+                // Keep running until externally killed; this check is for symmetry
+            }
         }
     }
 }
@@ -214,13 +282,16 @@ fn run_client(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let aeron = Aeron::new(&ctx)?;
     aeron.start()?;
 
+    let ping_channel = ipc_channel_for_message_size(args.message_size);
+    let pong_channel = ipc_channel_for_message_size(args.message_size);
+
     // Publisher to PONG, subscription to PING
     let pong_pub = aeron
-        .async_add_publication(PONG_CHANNEL, PONG_STREAM_ID)?
+        .async_add_publication(&pong_channel, PONG_STREAM_ID)?
         .poll_blocking(Duration::from_secs(5))?;
     let ping_sub = aeron
         .async_add_subscription(
-            PING_CHANNEL,
+            &ping_channel,
             PING_STREAM_ID,
             Handlers::no_available_image_handler(),
             Handlers::no_unavailable_image_handler(),
@@ -230,7 +301,19 @@ fn run_client(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     // Ensure buffer large enough to hold two timestamps (send_ns, intended_ns)
     let mut buffer = vec![0u8; args.message_size.max(16)];
     let buffer_claim: AeronBufferClaim = Default::default();
-    let max_payload = pong_pub.get_constants().unwrap().max_payload_length as usize;
+    let constants = pong_pub.get_constants().unwrap();
+    let max_payload = constants.max_payload_length as usize;
+    let max_message_length = constants.max_message_length as usize;
+    if args.message_size > max_message_length {
+        return Err(format!(
+            "message_size={} exceeds Aeron max_message_length={} for channel {}",
+            args.message_size,
+            max_message_length,
+            pong_channel.to_string_lossy()
+        )
+        .into());
+    }
+    let poll_limit = fragment_poll_limit(args.message_size, max_payload);
     // Fragment assembler: ensures we only record once per complete message
     let mut assembler = AeronFragmentClosureAssembler::new()?;
     struct ClientCtx {
@@ -265,10 +348,7 @@ fn run_client(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
             co_ns: None,
         };
         while ctx.rtt_ns.is_none() {
-            let _ = ping_sub.poll(
-                assembler.process(&mut ctx, on_message),
-                FRAGMENT_COUNT_LIMIT,
-            )?;
+            let _ = ping_sub.poll(assembler.process(&mut ctx, on_message), poll_limit)?;
         }
     }
 
@@ -300,10 +380,7 @@ fn run_client(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                 co_ns: None,
             };
             while ctx.rtt_ns.is_none() || ctx.co_ns.is_none() {
-                let _ = ping_sub.poll(
-                    assembler.process(&mut ctx, on_message),
-                    FRAGMENT_COUNT_LIMIT,
-                )?;
+                let _ = ping_sub.poll(assembler.process(&mut ctx, on_message), poll_limit)?;
             }
             hist.record(ctx.rtt_ns.take().unwrap()).ok();
             co.record(ctx.co_ns.take().unwrap()).ok();
@@ -327,10 +404,7 @@ fn run_client(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                 co_ns: None,
             };
             while ctx.rtt_ns.is_none() {
-                let _ = ping_sub.poll(
-                    assembler.process(&mut ctx, on_message),
-                    FRAGMENT_COUNT_LIMIT,
-                )?;
+                let _ = ping_sub.poll(assembler.process(&mut ctx, on_message), poll_limit)?;
             }
             hist.record(ctx.rtt_ns.take().unwrap()).ok();
         }
@@ -406,5 +480,57 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "server" => run_server(&args),
         "client" => run_client(&args),
         _ => unreachable!(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        fragment_poll_limit, ipc_channel_for_message_size, term_length_for_message_size,
+        FRAGMENT_COUNT_LIMIT, MAX_FRAGMENT_POLL_LIMIT,
+    };
+
+    #[test]
+    fn fragment_poll_limit_keeps_small_messages_on_default_limit() {
+        assert_eq!(fragment_poll_limit(64, 1408), FRAGMENT_COUNT_LIMIT);
+        assert_eq!(fragment_poll_limit(2048, 1408), FRAGMENT_COUNT_LIMIT);
+    }
+
+    #[test]
+    fn fragment_poll_limit_scales_for_large_fragmented_messages() {
+        assert_eq!(fragment_poll_limit(2 * 1024 * 1024, 1408), 2980);
+    }
+
+    #[test]
+    fn fragment_poll_limit_clamps_extreme_values() {
+        assert_eq!(
+            fragment_poll_limit(64 * 1024 * 1024, 64),
+            MAX_FRAGMENT_POLL_LIMIT
+        );
+    }
+
+    #[test]
+    fn server_fragment_assembler_only_kicks_in_for_fragmented_messages() {
+        assert!(!super::server_uses_fragment_assembler(1024, 1408));
+        assert!(super::server_uses_fragment_assembler(2 * 1024 * 1024, 1408));
+    }
+
+    #[test]
+    fn term_length_scales_to_message_size() {
+        assert_eq!(term_length_for_message_size(64), 64 * 1024);
+        assert_eq!(
+            term_length_for_message_size(2 * 1024 * 1024),
+            16 * 1024 * 1024
+        );
+        assert_eq!(
+            term_length_for_message_size(64 * 1024 * 1024),
+            512 * 1024 * 1024
+        );
+    }
+
+    #[test]
+    fn ipc_channel_carries_term_length_override() {
+        let uri = ipc_channel_for_message_size(64 * 1024 * 1024);
+        assert_eq!(uri.to_str().unwrap(), "aeron:ipc?term-length=536870912");
     }
 }

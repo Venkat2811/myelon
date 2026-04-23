@@ -28,8 +28,30 @@ Boundary rules and enforced checks live in the workspace book.
 - macOS: works for core paths, currently unsupported for official release guarantees
 - Windows: unsupported
 
+## Competitive Bench
+
+`crates/competitive-bench` is the narrow apples-to-apples transport comparison harness.
+It owns the competitive ping-pong surface and durable result bundles for:
+
+- raw internal baselines over `shm` and `mmap`
+- external peers such as `crossbar`, `shmipc-rs`, `iceoryx2`, `boost`, `ompi`, `rusteron`, and `zeromq`
+- Docker-managed broker peers for quick TCP comparison:
+  - `iggy-tcp`
+  - `redpanda-kafka`
+- protocol-separated aggregate tables and SVG frontier plots
+
+Start there when you want local IPC or transport-comparison numbers without triggering the full
+internal `perf-bench` matrix. See:
+
+- `crates/competitive-bench/README.md`
+- `crates/competitive-bench/SETUP.md`
+
 ## One-Command Workflows
 
+- Competitive exact-size smoke:
+  - `make -C crates/competitive-bench simple-smoke`
+- Internal exact-size smoke:
+  - `make -C crates/perf-bench simple-smoke`
 - Fast benchmark smoke (~60s):
   - `make smoke`
 - Workspace wiring + crate boundary checks:

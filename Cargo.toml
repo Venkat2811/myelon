@@ -28,3 +28,6 @@ debug = false
 panic = "abort"
 strip = true
 incremental = false
+
+[patch.crates-io]
+err_trail = { path = "crates/competitive-bench/patches/err_trail" }

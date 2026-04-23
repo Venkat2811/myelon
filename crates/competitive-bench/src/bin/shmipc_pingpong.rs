@@ -61,16 +61,49 @@ fn uds_path(base: &str) -> String {
     format!("/dev/shm/{}.sock", base)
 }
 
-fn benchmark_config(base: &str) -> SessionManagerConfig {
+fn benchmark_config(base: &str, message_size: u32) -> SessionManagerConfig {
     let mut c = SessionManagerConfig::new();
     // Match upstream bench defaults
-    c.config_mut().queue_cap = 65_536;
+    c.config_mut().queue_cap = if message_size >= 32 * 1024 * 1024 {
+        4
+    } else if message_size >= 8 * 1024 * 1024 {
+        16
+    } else {
+        65_536
+    };
     c.config_mut().connection_write_timeout = Duration::from_secs(1);
-    c.config_mut().share_memory_buffer_cap = 256 << 20; // 256MB
+    let minimum_cap = 256usize << 20;
+    let requested_cap = (message_size as usize).saturating_mul(4);
+    let cap = minimum_cap.max(requested_cap).min(u32::MAX as usize) as u32;
+    c.config_mut().share_memory_buffer_cap = cap;
     c.config_mut().mem_map_type = MemMapType::MemMapTypeMemFd;
     // Ensure unique shm prefix per run
     c.config_mut().share_memory_path_prefix.push_str(base);
     c
+}
+
+fn configured_buffer_slice_sizes(message_size: u32) -> Vec<SizePercentPair> {
+    if message_size >= 1024 * 1024 {
+        vec![SizePercentPair {
+            size: message_size + 256,
+            percent: 100,
+        }]
+    } else {
+        vec![
+            SizePercentPair {
+                size: message_size + 256,
+                percent: 70,
+            },
+            SizePercentPair {
+                size: (16 << 10) + 256,
+                percent: 20,
+            },
+            SizePercentPair {
+                size: (64 << 10) + 256,
+                percent: 10,
+            },
+        ]
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -151,23 +184,10 @@ async fn main() -> TokioResult<()> {
 async fn run_server(args: &Args) -> TokioResult<()> {
     let base = &args.base;
     let path = uds_path(base);
-    let mut cfg = benchmark_config(base);
+    let mut cfg = benchmark_config(base, args.message_size);
 
     // Size buckets similar to upstream bench: favor requested size
-    cfg.config_mut().buffer_slice_sizes = vec![
-        SizePercentPair {
-            size: args.message_size + 256,
-            percent: 70,
-        },
-        SizePercentPair {
-            size: (16 << 10) + 256,
-            percent: 20,
-        },
-        SizePercentPair {
-            size: (64 << 10) + 256,
-            percent: 10,
-        },
-    ];
+    cfg.config_mut().buffer_slice_sizes = configured_buffer_slice_sizes(args.message_size);
 
     // Clean any stale socket path
     let _ = std::fs::remove_file(&path);
@@ -211,22 +231,9 @@ async fn run_server(args: &Args) -> TokioResult<()> {
 async fn run_client(args: &Args) -> TokioResult<()> {
     let base = &args.base;
     let path = uds_path(base);
-    let mut cfg = benchmark_config(base);
+    let mut cfg = benchmark_config(base, args.message_size);
 
-    cfg.config_mut().buffer_slice_sizes = vec![
-        SizePercentPair {
-            size: args.message_size + 256,
-            percent: 70,
-        },
-        SizePercentPair {
-            size: (16 << 10) + 256,
-            percent: 20,
-        },
-        SizePercentPair {
-            size: (64 << 10) + 256,
-            percent: 10,
-        },
-    ];
+    cfg.config_mut().buffer_slice_sizes = configured_buffer_slice_sizes(args.message_size);
 
     // Optionally skip embedded server when running split mode
     if !args.no_embedded_server {

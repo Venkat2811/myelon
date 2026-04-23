@@ -106,7 +106,7 @@ mod tests {
     #[test]
     fn internal_quick_plan_is_strict_subset_of_world_domination_surface() {
         let commands = internal_quick_commands("output/results");
-        assert_eq!(commands.len(), 16);
+        assert_eq!(commands.len(), 20);
         assert!(commands
             .iter()
             .all(|cmd| matches!(cmd.mode, ExecutionMode::ThroughputQuick)));
@@ -135,7 +135,7 @@ mod tests {
     #[test]
     fn internal_fixed_rate_plan_is_strict_subset_of_world_domination_surface() {
         let commands = internal_fixed_rate_commands("output/results");
-        assert_eq!(commands.len(), 80);
+        assert_eq!(commands.len(), 100);
         assert!(commands
             .iter()
             .all(|cmd| matches!(cmd.mode, ExecutionMode::FixedRateQuick { .. })));

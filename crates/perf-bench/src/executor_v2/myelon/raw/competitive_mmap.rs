@@ -78,15 +78,27 @@ struct MmapLane<const SIZE: usize> {
     coordination: UnifiedCoordination,
 }
 
-fn wait_for_next_event<E: Copy + Default>(
+fn write_event<const SIZE: usize>(
+    slot: &mut BenchmarkEvent<SIZE>,
+    sequence: u64,
+    timestamp_ns: u64,
+    intended_send_time_ns: u64,
+) {
+    slot.sequence = sequence;
+    slot.timestamp_ns = timestamp_ns;
+    slot.intended_send_time_ns = intended_send_time_ns;
+}
+
+fn wait_for_next_event<E: Copy + Default, R, F: FnOnce(&E) -> R>(
     consumer: &mut MmapConsumer<E>,
     wait_strategy: &str,
     deadline: Instant,
     context: &str,
-) -> Result<(i64, E), Box<dyn std::error::Error>> {
+    project: F,
+) -> Result<R, Box<dyn std::error::Error>> {
     loop {
-        if let Some(result) = consumer.try_consume_next() {
-            return Ok(result);
+        if let Some(result) = consumer.try_consume_next_leased() {
+            return Ok(project(&result));
         }
         if SHUTDOWN_REQUESTED.load(Ordering::Acquire) {
             return Err("shutdown requested".into());
@@ -251,9 +263,9 @@ fn run_warmup<const SIZE: usize>(
         for offset in 0..round {
             let lane_idx = (warmed as usize + offset) % lane_count;
             let seq = warmed + offset as u64;
-            let mut event = BenchmarkEvent::<SIZE>::new(seq);
-            event.set_timestamp();
-            lanes[lane_idx].producer_ping.publish(|slot| *slot = event);
+            lanes[lane_idx]
+                .producer_ping
+                .publish(|slot| write_event(slot, seq, common::nanos_now(), 0));
             lanes[lane_idx]
                 .coordination
                 .data()
@@ -263,13 +275,14 @@ fn run_warmup<const SIZE: usize>(
         }
 
         for (lane_idx, expected) in pending {
-            let (_sequence, response) = wait_for_next_event(
+            let response_sequence = wait_for_next_event(
                 &mut lanes[lane_idx].pong_consumer,
                 &args.wait_strategy,
                 deadline,
                 context,
+                |response| response.sequence,
             )?;
-            assert_eq!(response.sequence, expected);
+            assert_eq!(response_sequence, expected);
             lanes[lane_idx]
                 .coordination
                 .data()
@@ -308,9 +321,9 @@ fn run_throughput_mode<const SIZE: usize>(
             let lane_idx = (messages_processed as usize + offset) % lane_count;
             let seq = args.warmup + messages_processed + offset as u64;
             let send_start = Instant::now();
-            let mut event = BenchmarkEvent::<SIZE>::new(seq);
-            event.set_timestamp();
-            lanes[lane_idx].producer_ping.publish(|slot| *slot = event);
+            lanes[lane_idx]
+                .producer_ping
+                .publish(|slot| write_event(slot, seq, common::nanos_now(), 0));
             lanes[lane_idx]
                 .coordination
                 .data()
@@ -320,13 +333,14 @@ fn run_throughput_mode<const SIZE: usize>(
         }
 
         for (lane_idx, expected, send_start) in pending {
-            let (_sequence, response) = wait_for_next_event(
+            let response_sequence = wait_for_next_event(
                 &mut lanes[lane_idx].pong_consumer,
                 &args.wait_strategy,
                 deadline,
                 "competitive_raw_myelon_mmap throughput receive",
+                |response| response.sequence,
             )?;
-            assert_eq!(response.sequence, expected);
+            assert_eq!(response_sequence, expected);
             recorder.record(send_start.elapsed().as_nanos() as u64);
             lanes[lane_idx]
                 .coordination
@@ -374,9 +388,9 @@ fn run_batch_timing_mode<const SIZE: usize>(
             let lane_idx = (messages_processed as usize + offset) % lane_count;
             let seq = args.warmup + messages_processed + offset as u64;
             let send_start = Instant::now();
-            let mut event = BenchmarkEvent::<SIZE>::new(seq);
-            event.set_timestamp();
-            lanes[lane_idx].producer_ping.publish(|slot| *slot = event);
+            lanes[lane_idx]
+                .producer_ping
+                .publish(|slot| write_event(slot, seq, common::nanos_now(), 0));
             lanes[lane_idx]
                 .coordination
                 .data()
@@ -386,13 +400,14 @@ fn run_batch_timing_mode<const SIZE: usize>(
         }
 
         for (lane_idx, expected, send_start) in pending {
-            let (_sequence, response) = wait_for_next_event(
+            let response_sequence = wait_for_next_event(
                 &mut lanes[lane_idx].pong_consumer,
                 &args.wait_strategy,
                 deadline,
                 "competitive_raw_myelon_mmap batch timing receive",
+                |response| response.sequence,
             )?;
-            assert_eq!(response.sequence, expected);
+            assert_eq!(response_sequence, expected);
             recorder.record(send_start.elapsed().as_nanos() as u64);
             lanes[lane_idx]
                 .coordination
@@ -456,10 +471,11 @@ fn run_fixed_rate_mode<const SIZE: usize>(
         for offset in 0..batch_len {
             let lane_idx = (sent as usize + offset) % lane_count;
             let seq = args.warmup + sent + offset as u64;
-            let mut event = BenchmarkEvent::<SIZE>::new(seq);
-            event.intended_send_time_ns = next_send_time.duration_since(base).as_nanos() as u64;
-            event.timestamp_ns = Instant::now().duration_since(base).as_nanos() as u64;
-            lanes[lane_idx].producer_ping.publish(|slot| *slot = event);
+            let intended_send_time_ns = next_send_time.duration_since(base).as_nanos() as u64;
+            let timestamp_ns = Instant::now().duration_since(base).as_nanos() as u64;
+            lanes[lane_idx]
+                .producer_ping
+                .publish(|slot| write_event(slot, seq, timestamp_ns, intended_send_time_ns));
             lanes[lane_idx]
                 .coordination
                 .data()
@@ -469,17 +485,25 @@ fn run_fixed_rate_mode<const SIZE: usize>(
         }
 
         for (lane_idx, expected) in pending {
-            let (_sequence, response) = wait_for_next_event(
-                &mut lanes[lane_idx].pong_consumer,
-                &args.wait_strategy,
-                deadline,
-                "competitive_raw_myelon_mmap fixed-rate receive",
-            )?;
-            assert_eq!(response.sequence, expected);
+            let (response_sequence, response_timestamp_ns, response_intended_send_time_ns) =
+                wait_for_next_event(
+                    &mut lanes[lane_idx].pong_consumer,
+                    &args.wait_strategy,
+                    deadline,
+                    "competitive_raw_myelon_mmap fixed-rate receive",
+                    |response| {
+                        (
+                            response.sequence,
+                            response.timestamp_ns,
+                            response.intended_send_time_ns,
+                        )
+                    },
+                )?;
+            assert_eq!(response_sequence, expected);
 
             let now_ns = Instant::now().duration_since(base).as_nanos() as u64;
-            actual.record(now_ns.saturating_sub(response.timestamp_ns));
-            corrected.record(now_ns.saturating_sub(response.intended_send_time_ns));
+            actual.record(now_ns.saturating_sub(response_timestamp_ns));
+            corrected.record(now_ns.saturating_sub(response_intended_send_time_ns));
             lanes[lane_idx]
                 .coordination
                 .data()
@@ -679,21 +703,37 @@ fn run_process_one(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         .buffer_size
         .unwrap_or_else(|| competitive::default_buffer_size(args.message_size));
 
-    match args.message_size {
-        64 => run_benchmark::<64>(args, buffer_size),
-        512 => run_benchmark::<512>(args, buffer_size),
-        1024 => run_benchmark::<1024>(args, buffer_size),
-        2048 => run_benchmark::<2048>(args, buffer_size),
-        4096 => run_benchmark::<4096>(args, buffer_size),
-        16384 => run_benchmark::<16384>(args, buffer_size),
-        65536 => run_benchmark::<65536>(args, buffer_size),
-        131072 => run_benchmark::<131072>(args, buffer_size),
-        _ => Err(format!(
-            "unsupported message size: {} (expected 64, 512, 1024, 2048, 4096, 16384, 65536, 131072)",
-            args.message_size
-        )
-        .into()),
-    }
+    competitive::run_with_large_stack_if_needed(
+        args.message_size,
+        "competitive-raw-myelon-mmap-process-one",
+        move || {
+            match args.message_size {
+            32 => run_benchmark::<32>(args, buffer_size),
+            64 => run_benchmark::<64>(args, buffer_size),
+            128 => run_benchmark::<128>(args, buffer_size),
+            512 => run_benchmark::<512>(args, buffer_size),
+            1024 => run_benchmark::<1024>(args, buffer_size),
+            2048 => run_benchmark::<2048>(args, buffer_size),
+            4096 => run_benchmark::<4096>(args, buffer_size),
+            16384 => run_benchmark::<16384>(args, buffer_size),
+            32768 => run_benchmark::<32768>(args, buffer_size),
+            65536 => run_benchmark::<65536>(args, buffer_size),
+            131072 => run_benchmark::<131072>(args, buffer_size),
+            524288 => run_benchmark::<524288>(args, buffer_size),
+            1048576 => run_benchmark::<1048576>(args, buffer_size),
+            2097152 => run_benchmark::<2097152>(args, buffer_size),
+            8388608 => run_benchmark::<8388608>(args, buffer_size),
+            16777216 => run_benchmark::<16777216>(args, buffer_size),
+            33554432 => run_benchmark::<33554432>(args, buffer_size),
+            67108864 => run_benchmark::<67108864>(args, buffer_size),
+            _ => Err(format!(
+                "unsupported message size: {} (expected 32, 64, 128, 512, 1024, 2048, 4096, 16384, 32768, 65536, 131072, 524288, 1048576, 2097152, 8388608, 16777216, 33554432, 67108864)",
+                args.message_size
+            )
+            .into()),
+        }
+        },
+    )
 }
 
 fn run_process_two() -> Result<(), Box<dyn std::error::Error>> {
@@ -711,73 +751,157 @@ fn run_process_two() -> Result<(), Box<dyn std::error::Error>> {
         return Err("timeout waiting for producer readiness".into());
     }
 
-    match message_size {
-        64 => echo_server::<64>(
-            root,
-            &ping_segment,
-            &pong_segment,
-            &coordination,
-            buffer_size,
-            &wait_strategy,
-        ),
-        512 => echo_server::<512>(
-            root,
-            &ping_segment,
-            &pong_segment,
-            &coordination,
-            buffer_size,
-            &wait_strategy,
-        ),
-        1024 => echo_server::<1024>(
-            root,
-            &ping_segment,
-            &pong_segment,
-            &coordination,
-            buffer_size,
-            &wait_strategy,
-        ),
-        2048 => echo_server::<2048>(
-            root,
-            &ping_segment,
-            &pong_segment,
-            &coordination,
-            buffer_size,
-            &wait_strategy,
-        ),
-        4096 => echo_server::<4096>(
-            root,
-            &ping_segment,
-            &pong_segment,
-            &coordination,
-            buffer_size,
-            &wait_strategy,
-        ),
-        16384 => echo_server::<16384>(
-            root,
-            &ping_segment,
-            &pong_segment,
-            &coordination,
-            buffer_size,
-            &wait_strategy,
-        ),
-        65536 => echo_server::<65536>(
-            root,
-            &ping_segment,
-            &pong_segment,
-            &coordination,
-            buffer_size,
-            &wait_strategy,
-        ),
-        131072 => echo_server::<131072>(
-            root,
-            &ping_segment,
-            &pong_segment,
-            &coordination,
-            buffer_size,
-            &wait_strategy,
-        ),
-        _ => Err(format!("unsupported child message size: {message_size}").into()),
-    }
+    competitive::run_with_large_stack_if_needed(
+        message_size,
+        "competitive-raw-myelon-mmap-process-two",
+        move || match message_size {
+            32 => echo_server::<32>(
+                root.clone(),
+                &ping_segment,
+                &pong_segment,
+                &coordination,
+                buffer_size,
+                &wait_strategy,
+            ),
+            64 => echo_server::<64>(
+                root,
+                &ping_segment,
+                &pong_segment,
+                &coordination,
+                buffer_size,
+                &wait_strategy,
+            ),
+            128 => echo_server::<128>(
+                root.clone(),
+                &ping_segment,
+                &pong_segment,
+                &coordination,
+                buffer_size,
+                &wait_strategy,
+            ),
+            512 => echo_server::<512>(
+                root,
+                &ping_segment,
+                &pong_segment,
+                &coordination,
+                buffer_size,
+                &wait_strategy,
+            ),
+            1024 => echo_server::<1024>(
+                root,
+                &ping_segment,
+                &pong_segment,
+                &coordination,
+                buffer_size,
+                &wait_strategy,
+            ),
+            2048 => echo_server::<2048>(
+                root,
+                &ping_segment,
+                &pong_segment,
+                &coordination,
+                buffer_size,
+                &wait_strategy,
+            ),
+            4096 => echo_server::<4096>(
+                root,
+                &ping_segment,
+                &pong_segment,
+                &coordination,
+                buffer_size,
+                &wait_strategy,
+            ),
+            16384 => echo_server::<16384>(
+                root,
+                &ping_segment,
+                &pong_segment,
+                &coordination,
+                buffer_size,
+                &wait_strategy,
+            ),
+            32768 => echo_server::<32768>(
+                root,
+                &ping_segment,
+                &pong_segment,
+                &coordination,
+                buffer_size,
+                &wait_strategy,
+            ),
+            65536 => echo_server::<65536>(
+                root,
+                &ping_segment,
+                &pong_segment,
+                &coordination,
+                buffer_size,
+                &wait_strategy,
+            ),
+            131072 => echo_server::<131072>(
+                root,
+                &ping_segment,
+                &pong_segment,
+                &coordination,
+                buffer_size,
+                &wait_strategy,
+            ),
+            524288 => echo_server::<524288>(
+                root,
+                &ping_segment,
+                &pong_segment,
+                &coordination,
+                buffer_size,
+                &wait_strategy,
+            ),
+            1048576 => echo_server::<1048576>(
+                root,
+                &ping_segment,
+                &pong_segment,
+                &coordination,
+                buffer_size,
+                &wait_strategy,
+            ),
+            2097152 => echo_server::<2097152>(
+                root,
+                &ping_segment,
+                &pong_segment,
+                &coordination,
+                buffer_size,
+                &wait_strategy,
+            ),
+            8388608 => echo_server::<8388608>(
+                root,
+                &ping_segment,
+                &pong_segment,
+                &coordination,
+                buffer_size,
+                &wait_strategy,
+            ),
+            16777216 => echo_server::<16777216>(
+                root,
+                &ping_segment,
+                &pong_segment,
+                &coordination,
+                buffer_size,
+                &wait_strategy,
+            ),
+            33554432 => echo_server::<33554432>(
+                root,
+                &ping_segment,
+                &pong_segment,
+                &coordination,
+                buffer_size,
+                &wait_strategy,
+            ),
+            67108864 => echo_server::<67108864>(
+                root,
+                &ping_segment,
+                &pong_segment,
+                &coordination,
+                buffer_size,
+                &wait_strategy,
+            ),
+            _ => Err(format!("unsupported child message size: {message_size}").into()),
+        },
+    )
 }
 
 fn echo_server<const SIZE: usize>(
@@ -815,9 +939,9 @@ fn echo_server<const SIZE: usize>(
 
     let deadline = harness::spin_deadline_or(120);
     while !coordination.is_shutdown() {
-        match ping_consumer.try_consume_next() {
-            Some((_sequence, event)) => {
-                pong_producer.publish(|slot| *slot = event);
+        match ping_consumer.try_consume_next_leased() {
+            Some(event) => {
+                pong_producer.publish(|slot| *slot = *event);
             }
             None => {
                 if SHUTDOWN_REQUESTED.load(Ordering::Acquire) {

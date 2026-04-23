@@ -52,6 +52,14 @@ static Args parse_args(int argc, char** argv) {
 static std::string qname_ping(const std::string& base){ return base + "_ping"; }
 static std::string qname_pong(const std::string& base){ return base + "_pong"; }
 
+static size_t effective_queue_len(const Args& a) {
+    if (a.queue_len != 1024) return a.queue_len;
+    if (a.message_size >= (2u * 1024u * 1024u)) return 2;
+    if (a.message_size >= (256u * 1024u)) return 8;
+    if (a.message_size >= (64u * 1024u)) return 64;
+    return 1024;
+}
+
 static void run_server(const Args& a) {
     // Server: receive on ping, send on pong
     // Ensure clean state
@@ -60,7 +68,7 @@ static void run_server(const Args& a) {
 
     // Create queues (client will open)
     // Use conservative queue length to avoid resource exhaustion on large messages
-    size_t ql = a.queue_len;
+    size_t ql = effective_queue_len(a);
     if (ql < 2) ql = 2;
     message_queue ping(create_only, qname_ping(a.base).c_str(), ql, a.message_size);
     message_queue pong(create_only, qname_pong(a.base).c_str(), ql, a.message_size);
@@ -76,8 +84,10 @@ static void run_server(const Args& a) {
 static void run_client(const Args& a) {
     // Open existing queues (server must have created them)
     // If server not running in separate terminal, user can launch server manually
-    message_queue ping(open_or_create, qname_ping(a.base).c_str(), a.queue_len, a.message_size);
-    message_queue pong(open_or_create, qname_pong(a.base).c_str(), a.queue_len, a.message_size);
+    size_t ql = effective_queue_len(a);
+    if (ql < 2) ql = 2;
+    message_queue ping(open_or_create, qname_ping(a.base).c_str(), ql, a.message_size);
+    message_queue pong(open_or_create, qname_pong(a.base).c_str(), ql, a.message_size);
 
     std::vector<char> buf(a.message_size);
     std::memset(buf.data(), 0xAB, buf.size());

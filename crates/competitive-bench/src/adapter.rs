@@ -25,6 +25,9 @@ pub enum AdapterId {
     Ompi,
     Rusteron,
     Crossbar,
+    Iceoryx2,
+    Iggy,
+    Redpanda,
     ZeroMq,
     ZeroMqIpc,
     ZeroMqIpcAbs,
@@ -140,6 +143,36 @@ pub fn parity_adapters() -> &'static [AdapterSpec] {
                     supports_headon: false,
                 },
                 AdapterSpec {
+                    id: AdapterId::Iceoryx2,
+                    display_name: "iceoryx2-shm",
+                    output_prefix: "iceoryx2",
+                    origin: AdapterOrigin::External,
+                    build_mode: BuildMode::Cargo,
+                    supports_throughput: true,
+                    supports_fixed_rate: true,
+                    supports_headon: false,
+                },
+                AdapterSpec {
+                    id: AdapterId::Iggy,
+                    display_name: "iggy-tcp",
+                    output_prefix: "iggy",
+                    origin: AdapterOrigin::External,
+                    build_mode: BuildMode::System,
+                    supports_throughput: true,
+                    supports_fixed_rate: true,
+                    supports_headon: false,
+                },
+                AdapterSpec {
+                    id: AdapterId::Redpanda,
+                    display_name: "redpanda-kafka",
+                    output_prefix: "redpanda",
+                    origin: AdapterOrigin::External,
+                    build_mode: BuildMode::System,
+                    supports_throughput: true,
+                    supports_fixed_rate: true,
+                    supports_headon: false,
+                },
+                AdapterSpec {
                     id: AdapterId::ZeroMq,
                     display_name: "zeromq-default",
                     output_prefix: "zmq",
@@ -197,7 +230,7 @@ mod tests {
     use super::{headon_adapters, parity_adapters, AdapterId, AdapterOrigin, BuildMode};
 
     #[test]
-    fn parity_inventory_matches_world_domination_surface() {
+    fn parity_inventory_matches_current_competitive_surface() {
         let ids = parity_adapters()
             .iter()
             .map(|spec| spec.id)
@@ -214,6 +247,9 @@ mod tests {
                 AdapterId::Ompi,
                 AdapterId::Rusteron,
                 AdapterId::Crossbar,
+                AdapterId::Iceoryx2,
+                AdapterId::Iggy,
+                AdapterId::Redpanda,
                 AdapterId::ZeroMq,
                 AdapterId::ZeroMqIpc,
                 AdapterId::ZeroMqIpcAbs,
@@ -252,12 +288,28 @@ mod tests {
     }
 
     #[test]
-    fn rust_external_peers_are_no_longer_planned() {
+    fn iceoryx2_is_wired_as_cargo_external_peer() {
+        let iceoryx2 = parity_adapters()
+            .iter()
+            .find(|spec| spec.id == AdapterId::Iceoryx2)
+            .expect("iceoryx2 adapter missing");
+        assert_eq!(iceoryx2.origin, AdapterOrigin::External);
+        assert_eq!(iceoryx2.build_mode, BuildMode::Cargo);
+        assert!(iceoryx2.supports_throughput);
+        assert!(iceoryx2.supports_fixed_rate);
+        assert!(!iceoryx2.supports_headon);
+    }
+
+    #[test]
+    fn external_peer_build_modes_match_setup_contract() {
         let ids = [
             AdapterId::ShmIpcRs,
             AdapterId::BoostMq,
             AdapterId::Ompi,
             AdapterId::Rusteron,
+            AdapterId::Iceoryx2,
+            AdapterId::Iggy,
+            AdapterId::Redpanda,
             AdapterId::ZeroMq,
             AdapterId::ZeroMqIpc,
             AdapterId::ZeroMqIpcAbs,
@@ -270,6 +322,7 @@ mod tests {
                 .expect("missing external peer");
             let expected = match id {
                 AdapterId::BoostMq | AdapterId::Ompi => BuildMode::Make,
+                AdapterId::Iggy | AdapterId::Redpanda => BuildMode::System,
                 _ => BuildMode::Cargo,
             };
             assert_eq!(spec.build_mode, expected);

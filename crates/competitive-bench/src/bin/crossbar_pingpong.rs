@@ -7,6 +7,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 type AnyResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
+const CROSSBAR_BLOCK_OVERHEAD: usize = 64;
 
 #[derive(Parser, Debug, Clone)]
 #[command(author, version, about = "crossbar 2-process ping-pong benchmark", long_about = None)]
@@ -112,14 +113,34 @@ struct BenchmarkResultsOut {
 }
 
 fn benchmark_config(message_size: usize) -> Config {
+    let (block_count, ring_depth, stale_timeout) = if message_size >= 64 * 1024 * 1024 {
+        (16, 2, Duration::from_secs(120))
+    } else if message_size >= 32 * 1024 * 1024 {
+        (16, 2, Duration::from_secs(90))
+    } else if message_size >= 16 * 1024 * 1024 {
+        (8, 4, Duration::from_secs(60))
+    } else if message_size >= 8 * 1024 * 1024 {
+        (8, 4, Duration::from_secs(45))
+    } else if message_size >= 2 * 1024 * 1024 {
+        (16, 8, Duration::from_secs(30))
+    } else if message_size >= 1024 * 1024 {
+        (16, 8, Duration::from_secs(15))
+    } else {
+        (4_096, 1_024, Duration::from_secs(5))
+    };
+
     Config {
         max_topics: 1,
-        block_count: 4_096,
-        block_size: std::cmp::max(4_096, message_size.next_power_of_two()) as u32,
-        ring_depth: 1_024,
+        block_count,
+        block_size: block_size_for_payload(message_size) as u32,
+        ring_depth,
         heartbeat_interval: Duration::from_millis(100),
-        stale_timeout: Duration::from_secs(5),
+        stale_timeout,
     }
+}
+
+fn block_size_for_payload(message_size: usize) -> usize {
+    std::cmp::max(4_096, message_size + CROSSBAR_BLOCK_OVERHEAD)
 }
 
 fn main() -> AnyResult<()> {
@@ -281,5 +302,56 @@ fn pace_until(intended: Instant) {
         } else {
             std::hint::spin_loop();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{benchmark_config, block_size_for_payload, CROSSBAR_BLOCK_OVERHEAD};
+    use std::time::Duration;
+
+    #[test]
+    fn block_size_always_leaves_room_for_crossbar_metadata() {
+        assert_eq!(block_size_for_payload(64), 4_096);
+        assert_eq!(
+            block_size_for_payload(2 * 1024 * 1024),
+            2 * 1024 * 1024 + CROSSBAR_BLOCK_OVERHEAD
+        );
+    }
+
+    #[test]
+    fn benchmark_config_uses_large_payload_block_sizing() {
+        let cfg = benchmark_config(2 * 1024 * 1024);
+        assert_eq!(
+            cfg.block_size as usize,
+            2 * 1024 * 1024 + CROSSBAR_BLOCK_OVERHEAD
+        );
+        assert_eq!(cfg.block_count, 16);
+        assert_eq!(cfg.ring_depth, 8);
+        assert_eq!(cfg.stale_timeout, Duration::from_secs(30));
+    }
+
+    #[test]
+    fn benchmark_config_relaxes_stale_timeout_for_large_payloads() {
+        assert_eq!(benchmark_config(64).stale_timeout, Duration::from_secs(5));
+        assert_eq!(
+            benchmark_config(1024 * 1024).stale_timeout,
+            Duration::from_secs(15)
+        );
+        assert_eq!(
+            benchmark_config(2 * 1024 * 1024).stale_timeout,
+            Duration::from_secs(30)
+        );
+        assert_eq!(
+            benchmark_config(64 * 1024 * 1024).stale_timeout,
+            Duration::from_secs(120)
+        );
+    }
+
+    #[test]
+    fn benchmark_config_scales_pool_for_huge_payloads() {
+        assert_eq!(benchmark_config(16 * 1024 * 1024).block_count, 8);
+        assert_eq!(benchmark_config(32 * 1024 * 1024).block_count, 16);
+        assert_eq!(benchmark_config(64 * 1024 * 1024).block_count, 16);
     }
 }

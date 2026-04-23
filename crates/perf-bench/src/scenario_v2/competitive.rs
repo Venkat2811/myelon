@@ -164,7 +164,13 @@ pub fn default_buffer_size(message_size: usize) -> usize {
         0..=1024 => 4096,
         1025..=16384 => 2048,
         16385..=65536 => 1024,
-        _ => 512,
+        65537..=131072 => 512,
+        131073..=524_288 => 256,
+        524_289..=1_048_576 => 128,
+        1_048_577..=2_097_152 => 64,
+        2_097_153..=8_388_608 => 16,
+        8_388_609..=16_777_216 => 8,
+        _ => 4,
     }
 }
 
@@ -235,6 +241,40 @@ pub fn human_size(bytes: usize) -> String {
     }
 }
 
+pub fn stack_thread_size(message_size: usize) -> Option<usize> {
+    if message_size < 8 * 1024 * 1024 {
+        return None;
+    }
+
+    Some((message_size.saturating_mul(8)).clamp(64 * 1024 * 1024, 512 * 1024 * 1024))
+}
+
+pub fn run_with_large_stack_if_needed<T, F>(
+    message_size: usize,
+    thread_name: &str,
+    f: F,
+) -> Result<T, Box<dyn std::error::Error>>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, Box<dyn std::error::Error>> + Send + 'static,
+{
+    let Some(stack_size) = stack_thread_size(message_size) else {
+        return f();
+    };
+
+    let handle = std::thread::Builder::new()
+        .name(thread_name.to_string())
+        .stack_size(stack_size)
+        .spawn(move || f().map_err(|error| error.to_string()))
+        .map_err(|error| format!("failed to spawn {thread_name} stack worker: {error}"))?;
+
+    match handle.join() {
+        Ok(Ok(value)) => Ok(value),
+        Ok(Err(error)) => Err(error.into()),
+        Err(_) => Err(format!("{thread_name} panicked").into()),
+    }
+}
+
 pub fn print_header(backend: CompetitiveBackend, args: &CompetitiveArgs, buffer_size: usize) {
     println!("=== {} ===", backend.title());
     println!("Message size: {}", human_size(args.message_size));
@@ -272,6 +312,30 @@ pub fn validate_args(args: &CompetitiveArgs) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_buffer_depth_scales_down_for_multi_megabyte_payloads() {
+        assert_eq!(default_buffer_size(2 * 1024 * 1024), 64);
+        assert_eq!(default_buffer_size(8 * 1024 * 1024), 16);
+        assert_eq!(default_buffer_size(16 * 1024 * 1024), 8);
+        assert_eq!(default_buffer_size(64 * 1024 * 1024), 4);
+    }
+
+    #[test]
+    fn stack_thread_size_only_applies_to_huge_payloads() {
+        assert_eq!(stack_thread_size(2 * 1024 * 1024), None);
+        assert_eq!(stack_thread_size(8 * 1024 * 1024), Some(64 * 1024 * 1024));
+        assert_eq!(stack_thread_size(64 * 1024 * 1024), Some(512 * 1024 * 1024));
+    }
+
+    #[test]
+    fn default_buffer_depth_preserves_existing_small_payload_behavior() {
+        assert_eq!(default_buffer_size(64), 4096);
+        assert_eq!(default_buffer_size(2048), 2048);
+        assert_eq!(default_buffer_size(131072), 512);
+        assert_eq!(default_buffer_size(524288), 256);
+        assert_eq!(default_buffer_size(1048576), 128);
+    }
 
     #[test]
     fn measurement_mode_tracks_cli_mode() {
