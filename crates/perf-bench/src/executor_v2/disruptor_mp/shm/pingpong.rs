@@ -937,3 +937,21 @@ pub fn run_main() -> Result<(), Box<dyn std::error::Error>> {
         run_process_one(args)
     }
 }
+
+/// Entry point accepting pre-built CLI args (used by the consolidated binary).
+pub fn run_main_with_args(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
+    ctrlc::set_handler(move || {
+        SHUTDOWN_REQUESTED.store(true, Ordering::Release);
+    })
+    .ok(); // ignore if already set
+
+    let filtered_args = harness::apply_timeout_arg(&args)
+        .map_err(|error| format!("pingpong_shm failed: {error}"))?;
+    let parsed = Args::parse_from(filtered_args);
+
+    if parsed.process_two {
+        run_process_two()
+    } else {
+        run_process_one(parsed)
+    }
+}

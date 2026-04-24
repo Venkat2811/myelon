@@ -4,6 +4,7 @@
 //! generators, and reporting utilities used by all bench files.
 
 pub mod allocation;
+pub mod backend;
 pub mod bench_log;
 pub mod codec_bench;
 pub mod codec_payloads;
@@ -15,6 +16,7 @@ pub mod executor_v2;
 pub mod framed_bench;
 pub mod harness;
 pub mod latency;
+pub mod output_dir;
 pub mod raw_ring;
 pub mod repeatability;
 pub mod report_v2;

@@ -20,26 +20,28 @@ use crate::codec_payloads::{
 use crate::coordination::BenchmarkCoordination;
 use crate::events::{format_throughput, nanos_now, BenchEvent};
 use crate::harness::{
-    self, launch_shm_group, read_env_u64, read_env_usize, segment_from_env, ConsumerOutput,
-    IpcBenchmark, MultiConsumerSpawn, ProducerOutput, ScenarioChildren,
+    self, launch_mmap_group, launch_shm_group, read_env_u64, read_env_usize, segment_from_env,
+    ConsumerOutput, IpcBenchmark, MultiConsumerSpawn, ProducerOutput, ScenarioChildren,
 };
 use crate::report_v2::ReportBundleCompat;
 use crate::reporting;
-use crate::scenario_v2::sweeps::{self as sweep_specs, BasicSweepSelection};
+use crate::scenario_v2::sweeps::{self as sweep_specs, BasicSweepSelection, SweepBackend};
 use disruptor_mp::{
-    build_shared_single_producer, CoordinationMode, SharedDisruptorBuilder, SharedMemoryConfig,
+    build_shared_single_producer, CoordinationMode, MmapConsumer, MmapProducer,
+    MmapTransportLayout, SharedDisruptorBuilder, SharedMemoryConfig,
 };
 use myelon::transport::{
-    FixedFrame, FramedTransportConsumer, FramedTransportProducer,
-    MyelonWaitStrategy, ReassemblyBuffer,
+    FixedFrame, FramedTransportConsumer, FramedTransportProducer, MmapFramedTransportConsumer,
+    MmapFramedTransportProducer, MyelonWaitStrategy, ReassemblyBuffer,
 };
-use myelon::typed_transport::{TypedConsumer, TypedProducer};
+use myelon::typed_transport::{MmapTypedConsumer, MmapTypedProducer, TypedConsumer, TypedProducer};
 use myelon::AlignedFixedFrame;
 use myelon::{
     attach_shared_consumer as my_attach_shared_consumer,
     build_shared_single_producer as my_build_shared_single_producer,
 };
 use std::hint::black_box;
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 const DISCOVERY_SCAN_SLEEP: Duration = Duration::from_millis(150);
@@ -726,6 +728,616 @@ fn typed_zc_consumer() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 // ============================================================
+// MMAP: Raw ring producer/consumer
+// ============================================================
+
+macro_rules! raw_mmap_impl {
+    ($ev:ty, $prod_fn:ident, $cons_fn:ident) => {
+        fn $prod_fn() -> Result<(), Box<dyn std::error::Error>> {
+            let root = std::env::var("BENCH_ROOT").expect("BENCH_ROOT");
+            let seg = std::env::var("BENCH_SEGMENT").expect("BENCH_SEGMENT");
+            let buffer = read_env_usize("BENCH_BUFFER", 4096);
+            let events = read_env_u64("BENCH_EVENTS", 100_000);
+            let num_consumers = read_env_usize("BENCH_CONSUMERS", 1);
+            let layout = MmapTransportLayout::new(PathBuf::from(&root), seg).expect("layout");
+            layout.ensure_directories().expect("dirs");
+            let mut producer = MmapProducer::<$ev>::create(layout, buffer, || <$ev>::default())?;
+            if !producer.wait_for_consumers_ready(num_consumers as i64, Duration::from_secs(30)) {
+                return Err(format!("timeout waiting for {num_consumers} consumers").into());
+            }
+            let start = Instant::now();
+            for i in 0..events {
+                producer.publish(|s| {
+                    s.sequence = i;
+                    s.timestamp_ns = nanos_now();
+                    s.payload.fill((i & 0xFF) as u8);
+                });
+            }
+            let elapsed = start.elapsed();
+            let output = ProducerOutput::from_elapsed(events, elapsed, std::mem::size_of::<$ev>());
+            println!("{}", serde_json::to_string(&output)?);
+            let last = (events - 1) as i64;
+            producer.wait_until_consumed_with_strategy(
+                last,
+                Duration::from_secs(60),
+                disruptor_mp::AutoWaitStrategy::BusySpin,
+            );
+            Ok(())
+        }
+        fn $cons_fn() -> Result<(), Box<dyn std::error::Error>> {
+            let root = std::env::var("BENCH_ROOT").expect("BENCH_ROOT");
+            let seg = std::env::var("BENCH_SEGMENT").expect("BENCH_SEGMENT");
+            let consumer_id = read_env_usize("BENCH_CONSUMER_ID", 0);
+            let buffer = read_env_usize("BENCH_BUFFER", 4096);
+            let events = read_env_u64("BENCH_EVENTS", 100_000);
+            let layout = MmapTransportLayout::new(PathBuf::from(&root), seg).expect("layout");
+            let cid = format!("c{consumer_id}_{}", std::process::id());
+            let deadline = Instant::now() + Duration::from_secs(15);
+            let mut consumer = loop {
+                match MmapConsumer::<$ev>::attach(layout.clone(), buffer, &cid) {
+                    Ok(c) => break c,
+                    Err(_) if Instant::now() < deadline => {
+                        std::thread::sleep(Duration::from_millis(25))
+                    }
+                    Err(e) => return Err(format!("attach: {e}").into()),
+                }
+            };
+            let deadline = harness::spin_deadline();
+            let mut consumed = 0u64;
+            let mut start: Option<Instant> = None;
+            let mut checksum = 0u64;
+            while consumed < events {
+                if let Some((_, s)) = consumer.try_consume_next() {
+                    if start.is_none() {
+                        start = Some(Instant::now());
+                    }
+                    let payload_sum = access_raw(&s.payload);
+                    black_box(payload_sum);
+                    checksum = checksum.wrapping_add(payload_sum);
+                    consumed += 1;
+                } else {
+                    harness::check_deadline(deadline, concat!(stringify!($cons_fn), " measured"));
+                    std::hint::spin_loop();
+                }
+            }
+            let elapsed = start.expect("consumer never received an event").elapsed();
+            let output = ConsumerOutput::from_elapsed(
+                consumer_id,
+                consumed,
+                elapsed,
+                std::mem::size_of::<$ev>(),
+                checksum,
+            );
+            println!("{}", serde_json::to_string(&output)?);
+            Ok(())
+        }
+    };
+}
+
+raw_mmap_impl!(Ev1K, ml_raw_mmap_prod_1k, ml_raw_mmap_cons_1k);
+raw_mmap_impl!(Ev4K, ml_raw_mmap_prod_4k, ml_raw_mmap_cons_4k);
+raw_mmap_impl!(Ev16K, ml_raw_mmap_prod_16k, ml_raw_mmap_cons_16k);
+raw_mmap_impl!(Ev64K, ml_raw_mmap_prod_64k, ml_raw_mmap_cons_64k);
+
+// ============================================================
+// MMAP: Raw myelon ring (via myelon re-export) over mmap
+// ============================================================
+
+macro_rules! raw_myelon_mmap_impl {
+    ($ev:ty, $prod_fn:ident, $cons_fn:ident) => {
+        fn $prod_fn() -> Result<(), Box<dyn std::error::Error>> {
+            let root = std::env::var("BENCH_ROOT").expect("BENCH_ROOT");
+            let seg = std::env::var("BENCH_SEGMENT").expect("BENCH_SEGMENT");
+            let buffer = read_env_usize("BENCH_BUFFER", 4096);
+            let events = read_env_u64("BENCH_EVENTS", 100_000);
+            let num_consumers = read_env_usize("BENCH_CONSUMERS", 1);
+            let layout = MmapTransportLayout::new(PathBuf::from(&root), seg).expect("layout");
+            layout.ensure_directories().expect("dirs");
+            let mut producer = MmapProducer::<$ev>::create(layout, buffer, || <$ev>::default())?;
+            if !producer.wait_for_consumers_ready(num_consumers as i64, Duration::from_secs(30)) {
+                return Err(format!("timeout waiting for {num_consumers} consumers").into());
+            }
+            let start = Instant::now();
+            for i in 0..events {
+                producer.publish(|s| {
+                    s.sequence = i;
+                    s.timestamp_ns = nanos_now();
+                    s.payload.fill((i & 0xFF) as u8);
+                });
+            }
+            let elapsed = start.elapsed();
+            let output = ProducerOutput::from_elapsed(events, elapsed, std::mem::size_of::<$ev>());
+            println!("{}", serde_json::to_string(&output)?);
+            let last = (events - 1) as i64;
+            producer.wait_until_consumed_with_strategy(
+                last,
+                Duration::from_secs(60),
+                disruptor_mp::AutoWaitStrategy::BusySpin,
+            );
+            Ok(())
+        }
+        fn $cons_fn() -> Result<(), Box<dyn std::error::Error>> {
+            let root = std::env::var("BENCH_ROOT").expect("BENCH_ROOT");
+            let seg = std::env::var("BENCH_SEGMENT").expect("BENCH_SEGMENT");
+            let consumer_id = read_env_usize("BENCH_CONSUMER_ID", 0);
+            let buffer = read_env_usize("BENCH_BUFFER", 4096);
+            let events = read_env_u64("BENCH_EVENTS", 100_000);
+            let layout = MmapTransportLayout::new(PathBuf::from(&root), seg).expect("layout");
+            let cid = format!("c{consumer_id}_{}", std::process::id());
+            let deadline = Instant::now() + Duration::from_secs(15);
+            let mut consumer = loop {
+                match MmapConsumer::<$ev>::attach(layout.clone(), buffer, &cid) {
+                    Ok(c) => break c,
+                    Err(_) if Instant::now() < deadline => {
+                        std::thread::sleep(Duration::from_millis(25))
+                    }
+                    Err(e) => return Err(format!("attach: {e}").into()),
+                }
+            };
+            let deadline = harness::spin_deadline();
+            let mut consumed = 0u64;
+            let mut start: Option<Instant> = None;
+            let mut checksum = 0u64;
+            while consumed < events {
+                if let Some((_, s)) = consumer.try_consume_next() {
+                    if start.is_none() {
+                        start = Some(Instant::now());
+                    }
+                    let payload_sum = access_raw(&s.payload);
+                    black_box(payload_sum);
+                    checksum = checksum.wrapping_add(payload_sum);
+                    consumed += 1;
+                } else {
+                    harness::check_deadline(deadline, concat!(stringify!($cons_fn), " measured"));
+                    std::hint::spin_loop();
+                }
+            }
+            let elapsed = start.expect("consumer never received an event").elapsed();
+            let output = ConsumerOutput::from_elapsed(
+                consumer_id,
+                consumed,
+                elapsed,
+                std::mem::size_of::<$ev>(),
+                checksum,
+            );
+            println!("{}", serde_json::to_string(&output)?);
+            Ok(())
+        }
+    };
+}
+
+raw_myelon_mmap_impl!(Ev1K, ml_my_raw_mmap_prod_1k, ml_my_raw_mmap_cons_1k);
+raw_myelon_mmap_impl!(Ev4K, ml_my_raw_mmap_prod_4k, ml_my_raw_mmap_cons_4k);
+raw_myelon_mmap_impl!(Ev16K, ml_my_raw_mmap_prod_16k, ml_my_raw_mmap_cons_16k);
+raw_myelon_mmap_impl!(Ev64K, ml_my_raw_mmap_prod_64k, ml_my_raw_mmap_cons_64k);
+
+// ============================================================
+// MMAP: Framed producer/consumer
+// ============================================================
+
+fn ml_framed_mmap_producer() -> Result<(), Box<dyn std::error::Error>> {
+    let root = std::env::var("BENCH_ROOT").expect("BENCH_ROOT");
+    let seg = std::env::var("BENCH_SEGMENT").expect("BENCH_SEGMENT");
+    let buffer = read_env_usize("BENCH_BUFFER", 1024);
+    let events = read_env_u64("BENCH_EVENTS", 50_000);
+    let payload_size = read_env_usize("BENCH_PAYLOAD_SIZE", 1024);
+    let num_consumers = read_env_usize("BENCH_CONSUMERS", 1);
+    let layout = MmapTransportLayout::new(PathBuf::from(&root), seg).expect("layout");
+    let mut producer = MmapFramedTransportProducer::<Frame>::create(layout, buffer)?;
+    if !producer.wait_for_consumers_ready(num_consumers as i64, Duration::from_secs(30)) {
+        return Err(format!("timeout waiting for {num_consumers} consumers").into());
+    }
+    let payload = vec![42u8; payload_size];
+    let start = Instant::now();
+    for i in 0..events {
+        producer.publish(&payload, (i % 256) as u8);
+    }
+    let elapsed = start.elapsed();
+    let output = ProducerOutput::from_elapsed(events, elapsed, payload_size);
+    println!("{}", serde_json::to_string(&output)?);
+    let last = (events - 1) as i64;
+    producer.wait_until_consumed(last, Duration::from_secs(60), disruptor_mp::AutoWaitStrategy::BusySpin);
+    Ok(())
+}
+
+fn ml_framed_mmap_consumer() -> Result<(), Box<dyn std::error::Error>> {
+    let root = std::env::var("BENCH_ROOT").expect("BENCH_ROOT");
+    let seg = std::env::var("BENCH_SEGMENT").expect("BENCH_SEGMENT");
+    let consumer_id = read_env_usize("BENCH_CONSUMER_ID", 0);
+    let buffer = read_env_usize("BENCH_BUFFER", 1024);
+    let events = read_env_u64("BENCH_EVENTS", 50_000);
+    let payload_size = read_env_usize("BENCH_PAYLOAD_SIZE", 1024);
+    let layout = MmapTransportLayout::new(PathBuf::from(&root), seg).expect("layout");
+    let cid = format!("c{consumer_id}_{}", std::process::id());
+    let deadline_attach = Instant::now() + Duration::from_secs(15);
+    let mut consumer = loop {
+        match MmapFramedTransportConsumer::<Frame>::attach(layout.clone(), buffer, &cid, MyelonWaitStrategy::BusySpin) {
+            Ok(c) => break c,
+            Err(_) if Instant::now() < deadline_attach => {
+                std::thread::sleep(Duration::from_millis(25))
+            }
+            Err(e) => return Err(format!("attach: {e}").into()),
+        }
+    };
+    let mut consumed = 0u64;
+    let mut start: Option<Instant> = None;
+    let mut checksum = 0u64;
+    while consumed < events {
+        let (_, data) = consumer.recv_message_blocking_owned();
+        if start.is_none() {
+            start = Some(Instant::now());
+        }
+        let payload_sum = access_raw(&data);
+        black_box(payload_sum);
+        checksum = checksum.wrapping_add(payload_sum);
+        consumed += 1;
+    }
+    let elapsed = start.expect("consumer never received a frame").elapsed();
+    let output =
+        ConsumerOutput::from_elapsed(consumer_id, consumed, elapsed, payload_size, checksum);
+    println!("{}", serde_json::to_string(&output)?);
+    Ok(())
+}
+
+// ============================================================
+// MMAP: Framed BATCH consumer
+// ============================================================
+
+fn ml_framed_batch_mmap_consumer() -> Result<(), Box<dyn std::error::Error>> {
+    let root = std::env::var("BENCH_ROOT").expect("BENCH_ROOT");
+    let seg = std::env::var("BENCH_SEGMENT").expect("BENCH_SEGMENT");
+    let consumer_id = read_env_usize("BENCH_CONSUMER_ID", 0);
+    let buffer = read_env_usize("BENCH_BUFFER", 1024);
+    let events = read_env_u64("BENCH_EVENTS", 50_000);
+    let payload_size = read_env_usize("BENCH_PAYLOAD_SIZE", 1024);
+    let layout = MmapTransportLayout::new(PathBuf::from(&root), seg).expect("layout");
+    let cid = format!("c{consumer_id}_{}", std::process::id());
+    let deadline_attach = Instant::now() + Duration::from_secs(15);
+    let mut consumer = loop {
+        match MmapFramedTransportConsumer::<Frame>::attach(layout.clone(), buffer, &cid, MyelonWaitStrategy::BusySpin) {
+            Ok(c) => break c,
+            Err(_) if Instant::now() < deadline_attach => {
+                std::thread::sleep(Duration::from_millis(25))
+            }
+            Err(e) => return Err(format!("attach: {e}").into()),
+        }
+    };
+    let mut reassembly = ReassemblyBuffer::new(256 * 1024);
+    let deadline = harness::spin_deadline();
+    let mut consumed = 0u64;
+    let mut start: Option<Instant> = None;
+    let mut checksum = 0u64;
+    while consumed < events {
+        consumer.process_available_messages(&mut reassembly, |_kind, data| {
+            if start.is_none() {
+                start = Some(Instant::now());
+            }
+            let payload_sum = access_raw(data);
+            black_box(payload_sum);
+            checksum = checksum.wrapping_add(payload_sum);
+            consumed += 1;
+        });
+        if consumed < events {
+            harness::check_deadline(deadline, "ml_framed_batch_mmap_consumer measured");
+            std::hint::spin_loop();
+        }
+    }
+    let elapsed = start.expect("consumer never received a batch").elapsed();
+    let output =
+        ConsumerOutput::from_elapsed(consumer_id, consumed, elapsed, payload_size, checksum);
+    println!("{}", serde_json::to_string(&output)?);
+    Ok(())
+}
+
+// ============================================================
+// MMAP: Right-sized framed producer/consumer
+// ============================================================
+
+macro_rules! rightsized_framed_mmap_impl {
+    ($frame:ty, $prod_fn:ident, $cons_fn:ident) => {
+        fn $prod_fn() -> Result<(), Box<dyn std::error::Error>> {
+            let root = std::env::var("BENCH_ROOT").expect("BENCH_ROOT");
+            let seg = std::env::var("BENCH_SEGMENT").expect("BENCH_SEGMENT");
+            let buffer = read_env_usize("BENCH_BUFFER", 4096);
+            let events = read_env_u64("BENCH_EVENTS", 100_000);
+            let payload_size = read_env_usize("BENCH_PAYLOAD_SIZE", 1024);
+            let num_consumers = read_env_usize("BENCH_CONSUMERS", 1);
+            let layout = MmapTransportLayout::new(PathBuf::from(&root), seg).expect("layout");
+            let mut producer = MmapFramedTransportProducer::<$frame>::create(layout, buffer)?;
+            if !producer.wait_for_consumers_ready(num_consumers as i64, Duration::from_secs(30)) {
+                return Err(format!("timeout waiting for {num_consumers} consumers").into());
+            }
+            let payload = vec![42u8; payload_size];
+            let start = Instant::now();
+            for i in 0..events {
+                producer.publish(&payload, (i % 256) as u8);
+            }
+            let elapsed = start.elapsed();
+            let output = ProducerOutput::from_elapsed(events, elapsed, payload_size);
+            println!("{}", serde_json::to_string(&output)?);
+            let last = (events - 1) as i64;
+            producer.wait_until_consumed(last, Duration::from_secs(60), disruptor_mp::AutoWaitStrategy::BusySpin);
+            Ok(())
+        }
+        fn $cons_fn() -> Result<(), Box<dyn std::error::Error>> {
+            let root = std::env::var("BENCH_ROOT").expect("BENCH_ROOT");
+            let seg = std::env::var("BENCH_SEGMENT").expect("BENCH_SEGMENT");
+            let consumer_id = read_env_usize("BENCH_CONSUMER_ID", 0);
+            let buffer = read_env_usize("BENCH_BUFFER", 4096);
+            let events = read_env_u64("BENCH_EVENTS", 100_000);
+            let payload_size = read_env_usize("BENCH_PAYLOAD_SIZE", 1024);
+            let layout = MmapTransportLayout::new(PathBuf::from(&root), seg).expect("layout");
+            let cid = format!("c{consumer_id}_{}", std::process::id());
+            let deadline_attach = Instant::now() + Duration::from_secs(15);
+            let mut consumer = loop {
+                match MmapFramedTransportConsumer::<$frame>::attach(layout.clone(), buffer, &cid, MyelonWaitStrategy::BusySpin) {
+                    Ok(c) => break c,
+                    Err(_) if Instant::now() < deadline_attach => {
+                        std::thread::sleep(Duration::from_millis(25))
+                    }
+                    Err(e) => return Err(format!("attach: {e}").into()),
+                }
+            };
+            let mut reassembly = ReassemblyBuffer::new(256 * 1024);
+            let deadline = harness::spin_deadline();
+            let mut consumed = 0u64;
+            let mut start: Option<Instant> = None;
+            let mut checksum = 0u64;
+            while consumed < events {
+                consumer.process_available_messages(&mut reassembly, |_kind, data| {
+                    if start.is_none() {
+                        start = Some(Instant::now());
+                    }
+                    let payload_sum = access_raw(data);
+                    black_box(payload_sum);
+                    checksum = checksum.wrapping_add(payload_sum);
+                    consumed += 1;
+                });
+                if consumed < events {
+                    harness::check_deadline(deadline, concat!(stringify!($cons_fn), " measured"));
+                    std::hint::spin_loop();
+                }
+            }
+            let elapsed = start.expect("consumer never received a message").elapsed();
+            let output = ConsumerOutput::from_elapsed(
+                consumer_id,
+                consumed,
+                elapsed,
+                payload_size,
+                checksum,
+            );
+            println!("{}", serde_json::to_string(&output)?);
+            Ok(())
+        }
+    };
+}
+
+rightsized_framed_mmap_impl!(Frame2K, ml_rs_framed_mmap_prod_2k, ml_rs_framed_mmap_cons_2k);
+rightsized_framed_mmap_impl!(Frame8K, ml_rs_framed_mmap_prod_8k, ml_rs_framed_mmap_cons_8k);
+rightsized_framed_mmap_impl!(Frame32K, ml_rs_framed_mmap_prod_32k, ml_rs_framed_mmap_cons_32k);
+
+// ============================================================
+// MMAP: Typed rkyv zero-copy producer/consumer
+// ============================================================
+
+fn ml_typed_zc_mmap_producer() -> Result<(), Box<dyn std::error::Error>> {
+    let root = std::env::var("BENCH_ROOT").expect("BENCH_ROOT");
+    let seg = std::env::var("BENCH_SEGMENT").expect("BENCH_SEGMENT");
+    let buffer = read_env_usize("BENCH_BUFFER", 1024);
+    let events = read_env_u64("BENCH_EVENTS", 50_000);
+    let batch_size = read_env_usize("BENCH_BATCH_SIZE", 8);
+    let payload_size = read_env_usize("BENCH_PAYLOAD_SIZE", 1024);
+    let codec = std::env::var("BENCH_CODEC").unwrap_or_else(|_| "rkyv".to_string());
+    let num_consumers = read_env_usize("BENCH_CONSUMERS", 1);
+    let payloads = make_payloads(batch_size);
+
+    let layout = MmapTransportLayout::new(PathBuf::from(&root), seg).expect("layout");
+    let mut producer = MmapTypedProducer::<ZcFrame>::create(layout, buffer)?;
+    if !producer.raw().wait_for_consumers_ready(num_consumers as i64, Duration::from_secs(30)) {
+        return Err(format!("timeout waiting for {num_consumers} consumers").into());
+    }
+
+    let start = Instant::now();
+    match codec.as_str() {
+        "rkyv" => {
+            let payload = RkyvBatch(payloads);
+            for i in 0..events {
+                producer.publish(&payload, (i % 256) as u8)?;
+            }
+        }
+        "flatbuf" => {
+            let payload = FlatbufBatch(payloads);
+            for i in 0..events {
+                producer.publish(&payload, (i % 256) as u8)?;
+            }
+        }
+        other => return Err(format!("unsupported BENCH_CODEC '{other}'").into()),
+    }
+    let elapsed = start.elapsed();
+    let output = ProducerOutput::from_elapsed(events, elapsed, payload_size);
+    println!("{}", serde_json::to_string(&output)?);
+    producer.raw().wait_until_consumed(
+        (events - 1) as i64,
+        Duration::from_secs(60),
+        disruptor_mp::AutoWaitStrategy::BusySpin,
+    );
+    Ok(())
+}
+
+fn ml_typed_zc_mmap_consumer() -> Result<(), Box<dyn std::error::Error>> {
+    let root = std::env::var("BENCH_ROOT").expect("BENCH_ROOT");
+    let seg = std::env::var("BENCH_SEGMENT").expect("BENCH_SEGMENT");
+    let consumer_id = read_env_usize("BENCH_CONSUMER_ID", 0);
+    let buffer = read_env_usize("BENCH_BUFFER", 1024);
+    let events = read_env_u64("BENCH_EVENTS", 50_000);
+    let payload_size = read_env_usize("BENCH_PAYLOAD_SIZE", 1024);
+    let codec = std::env::var("BENCH_CODEC").unwrap_or_else(|_| "rkyv".to_string());
+    let layout = MmapTransportLayout::new(PathBuf::from(&root), seg).expect("layout");
+    let cid = format!("c{consumer_id}_{}", std::process::id());
+    let deadline_attach = Instant::now() + Duration::from_secs(15);
+    let mut consumer = loop {
+        match MmapTypedConsumer::<ZcFrame>::attach(layout.clone(), buffer, &cid, MyelonWaitStrategy::BusySpin) {
+            Ok(c) => break c,
+            Err(_) if Instant::now() < deadline_attach => {
+                std::thread::sleep(Duration::from_millis(25))
+            }
+            Err(e) => return Err(format!("attach: {e}").into()),
+        }
+    };
+    let mut reassembly = ReassemblyBuffer::new(256 * 1024);
+    let deadline = harness::spin_deadline();
+    let mut consumed = 0u64;
+    let mut start: Option<Instant> = None;
+    let mut checksum = 0u64;
+
+    while consumed < events {
+        let delivered = match codec.as_str() {
+            "rkyv" => consumer.process_available_zero_copy::<RkyvBatch, _>(
+                &mut reassembly,
+                |_kind, archived| {
+                    if start.is_none() {
+                        start = Some(Instant::now());
+                    }
+                    let payload_sum = checksum_archived_rkyv(archived);
+                    black_box(payload_sum);
+                    checksum = checksum.wrapping_add(payload_sum);
+                    consumed += 1;
+                },
+            ),
+            "flatbuf" => consumer.process_available_zero_copy::<FlatbufBatch, _>(
+                &mut reassembly,
+                |_kind, archived| {
+                    if start.is_none() {
+                        start = Some(Instant::now());
+                    }
+                    let payload_sum = checksum_flatbuf_root(archived);
+                    black_box(payload_sum);
+                    checksum = checksum.wrapping_add(payload_sum);
+                    consumed += 1;
+                },
+            ),
+            other => return Err(format!("unsupported BENCH_CODEC '{other}'").into()),
+        };
+        if consumed < events {
+            harness::check_deadline(deadline, "ml_typed_zc_mmap_consumer measured");
+            if delivered == 0 {
+                std::hint::spin_loop();
+            }
+        }
+    }
+
+    let elapsed = start
+        .expect("consumer never received a zero-copy payload")
+        .elapsed();
+    let output =
+        ConsumerOutput::from_elapsed(consumer_id, consumed, elapsed, payload_size, checksum);
+    println!("{}", serde_json::to_string(&output)?);
+    Ok(())
+}
+
+// ============================================================
+// MMAP: rkyv nofrag (raw ring slot = encoded message, no framing)
+// ============================================================
+
+macro_rules! rkyv_nofrag_mmap_impl {
+    ($slot:ty, $data_len:expr, $prod_fn:ident, $cons_fn:ident) => {
+        fn $prod_fn() -> Result<(), Box<dyn std::error::Error>> {
+            let root = std::env::var("BENCH_ROOT").expect("BENCH_ROOT");
+            let seg = std::env::var("BENCH_SEGMENT").expect("BENCH_SEGMENT");
+            let buffer = read_env_usize("BENCH_BUFFER", 16384);
+            let events = read_env_u64("BENCH_EVENTS", 100_000);
+            let batch_size = read_env_usize("BENCH_BATCH_SIZE", 8);
+            let num_consumers = read_env_usize("BENCH_CONSUMERS", 1);
+            let payloads = make_payloads(batch_size);
+
+            let layout = MmapTransportLayout::new(PathBuf::from(&root), seg).expect("layout");
+            layout.ensure_directories().expect("dirs");
+            let mut producer =
+                MmapProducer::<$slot>::create(layout, buffer, || <$slot>::default())?;
+            if !producer.wait_for_consumers_ready(num_consumers as i64, Duration::from_secs(30)) {
+                return Err(format!("timeout waiting for {num_consumers} consumers").into());
+            }
+
+            let start = Instant::now();
+            for _i in 0..events {
+                let enc = encode_rkyv(&payloads);
+                let enc_bytes = enc.as_ref();
+                producer.publish(|slot| {
+                    slot.len = enc_bytes.len() as u32;
+                    slot.data[..enc_bytes.len()].copy_from_slice(enc_bytes);
+                });
+            }
+            let elapsed = start.elapsed();
+            let output =
+                ProducerOutput::from_elapsed(events, elapsed, std::mem::size_of::<$slot>());
+            println!("{}", serde_json::to_string(&output)?);
+            let last = (events - 1) as i64;
+            producer.wait_until_consumed_with_strategy(
+                last,
+                Duration::from_secs(60),
+                disruptor_mp::AutoWaitStrategy::BusySpin,
+            );
+            Ok(())
+        }
+
+        fn $cons_fn() -> Result<(), Box<dyn std::error::Error>> {
+            let root = std::env::var("BENCH_ROOT").expect("BENCH_ROOT");
+            let seg = std::env::var("BENCH_SEGMENT").expect("BENCH_SEGMENT");
+            let consumer_id = read_env_usize("BENCH_CONSUMER_ID", 0);
+            let buffer = read_env_usize("BENCH_BUFFER", 16384);
+            let events = read_env_u64("BENCH_EVENTS", 100_000);
+            let layout = MmapTransportLayout::new(PathBuf::from(&root), seg).expect("layout");
+            let cid = format!("c{consumer_id}_{}", std::process::id());
+            let deadline_attach = Instant::now() + Duration::from_secs(15);
+            let mut consumer = loop {
+                match MmapConsumer::<$slot>::attach(layout.clone(), buffer, &cid) {
+                    Ok(c) => break c,
+                    Err(_) if Instant::now() < deadline_attach => {
+                        std::thread::sleep(Duration::from_millis(25))
+                    }
+                    Err(e) => return Err(format!("attach: {e}").into()),
+                }
+            };
+            let deadline = harness::spin_deadline();
+            let mut consumed = 0u64;
+            let mut start: Option<Instant> = None;
+            let mut checksum = 0u64;
+            while consumed < events {
+                if let Some((_, slot)) = consumer.try_consume_next() {
+                    if start.is_none() {
+                        start = Some(Instant::now());
+                    }
+                    let len = slot.len as usize;
+                    let bytes = &slot.data[..len];
+                    let sum = access_rkyv(bytes);
+                    black_box(sum);
+                    checksum = checksum.wrapping_add(sum);
+                    consumed += 1;
+                } else {
+                    harness::check_deadline(deadline, concat!(stringify!($cons_fn), " measured"));
+                    std::hint::spin_loop();
+                }
+            }
+            let elapsed = start.expect("consumer never received a payload").elapsed();
+            let output = ConsumerOutput::from_elapsed(
+                consumer_id,
+                consumed,
+                elapsed,
+                std::mem::size_of::<$slot>(),
+                checksum,
+            );
+            println!("{}", serde_json::to_string(&output)?);
+            Ok(())
+        }
+    };
+}
+
+rkyv_nofrag_mmap_impl!(RkyvSlot2K, 2040, ml_rkyv_nf_mmap_prod_2k, ml_rkyv_nf_mmap_cons_2k);
+rkyv_nofrag_mmap_impl!(RkyvSlot8K, 8184, ml_rkyv_nf_mmap_prod_8k, ml_rkyv_nf_mmap_cons_8k);
+rkyv_nofrag_mmap_impl!(RkyvSlot32K, 32760, ml_rkyv_nf_mmap_prod_32k, ml_rkyv_nf_mmap_cons_32k);
+rkyv_nofrag_mmap_impl!(RkyvSlot128K, 131064, ml_rkyv_nf_mmap_prod_128k, ml_rkyv_nf_mmap_cons_128k);
+
+// ============================================================
 // Orchestrator
 // ============================================================
 
@@ -741,6 +1353,7 @@ struct LayerScenario {
     prod_role: &'static str,
     cons_role: &'static str,
     envs: Vec<(&'static str, String)>,
+    backend: SweepBackend,
 }
 
 impl IpcBenchmark for LayerScenario {
@@ -749,11 +1362,17 @@ impl IpcBenchmark for LayerScenario {
     }
 
     fn scenario_name(&self) -> String {
-        format!("{}_{}_1p{}c", self.layer, self.size_tag, self.consumers)
+        format!(
+            "{}_{}_{}_1p{}c",
+            self.layer,
+            self.backend.slug(),
+            self.size_tag,
+            self.consumers
+        )
     }
 
     fn backend(&self) -> &str {
-        "shm"
+        self.backend.slug()
     }
 
     fn layer(&self) -> &str {
@@ -761,27 +1380,20 @@ impl IpcBenchmark for LayerScenario {
     }
 
     fn transport_metadata(&self) -> reporting::BenchTransportSpec {
+        let base = match self.backend {
+            SweepBackend::Shm => reporting::BenchTransportSpec::benchmark_shm(self.consumers),
+            SweepBackend::Mmap => reporting::BenchTransportSpec::mmap_builtin(),
+        };
         match self.layer {
-            "raw_ring" | "raw_myelon" => {
-                reporting::BenchTransportSpec::benchmark_shm(self.consumers)
-                    .with_zero_copy(false)
-                    .with_framing("none")
-            }
-            "framed" => reporting::BenchTransportSpec::benchmark_shm(self.consumers)
-                .with_zero_copy(false)
-                .with_framing("fixed_64k"),
-            "framed_right" => reporting::BenchTransportSpec::benchmark_shm(self.consumers)
-                .with_zero_copy(false)
-                .with_framing("right_sized"),
-            "typed" => reporting::BenchTransportSpec::benchmark_shm(self.consumers)
-                .with_zero_copy(false)
-                .with_framing("fixed_64k"),
+            "raw_ring" | "raw_myelon" => base.with_zero_copy(false).with_framing("none"),
+            "framed" | "framed_batch" => base.with_zero_copy(false).with_framing("fixed_64k"),
+            "framed_right" => base.with_zero_copy(false).with_framing("right_sized"),
+            "typed" => base.with_zero_copy(false).with_framing("fixed_64k"),
             "typed_zero_copy" | "typed_zero_copy_flatbuf" => {
-                reporting::BenchTransportSpec::benchmark_shm(self.consumers)
-                    .with_zero_copy(true)
-                    .with_framing("fixed_64k")
+                base.with_zero_copy(true).with_framing("fixed_64k")
             }
-            _ => reporting::BenchTransportSpec::benchmark_shm(self.consumers),
+            "rkyv_nofrag" => base.with_zero_copy(true).with_framing("none"),
+            _ => base,
         }
     }
 
@@ -820,18 +1432,34 @@ impl IpcBenchmark for LayerScenario {
     fn launch(&self, exe: &std::path::Path) -> Result<ScenarioChildren, harness::BenchError> {
         let mut base_envs = self.envs.clone();
         base_envs.push(("BENCH_CONSUMERS", self.consumers.to_string()));
-        launch_shm_group(
-            exe,
-            &format!("{}_{}", self.segment_prefix, self.size_tag),
-            "BENCHMARK_SEGMENT_NAME",
-            MultiConsumerSpawn {
-                producer_role: self.prod_role,
-                consumer_role: self.cons_role,
-                consumers: self.consumers,
-                consumer_id_env: "BENCH_CONSUMER_ID",
-                base_envs,
-            },
-        )
+        match self.backend {
+            SweepBackend::Shm => launch_shm_group(
+                exe,
+                &format!("{}_{}", self.segment_prefix, self.size_tag),
+                "BENCHMARK_SEGMENT_NAME",
+                MultiConsumerSpawn {
+                    producer_role: self.prod_role,
+                    consumer_role: self.cons_role,
+                    consumers: self.consumers,
+                    consumer_id_env: "BENCH_CONSUMER_ID",
+                    base_envs,
+                },
+            ),
+            SweepBackend::Mmap => launch_mmap_group(
+                exe,
+                &format!("ml_mm_{}_{}", self.segment_prefix, self.size_tag),
+                &format!("{}_{}", self.segment_prefix, self.size_tag),
+                "BENCH_ROOT",
+                "BENCH_SEGMENT",
+                MultiConsumerSpawn {
+                    producer_role: self.prod_role,
+                    consumer_role: self.cons_role,
+                    consumers: self.consumers,
+                    consumer_id_env: "BENCH_CONSUMER_ID",
+                    base_envs,
+                },
+            ),
+        }
     }
 }
 
@@ -854,6 +1482,7 @@ fn raw_scenario(
     cons_role: &'static str,
     events: u64,
     buffer: usize,
+    backend: SweepBackend,
 ) -> LayerScenario {
     LayerScenario {
         layer,
@@ -870,6 +1499,7 @@ fn raw_scenario(
             ("BENCH_EVENTS", events.to_string()),
             ("BENCH_BUFFER", buffer.to_string()),
         ],
+        backend,
     }
 }
 
@@ -886,6 +1516,7 @@ fn framed_scenario(
     buffer: usize,
     prod_role: &'static str,
     cons_role: &'static str,
+    backend: SweepBackend,
 ) -> LayerScenario {
     LayerScenario {
         layer,
@@ -903,6 +1534,7 @@ fn framed_scenario(
             ("BENCH_BUFFER", buffer.to_string()),
             ("BENCH_PAYLOAD_SIZE", payload_size.to_string()),
         ],
+        backend,
     }
 }
 
@@ -911,6 +1543,7 @@ fn framed_scenario(
 // ============================================================
 
 const CHILD_ROLES: &[harness::ChildRole] = &[
+    // SHM: raw ring
     harness::ChildRole::new("raw_prod_1k", raw_prod_1k),
     harness::ChildRole::new("raw_cons_1k", raw_cons_1k),
     harness::ChildRole::new("raw_prod_4k", raw_prod_4k),
@@ -919,6 +1552,7 @@ const CHILD_ROLES: &[harness::ChildRole] = &[
     harness::ChildRole::new("raw_cons_16k", raw_cons_16k),
     harness::ChildRole::new("raw_prod_64k", raw_prod_64k),
     harness::ChildRole::new("raw_cons_64k", raw_cons_64k),
+    // SHM: raw myelon
     harness::ChildRole::new("my_raw_prod_1k", my_raw_prod_1k),
     harness::ChildRole::new("my_raw_cons_1k", my_raw_cons_1k),
     harness::ChildRole::new("my_raw_prod_4k", my_raw_prod_4k),
@@ -927,17 +1561,21 @@ const CHILD_ROLES: &[harness::ChildRole] = &[
     harness::ChildRole::new("my_raw_cons_16k", my_raw_cons_16k),
     harness::ChildRole::new("my_raw_prod_64k", my_raw_prod_64k),
     harness::ChildRole::new("my_raw_cons_64k", my_raw_cons_64k),
+    // SHM: framed
     harness::ChildRole::new("framed_prod", framed_producer),
     harness::ChildRole::new("framed_cons", framed_consumer),
     harness::ChildRole::new("framed_batch_cons", framed_batch_consumer),
+    // SHM: typed zero-copy
     harness::ChildRole::new("typed_zc_prod", typed_zc_producer),
     harness::ChildRole::new("typed_zc_cons", typed_zc_consumer),
+    // SHM: right-sized framed
     harness::ChildRole::new("rs_framed_prod_2k", rs_framed_prod_2k),
     harness::ChildRole::new("rs_framed_cons_2k", rs_framed_cons_2k),
     harness::ChildRole::new("rs_framed_prod_8k", rs_framed_prod_8k),
     harness::ChildRole::new("rs_framed_cons_8k", rs_framed_cons_8k),
     harness::ChildRole::new("rs_framed_prod_32k", rs_framed_prod_32k),
     harness::ChildRole::new("rs_framed_cons_32k", rs_framed_cons_32k),
+    // SHM: rkyv nofrag
     harness::ChildRole::new("rkyv_nf_prod_2k", rkyv_nf_prod_2k),
     harness::ChildRole::new("rkyv_nf_cons_2k", rkyv_nf_cons_2k),
     harness::ChildRole::new("rkyv_nf_prod_8k", rkyv_nf_prod_8k),
@@ -946,6 +1584,47 @@ const CHILD_ROLES: &[harness::ChildRole] = &[
     harness::ChildRole::new("rkyv_nf_cons_32k", rkyv_nf_cons_32k),
     harness::ChildRole::new("rkyv_nf_prod_128k", rkyv_nf_prod_128k),
     harness::ChildRole::new("rkyv_nf_cons_128k", rkyv_nf_cons_128k),
+    // MMAP: raw ring
+    harness::ChildRole::new("ml_raw_mmap_prod_1k", ml_raw_mmap_prod_1k),
+    harness::ChildRole::new("ml_raw_mmap_cons_1k", ml_raw_mmap_cons_1k),
+    harness::ChildRole::new("ml_raw_mmap_prod_4k", ml_raw_mmap_prod_4k),
+    harness::ChildRole::new("ml_raw_mmap_cons_4k", ml_raw_mmap_cons_4k),
+    harness::ChildRole::new("ml_raw_mmap_prod_16k", ml_raw_mmap_prod_16k),
+    harness::ChildRole::new("ml_raw_mmap_cons_16k", ml_raw_mmap_cons_16k),
+    harness::ChildRole::new("ml_raw_mmap_prod_64k", ml_raw_mmap_prod_64k),
+    harness::ChildRole::new("ml_raw_mmap_cons_64k", ml_raw_mmap_cons_64k),
+    // MMAP: raw myelon
+    harness::ChildRole::new("ml_my_raw_mmap_prod_1k", ml_my_raw_mmap_prod_1k),
+    harness::ChildRole::new("ml_my_raw_mmap_cons_1k", ml_my_raw_mmap_cons_1k),
+    harness::ChildRole::new("ml_my_raw_mmap_prod_4k", ml_my_raw_mmap_prod_4k),
+    harness::ChildRole::new("ml_my_raw_mmap_cons_4k", ml_my_raw_mmap_cons_4k),
+    harness::ChildRole::new("ml_my_raw_mmap_prod_16k", ml_my_raw_mmap_prod_16k),
+    harness::ChildRole::new("ml_my_raw_mmap_cons_16k", ml_my_raw_mmap_cons_16k),
+    harness::ChildRole::new("ml_my_raw_mmap_prod_64k", ml_my_raw_mmap_prod_64k),
+    harness::ChildRole::new("ml_my_raw_mmap_cons_64k", ml_my_raw_mmap_cons_64k),
+    // MMAP: framed
+    harness::ChildRole::new("ml_framed_mmap_prod", ml_framed_mmap_producer),
+    harness::ChildRole::new("ml_framed_mmap_cons", ml_framed_mmap_consumer),
+    harness::ChildRole::new("ml_framed_batch_mmap_cons", ml_framed_batch_mmap_consumer),
+    // MMAP: right-sized framed
+    harness::ChildRole::new("ml_rs_framed_mmap_prod_2k", ml_rs_framed_mmap_prod_2k),
+    harness::ChildRole::new("ml_rs_framed_mmap_cons_2k", ml_rs_framed_mmap_cons_2k),
+    harness::ChildRole::new("ml_rs_framed_mmap_prod_8k", ml_rs_framed_mmap_prod_8k),
+    harness::ChildRole::new("ml_rs_framed_mmap_cons_8k", ml_rs_framed_mmap_cons_8k),
+    harness::ChildRole::new("ml_rs_framed_mmap_prod_32k", ml_rs_framed_mmap_prod_32k),
+    harness::ChildRole::new("ml_rs_framed_mmap_cons_32k", ml_rs_framed_mmap_cons_32k),
+    // MMAP: typed zero-copy
+    harness::ChildRole::new("ml_typed_zc_mmap_prod", ml_typed_zc_mmap_producer),
+    harness::ChildRole::new("ml_typed_zc_mmap_cons", ml_typed_zc_mmap_consumer),
+    // MMAP: rkyv nofrag
+    harness::ChildRole::new("ml_rkyv_nf_mmap_prod_2k", ml_rkyv_nf_mmap_prod_2k),
+    harness::ChildRole::new("ml_rkyv_nf_mmap_cons_2k", ml_rkyv_nf_mmap_cons_2k),
+    harness::ChildRole::new("ml_rkyv_nf_mmap_prod_8k", ml_rkyv_nf_mmap_prod_8k),
+    harness::ChildRole::new("ml_rkyv_nf_mmap_cons_8k", ml_rkyv_nf_mmap_cons_8k),
+    harness::ChildRole::new("ml_rkyv_nf_mmap_prod_32k", ml_rkyv_nf_mmap_prod_32k),
+    harness::ChildRole::new("ml_rkyv_nf_mmap_cons_32k", ml_rkyv_nf_mmap_cons_32k),
+    harness::ChildRole::new("ml_rkyv_nf_mmap_prod_128k", ml_rkyv_nf_mmap_prod_128k),
+    harness::ChildRole::new("ml_rkyv_nf_mmap_cons_128k", ml_rkyv_nf_mmap_cons_128k),
 ];
 
 pub struct MyelonLayersBench;
@@ -964,22 +1643,29 @@ impl harness::BenchHarness for MyelonLayersBench {
         bench_log.event("start");
         let selection = BasicSweepSelection::parse(args)?;
 
+        let backend_arg = args
+            .windows(2)
+            .find(|window| window[0] == "--backend")
+            .map(|window| window[1].as_str())
+            .unwrap_or("all");
+
         if !selection.output_args.json_mode {
             println!("=== Myelon Layer Overhead Sweep ===");
             println!("Compares raw disruptor ring vs curated raw myelon vs higher myelon layers");
-            println!("Full payload fill + consumer read. SHM backend.");
+            println!("Full payload fill + consumer read. SHM + mmap backends.");
             println!();
         }
 
         let mut report = reporting::BenchReport::new();
 
         macro_rules! run_layer {
-            ($scenario:expr, $label:expr, $consumers:expr) => {{
+            ($scenario:expr, $label:expr, $consumers:expr, $backend:expr) => {{
                 let bench_result = ($scenario).run()?;
                 if !selection.output_args.json_mode {
                     println!(
-                        "  {:<14} 1p{}c prod={} cons={}",
+                        "  {:<14} {:<5} 1p{}c prod={} cons={}",
                         $label,
+                        $backend,
                         $consumers,
                         format_throughput(bench_result.results.producer_throughput_ops_sec),
                         format_throughput(bench_result.results.consumer_throughput_ops_sec)
@@ -1003,75 +1689,95 @@ impl harness::BenchHarness for MyelonLayersBench {
                     continue;
                 }
 
-                for variant in sweep_specs::myelon_layer_variant_specs(spec.tag) {
-                    if !selection.matches_layer(variant.layer) {
+                for backend in [SweepBackend::Shm, SweepBackend::Mmap] {
+                    if backend_arg != "all" && backend_arg != backend.slug() {
                         continue;
                     }
 
-                    let buffer = variant.buffer_override.unwrap_or(spec.buffer_depth);
-                    let mut scenario = match variant.kind {
-                        sweep_specs::MyelonLayerVariantKind::Raw => raw_scenario(
-                            "raw_ring",
-                            variant.segment_prefix,
-                            spec.tag,
-                            spec.payload_bytes,
-                            variant.prod_role,
-                            variant.cons_role,
-                            spec.events,
-                            buffer,
-                        ),
-                        sweep_specs::MyelonLayerVariantKind::RawMyelon => raw_scenario(
-                            "raw_myelon",
-                            variant.segment_prefix,
-                            spec.tag,
-                            spec.payload_bytes,
-                            variant.prod_role,
-                            variant.cons_role,
-                            spec.events,
-                            buffer,
-                        ),
-                        sweep_specs::MyelonLayerVariantKind::Framed => framed_scenario(
-                            variant.layer,
-                            variant.segment_prefix,
-                            spec.tag,
-                            spec.payload_bytes,
-                            spec.events,
-                            buffer,
-                            variant.prod_role,
-                            variant.cons_role,
-                        ),
-                        sweep_specs::MyelonLayerVariantKind::LayerScenario {
-                            codec_env,
-                            include_payload_size,
-                        } => {
-                            let mut envs = vec![
-                                ("BENCH_EVENTS", spec.events.to_string()),
-                                ("BENCH_BUFFER", buffer.to_string()),
-                                ("BENCH_BATCH_SIZE", spec.batch_size.to_string()),
-                            ];
-                            if let Some(codec) = codec_env {
-                                envs.push(("BENCH_CODEC", codec.to_string()));
-                            }
-                            if include_payload_size {
-                                envs.push(("BENCH_PAYLOAD_SIZE", spec.payload_bytes.to_string()));
-                            }
-                            LayerScenario {
-                                layer: variant.layer,
-                                codec: variant.codec,
-                                segment_prefix: variant.segment_prefix,
-                                size_tag: spec.tag,
-                                payload_size: spec.payload_bytes,
-                                events: spec.events,
-                                buffer,
-                                consumers,
-                                prod_role: variant.prod_role,
-                                cons_role: variant.cons_role,
-                                envs,
-                            }
+                    for variant in sweep_specs::myelon_layer_variant_specs_for_backend(
+                        spec.tag, backend,
+                    ) {
+                        if !selection.matches_layer(variant.layer) {
+                            continue;
                         }
-                    };
-                    scenario.consumers = consumers;
-                    run_layer!(scenario, variant.summary_label, consumers);
+
+                        let buffer = variant.buffer_override.unwrap_or(spec.buffer_depth);
+                        let mut scenario = match variant.kind {
+                            sweep_specs::MyelonLayerVariantKind::Raw => raw_scenario(
+                                "raw_ring",
+                                variant.segment_prefix,
+                                spec.tag,
+                                spec.payload_bytes,
+                                variant.prod_role,
+                                variant.cons_role,
+                                spec.events,
+                                buffer,
+                                backend,
+                            ),
+                            sweep_specs::MyelonLayerVariantKind::RawMyelon => raw_scenario(
+                                "raw_myelon",
+                                variant.segment_prefix,
+                                spec.tag,
+                                spec.payload_bytes,
+                                variant.prod_role,
+                                variant.cons_role,
+                                spec.events,
+                                buffer,
+                                backend,
+                            ),
+                            sweep_specs::MyelonLayerVariantKind::Framed => framed_scenario(
+                                variant.layer,
+                                variant.segment_prefix,
+                                spec.tag,
+                                spec.payload_bytes,
+                                spec.events,
+                                buffer,
+                                variant.prod_role,
+                                variant.cons_role,
+                                backend,
+                            ),
+                            sweep_specs::MyelonLayerVariantKind::LayerScenario {
+                                codec_env,
+                                include_payload_size,
+                            } => {
+                                let mut envs = vec![
+                                    ("BENCH_EVENTS", spec.events.to_string()),
+                                    ("BENCH_BUFFER", buffer.to_string()),
+                                    ("BENCH_BATCH_SIZE", spec.batch_size.to_string()),
+                                ];
+                                if let Some(codec) = codec_env {
+                                    envs.push(("BENCH_CODEC", codec.to_string()));
+                                }
+                                if include_payload_size {
+                                    envs.push((
+                                        "BENCH_PAYLOAD_SIZE",
+                                        spec.payload_bytes.to_string(),
+                                    ));
+                                }
+                                LayerScenario {
+                                    layer: variant.layer,
+                                    codec: variant.codec,
+                                    segment_prefix: variant.segment_prefix,
+                                    size_tag: spec.tag,
+                                    payload_size: spec.payload_bytes,
+                                    events: spec.events,
+                                    buffer,
+                                    consumers,
+                                    prod_role: variant.prod_role,
+                                    cons_role: variant.cons_role,
+                                    envs,
+                                    backend,
+                                }
+                            }
+                        };
+                        scenario.consumers = consumers;
+                        run_layer!(
+                            scenario,
+                            variant.summary_label,
+                            consumers,
+                            backend.display_label()
+                        );
+                    }
                 }
             }
 

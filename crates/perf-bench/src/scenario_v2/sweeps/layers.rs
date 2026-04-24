@@ -31,6 +31,7 @@ pub struct MyelonLayerVariantSpec {
     pub cons_role: &'static str,
     pub buffer_override: Option<usize>,
     pub kind: MyelonLayerVariantKind,
+    pub backend: SweepBackend,
 }
 
 pub fn myelon_raw_roles(size_tag: &str) -> (&'static str, &'static str) {
@@ -50,6 +51,48 @@ pub fn myelon_curated_raw_roles(size_tag: &str) -> (&'static str, &'static str) 
         "16KB" => ("my_raw_prod_16k", "my_raw_cons_16k"),
         "64KB" => ("my_raw_prod_64k", "my_raw_cons_64k"),
         _ => ("my_raw_prod_1k", "my_raw_cons_1k"),
+    }
+}
+
+pub fn myelon_raw_mmap_roles(size_tag: &str) -> (&'static str, &'static str) {
+    match size_tag {
+        "1KB" => ("ml_raw_mmap_prod_1k", "ml_raw_mmap_cons_1k"),
+        "4KB" => ("ml_raw_mmap_prod_4k", "ml_raw_mmap_cons_4k"),
+        "16KB" => ("ml_raw_mmap_prod_16k", "ml_raw_mmap_cons_16k"),
+        "64KB" => ("ml_raw_mmap_prod_64k", "ml_raw_mmap_cons_64k"),
+        _ => ("ml_raw_mmap_prod_1k", "ml_raw_mmap_cons_1k"),
+    }
+}
+
+pub fn myelon_curated_raw_mmap_roles(size_tag: &str) -> (&'static str, &'static str) {
+    match size_tag {
+        "1KB" => ("ml_my_raw_mmap_prod_1k", "ml_my_raw_mmap_cons_1k"),
+        "4KB" => ("ml_my_raw_mmap_prod_4k", "ml_my_raw_mmap_cons_4k"),
+        "16KB" => ("ml_my_raw_mmap_prod_16k", "ml_my_raw_mmap_cons_16k"),
+        "64KB" => ("ml_my_raw_mmap_prod_64k", "ml_my_raw_mmap_cons_64k"),
+        _ => ("ml_my_raw_mmap_prod_1k", "ml_my_raw_mmap_cons_1k"),
+    }
+}
+
+pub fn myelon_right_sized_framed_mmap_roles(
+    size_tag: &str,
+) -> Option<(&'static str, &'static str, usize)> {
+    match size_tag {
+        "1KB" => Some(("ml_rs_framed_mmap_prod_2k", "ml_rs_framed_mmap_cons_2k", 65_536usize)),
+        "4KB" => Some(("ml_rs_framed_mmap_prod_8k", "ml_rs_framed_mmap_cons_8k", 32_768)),
+        "16KB" => Some(("ml_rs_framed_mmap_prod_32k", "ml_rs_framed_mmap_cons_32k", 16_384)),
+        "64KB" => None,
+        _ => None,
+    }
+}
+
+pub fn myelon_rkyv_nofrag_mmap_roles(size_tag: &str) -> (&'static str, &'static str) {
+    match size_tag {
+        "1KB" => ("ml_rkyv_nf_mmap_prod_2k", "ml_rkyv_nf_mmap_cons_2k"),
+        "4KB" => ("ml_rkyv_nf_mmap_prod_8k", "ml_rkyv_nf_mmap_cons_8k"),
+        "16KB" => ("ml_rkyv_nf_mmap_prod_32k", "ml_rkyv_nf_mmap_cons_32k"),
+        "64KB" => ("ml_rkyv_nf_mmap_prod_128k", "ml_rkyv_nf_mmap_cons_128k"),
+        _ => ("ml_rkyv_nf_mmap_prod_8k", "ml_rkyv_nf_mmap_cons_8k"),
     }
 }
 
@@ -180,7 +223,21 @@ pub fn nofrag_variant_specs(size_tag: &str) -> [NofragVariantSpec; 6] {
     ]
 }
 
+pub fn myelon_layer_variant_specs_for_backend(
+    size_tag: &str,
+    backend: SweepBackend,
+) -> Vec<MyelonLayerVariantSpec> {
+    match backend {
+        SweepBackend::Shm => myelon_layer_shm_specs(size_tag),
+        SweepBackend::Mmap => myelon_layer_mmap_specs(size_tag),
+    }
+}
+
 pub fn myelon_layer_variant_specs(size_tag: &str) -> Vec<MyelonLayerVariantSpec> {
+    myelon_layer_shm_specs(size_tag)
+}
+
+fn myelon_layer_shm_specs(size_tag: &str) -> Vec<MyelonLayerVariantSpec> {
     let raw_roles = myelon_raw_roles(size_tag);
     let raw_myelon_roles = myelon_curated_raw_roles(size_tag);
     let rkyv_roles = myelon_rkyv_nofrag_roles(size_tag);
@@ -194,6 +251,7 @@ pub fn myelon_layer_variant_specs(size_tag: &str) -> Vec<MyelonLayerVariantSpec>
             cons_role: raw_roles.1,
             buffer_override: None,
             kind: MyelonLayerVariantKind::Raw,
+            backend: SweepBackend::Shm,
         },
         MyelonLayerVariantSpec {
             layer: "raw_myelon",
@@ -204,6 +262,7 @@ pub fn myelon_layer_variant_specs(size_tag: &str) -> Vec<MyelonLayerVariantSpec>
             cons_role: raw_myelon_roles.1,
             buffer_override: None,
             kind: MyelonLayerVariantKind::RawMyelon,
+            backend: SweepBackend::Shm,
         },
         MyelonLayerVariantSpec {
             layer: "framed",
@@ -214,6 +273,7 @@ pub fn myelon_layer_variant_specs(size_tag: &str) -> Vec<MyelonLayerVariantSpec>
             cons_role: "framed_cons",
             buffer_override: None,
             kind: MyelonLayerVariantKind::Framed,
+            backend: SweepBackend::Shm,
         },
         MyelonLayerVariantSpec {
             layer: "framed_batch",
@@ -224,6 +284,7 @@ pub fn myelon_layer_variant_specs(size_tag: &str) -> Vec<MyelonLayerVariantSpec>
             cons_role: "framed_batch_cons",
             buffer_override: None,
             kind: MyelonLayerVariantKind::Framed,
+            backend: SweepBackend::Shm,
         },
         MyelonLayerVariantSpec {
             layer: "rkyv_nofrag",
@@ -237,6 +298,7 @@ pub fn myelon_layer_variant_specs(size_tag: &str) -> Vec<MyelonLayerVariantSpec>
                 codec_env: None,
                 include_payload_size: false,
             },
+            backend: SweepBackend::Shm,
         },
         MyelonLayerVariantSpec {
             layer: "typed_zero_copy",
@@ -250,6 +312,7 @@ pub fn myelon_layer_variant_specs(size_tag: &str) -> Vec<MyelonLayerVariantSpec>
                 codec_env: Some("rkyv"),
                 include_payload_size: true,
             },
+            backend: SweepBackend::Shm,
         },
         MyelonLayerVariantSpec {
             layer: "typed_zero_copy_flatbuf",
@@ -263,6 +326,7 @@ pub fn myelon_layer_variant_specs(size_tag: &str) -> Vec<MyelonLayerVariantSpec>
                 codec_env: Some("flatbuf"),
                 include_payload_size: true,
             },
+            backend: SweepBackend::Shm,
         },
     ];
 
@@ -279,6 +343,122 @@ pub fn myelon_layer_variant_specs(size_tag: &str) -> Vec<MyelonLayerVariantSpec>
                 cons_role,
                 buffer_override: Some(buffer_override),
                 kind: MyelonLayerVariantKind::Framed,
+                backend: SweepBackend::Shm,
+            },
+        );
+    }
+
+    specs
+}
+
+fn myelon_layer_mmap_specs(size_tag: &str) -> Vec<MyelonLayerVariantSpec> {
+    let raw_mmap_roles = myelon_raw_mmap_roles(size_tag);
+    let raw_myelon_mmap_roles = myelon_curated_raw_mmap_roles(size_tag);
+    let rkyv_mmap_roles = myelon_rkyv_nofrag_mmap_roles(size_tag);
+    let mut specs = vec![
+        MyelonLayerVariantSpec {
+            layer: "raw_ring",
+            codec: None,
+            summary_label: "raw_ring:",
+            segment_prefix: "ml_raw_mm",
+            prod_role: raw_mmap_roles.0,
+            cons_role: raw_mmap_roles.1,
+            buffer_override: None,
+            kind: MyelonLayerVariantKind::Raw,
+            backend: SweepBackend::Mmap,
+        },
+        MyelonLayerVariantSpec {
+            layer: "raw_myelon",
+            codec: None,
+            summary_label: "raw_myelon:",
+            segment_prefix: "ml_mraw_mm",
+            prod_role: raw_myelon_mmap_roles.0,
+            cons_role: raw_myelon_mmap_roles.1,
+            buffer_override: None,
+            kind: MyelonLayerVariantKind::RawMyelon,
+            backend: SweepBackend::Mmap,
+        },
+        MyelonLayerVariantSpec {
+            layer: "framed",
+            codec: None,
+            summary_label: "framed:",
+            segment_prefix: "ml_frm_mm",
+            prod_role: "ml_framed_mmap_prod",
+            cons_role: "ml_framed_mmap_cons",
+            buffer_override: None,
+            kind: MyelonLayerVariantKind::Framed,
+            backend: SweepBackend::Mmap,
+        },
+        MyelonLayerVariantSpec {
+            layer: "framed_batch",
+            codec: None,
+            summary_label: "framed_batch:",
+            segment_prefix: "ml_frmb_mm",
+            prod_role: "ml_framed_mmap_prod",
+            cons_role: "ml_framed_batch_mmap_cons",
+            buffer_override: None,
+            kind: MyelonLayerVariantKind::Framed,
+            backend: SweepBackend::Mmap,
+        },
+        MyelonLayerVariantSpec {
+            layer: "rkyv_nofrag",
+            codec: Some("rkyv"),
+            summary_label: "rkyv_nofrag:",
+            segment_prefix: "ml_rkyv_nf_mm",
+            prod_role: rkyv_mmap_roles.0,
+            cons_role: rkyv_mmap_roles.1,
+            buffer_override: None,
+            kind: MyelonLayerVariantKind::LayerScenario {
+                codec_env: None,
+                include_payload_size: false,
+            },
+            backend: SweepBackend::Mmap,
+        },
+        MyelonLayerVariantSpec {
+            layer: "typed_zero_copy",
+            codec: Some("rkyv"),
+            summary_label: "typed_zero_copy:",
+            segment_prefix: "ml_typed_zc_mm",
+            prod_role: "ml_typed_zc_mmap_prod",
+            cons_role: "ml_typed_zc_mmap_cons",
+            buffer_override: None,
+            kind: MyelonLayerVariantKind::LayerScenario {
+                codec_env: Some("rkyv"),
+                include_payload_size: true,
+            },
+            backend: SweepBackend::Mmap,
+        },
+        MyelonLayerVariantSpec {
+            layer: "typed_zero_copy_flatbuf",
+            codec: Some("flatbuf"),
+            summary_label: "typed_zero_copy_flatbuf:",
+            segment_prefix: "ml_typed_zc_fb_mm",
+            prod_role: "ml_typed_zc_mmap_prod",
+            cons_role: "ml_typed_zc_mmap_cons",
+            buffer_override: None,
+            kind: MyelonLayerVariantKind::LayerScenario {
+                codec_env: Some("flatbuf"),
+                include_payload_size: true,
+            },
+            backend: SweepBackend::Mmap,
+        },
+    ];
+
+    if let Some((prod_role, cons_role, buffer_override)) =
+        myelon_right_sized_framed_mmap_roles(size_tag)
+    {
+        specs.insert(
+            3,
+            MyelonLayerVariantSpec {
+                layer: "framed_right",
+                codec: None,
+                summary_label: "framed_right:",
+                segment_prefix: "ml_rsf_mm",
+                prod_role,
+                cons_role,
+                buffer_override: Some(buffer_override),
+                kind: MyelonLayerVariantKind::Framed,
+                backend: SweepBackend::Mmap,
             },
         );
     }
@@ -346,10 +526,61 @@ mod tests {
         assert!(specs_16k
             .iter()
             .any(|spec| spec.layer == "typed_zero_copy_flatbuf"));
+        // All SHM specs should have SHM backend
+        assert!(specs_16k
+            .iter()
+            .all(|spec| spec.backend == SweepBackend::Shm));
 
         let specs_64k = myelon_layer_variant_specs("64KB");
         assert_eq!(specs_64k.len(), 7);
         assert!(specs_64k.iter().any(|spec| spec.layer == "raw_myelon"));
         assert!(!specs_64k.iter().any(|spec| spec.layer == "framed_right"));
+    }
+
+    #[test]
+    fn myelon_layer_mmap_specs_cover_expected_layers() {
+        let specs_16k = myelon_layer_variant_specs_for_backend("16KB", SweepBackend::Mmap);
+        assert_eq!(specs_16k.len(), 8);
+        assert!(specs_16k.iter().any(|spec| spec.layer == "raw_ring"));
+        assert!(specs_16k.iter().any(|spec| spec.layer == "raw_myelon"));
+        assert!(specs_16k.iter().any(|spec| spec.layer == "framed"));
+        assert!(specs_16k.iter().any(|spec| spec.layer == "framed_batch"));
+        assert!(specs_16k.iter().any(|spec| spec.layer == "framed_right"));
+        assert!(specs_16k.iter().any(|spec| spec.layer == "rkyv_nofrag"));
+        assert!(specs_16k
+            .iter()
+            .any(|spec| spec.layer == "typed_zero_copy"));
+        assert!(specs_16k
+            .iter()
+            .any(|spec| spec.layer == "typed_zero_copy_flatbuf"));
+        // All mmap specs should have Mmap backend
+        assert!(specs_16k
+            .iter()
+            .all(|spec| spec.backend == SweepBackend::Mmap));
+
+        let specs_64k = myelon_layer_variant_specs_for_backend("64KB", SweepBackend::Mmap);
+        assert_eq!(specs_64k.len(), 7);
+        assert!(!specs_64k.iter().any(|spec| spec.layer == "framed_right"));
+    }
+
+    #[test]
+    fn myelon_layer_mmap_role_tables_resolve() {
+        assert_eq!(
+            myelon_raw_mmap_roles("4KB"),
+            ("ml_raw_mmap_prod_4k", "ml_raw_mmap_cons_4k")
+        );
+        assert_eq!(
+            myelon_curated_raw_mmap_roles("16KB"),
+            ("ml_my_raw_mmap_prod_16k", "ml_my_raw_mmap_cons_16k")
+        );
+        assert_eq!(
+            myelon_rkyv_nofrag_mmap_roles("64KB"),
+            ("ml_rkyv_nf_mmap_prod_128k", "ml_rkyv_nf_mmap_cons_128k")
+        );
+        assert_eq!(
+            myelon_right_sized_framed_mmap_roles("1KB"),
+            Some(("ml_rs_framed_mmap_prod_2k", "ml_rs_framed_mmap_cons_2k", 65_536))
+        );
+        assert_eq!(myelon_right_sized_framed_mmap_roles("64KB"), None);
     }
 }

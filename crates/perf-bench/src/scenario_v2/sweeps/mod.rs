@@ -13,8 +13,8 @@ pub use framed::{
     FramedSweepRoleKey, FramedSweepSizeSpec,
 };
 pub use layers::{
-    myelon_layer_variant_specs, nofrag_variant_specs, MyelonLayerVariantKind,
-    MyelonLayerVariantSpec, NofragVariantSpec,
+    myelon_layer_variant_specs, myelon_layer_variant_specs_for_backend, nofrag_variant_specs,
+    MyelonLayerVariantKind, MyelonLayerVariantSpec, NofragVariantSpec,
 };
 pub use monster::{
     monster_sweep_roles, monster_sweep_scenarios, monster_sweep_should_run, MonsterSweepRoleKey,

@@ -31,7 +31,23 @@
 
 use std::fmt::Write;
 
-const LOG_DIR: &str = "/tmp/perf_bench_logs";
+const DEFAULT_LOG_DIR: &str = "output/logs";
+
+/// Resolve the log output directory.
+///
+/// Priority:
+/// 1. `PERF_BENCH_LOG_DIR` env var (explicit override)
+/// 2. `PERF_BENCH_OUT_DIR` env var + `/logs` suffix (run output dir)
+/// 3. Default: `output/logs` (relative to cwd, gitignored)
+pub fn log_dir() -> String {
+    if let Ok(dir) = std::env::var("PERF_BENCH_LOG_DIR") {
+        return dir;
+    }
+    if let Ok(out_dir) = std::env::var("PERF_BENCH_OUT_DIR") {
+        return format!("{out_dir}/logs");
+    }
+    DEFAULT_LOG_DIR.to_string()
+}
 
 /// Check if logging is enabled (default: yes, disable with PERF_BENCH_LOG=0).
 pub fn is_enabled() -> bool {
@@ -45,8 +61,9 @@ pub fn is_enabled() -> bool {
 /// Each entry is a timestamp + role + message written to a `Vec<u8>` via
 /// `write!()` (~10-50ns, memcpy only — no syscalls, no locks, no heap alloc).
 ///
-/// On `Drop`, automatically writes to `/tmp/perf_bench_logs/<role>_<pid>_<ts>.jsonl`
-/// and prints the path to stderr (unless disabled via `PERF_BENCH_LOG=0`).
+/// On `Drop`, automatically writes to `output/logs/<role>_<pid>_<ts>.jsonl`
+/// (or `PERF_BENCH_LOG_DIR` / `PERF_BENCH_OUT_DIR/logs` if set).
+/// Disable entirely with `PERF_BENCH_LOG=0`.
 pub struct BenchLog {
     buf: String,
     pid: u32,
@@ -57,7 +74,7 @@ pub struct BenchLog {
 
 impl BenchLog {
     /// Create a new log buffer with the given role and capacity in bytes.
-    /// Auto-flushes to `/tmp/perf_bench_logs/` on Drop (unless disabled).
+    /// Auto-flushes to `output/logs/` on Drop (configurable via env vars).
     pub fn new(role: &str, capacity: usize) -> Self {
         let enabled = is_enabled();
         let mut log = Self {
@@ -157,16 +174,18 @@ impl BenchLog {
     }
 
     /// Generate the auto-flush file path.
-    fn auto_log_path(&self) -> std::path::PathBuf {
+    fn auto_log_path(&self) -> (String, std::path::PathBuf) {
         use std::time::{SystemTime, UNIX_EPOCH};
         let ts = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        std::path::PathBuf::from(LOG_DIR).join(format!(
+        let dir = log_dir();
+        let path = std::path::PathBuf::from(&dir).join(format!(
             "{}_{}_{}_{}.jsonl",
             self.role, self.pid, ts, self.count
-        ))
+        ));
+        (dir, path)
     }
 }
 
@@ -176,9 +195,9 @@ impl Drop for BenchLog {
             return;
         }
         self.event("log_end");
-        let path = self.auto_log_path();
-        if let Err(e) = std::fs::create_dir_all(LOG_DIR) {
-            eprintln!("[BenchLog] failed to create {LOG_DIR}: {e}");
+        let (dir, path) = self.auto_log_path();
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            eprintln!("[BenchLog] failed to create {dir}: {e}");
             return;
         }
         match std::fs::write(&path, &self.buf) {

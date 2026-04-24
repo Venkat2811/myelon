@@ -31,6 +31,14 @@ ctrlc = "3.4"
 [lib]
 name = "perf_bench"
 
+[[bin]]
+name = "perf-bench-pingpong"
+path = "src/bin/pingpong.rs"
+
+[[bin]]
+name = "perf-bench-broadcast"
+path = "src/bin/broadcast.rs"
+
 # --- disruptor-mp layer: raw ring, no framing ---
 
 [[bench]]
