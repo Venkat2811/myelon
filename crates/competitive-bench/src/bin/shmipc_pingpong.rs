@@ -58,7 +58,11 @@ fn default_base_name() -> String {
 }
 
 fn uds_path(base: &str) -> String {
-    format!("/dev/shm/{}.sock", base)
+    if cfg!(target_os = "macos") {
+        format!("/tmp/{}.sock", base)
+    } else {
+        format!("/dev/shm/{}.sock", base)
+    }
 }
 
 fn benchmark_config(base: &str, message_size: u32) -> SessionManagerConfig {

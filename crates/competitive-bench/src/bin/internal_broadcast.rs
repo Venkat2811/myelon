@@ -18,7 +18,7 @@ use myelon::{
 };
 use perf_bench::coordination::BenchmarkCoordination;
 use perf_bench::latency::LatencyRecorder;
-use perf_bench::scenario_v2::competitive::{
+use perf_bench::scenario_v2::pingpong::{
     apply_wait_strategy, default_buffer_size, run_with_large_stack_if_needed,
 };
 use serde::{Deserialize, Serialize};

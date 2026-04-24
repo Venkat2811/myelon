@@ -1,7 +1,7 @@
 use crate::codec_payloads::{
     make_payloads, measure_zero_copy_telemetry, AccessTelemetry, TestPayload,
 };
-use myelon::transport::{FrameMeta, FramedTransportFrame};
+use myelon::AlignedFixedFrame;
 
 pub(super) fn payloads_for(batch_size: usize) -> Vec<TestPayload> {
     make_payloads(batch_size)
@@ -22,69 +22,8 @@ pub(super) fn zero_copy_layer(codec: &str) -> &'static str {
     }
 }
 
-#[repr(C)]
-#[derive(Clone, Copy, Debug)]
-pub(super) struct ZeroCopyFrameHeader {
-    len: u32,
-    kind: u8,
-    flags: u8,
-    msg_id: u32,
-    _aligned_header: u64,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug)]
-pub(super) struct ZeroCopyFrame<const DATA_BYTES: usize> {
-    len: u32,
-    kind: u8,
-    flags: u8,
-    msg_id: u32,
-    _aligned_header: u64,
-    data: [u8; DATA_BYTES],
-}
-
-impl<const DATA_BYTES: usize> Default for ZeroCopyFrame<DATA_BYTES> {
-    fn default() -> Self {
-        Self {
-            len: 0,
-            kind: 0,
-            flags: 0,
-            msg_id: 0,
-            _aligned_header: 0,
-            data: [0; DATA_BYTES],
-        }
-    }
-}
-
-impl<const DATA_BYTES: usize> FramedTransportFrame for ZeroCopyFrame<DATA_BYTES> {
-    fn payload_capacity() -> usize {
-        DATA_BYTES
-    }
-
-    fn frame_meta(&self) -> FrameMeta<'_> {
-        FrameMeta {
-            len: self.len as usize,
-            kind: self.kind,
-            flags: self.flags,
-            msg_id: self.msg_id,
-            timestamp_ns: None,
-            data: &self.data[..self.len as usize],
-        }
-    }
-
-    fn write_frame(&mut self, payload: &[u8], kind: u8, msg_id: u32, flags: u8) {
-        assert!(
-            payload.len() <= DATA_BYTES,
-            "payload len {} exceeds zero-copy frame capacity {}",
-            payload.len(),
-            DATA_BYTES
-        );
-        self.len = payload.len() as u32;
-        self.kind = kind;
-        self.flags = flags;
-        self.msg_id = msg_id;
-        self.data[..payload.len()].copy_from_slice(payload);
-    }
-}
-
-pub(super) type ZcFrame = ZeroCopyFrame<{ 64 * 1024 - std::mem::size_of::<ZeroCopyFrameHeader>() }>;
+/// Aligned zero-copy frame sized for a 64KB ring slot.
+/// Header is 16 bytes, leaving 65520 bytes for payload data.
+/// Payload data starts at a 16-byte aligned offset, suitable for
+/// direct rkyv/flatbuf archived access without alignment-fix copies.
+pub(super) type ZcFrame = AlignedFixedFrame<{ 64 * 1024 - 16 }>;

@@ -5,6 +5,28 @@
 #include <inttypes.h>
 #include <time.h>
 
+#ifdef __APPLE__
+#include <mach/mach_time.h>
+/* macOS lacks clock_nanosleep / TIMER_ABSTIME — emulate with nanosleep */
+#ifndef TIMER_ABSTIME
+#define TIMER_ABSTIME 1
+#endif
+static int clock_nanosleep(clockid_t clk, int flags, const struct timespec *req, struct timespec *rem) {
+    (void)clk; (void)rem;
+    if (flags == TIMER_ABSTIME) {
+        struct timespec now;
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        long diff_ns = (req->tv_sec - now.tv_sec) * 1000000000L + (req->tv_nsec - now.tv_nsec);
+        if (diff_ns > 0) {
+            struct timespec rel = { .tv_sec = diff_ns / 1000000000L, .tv_nsec = diff_ns % 1000000000L };
+            return nanosleep(&rel, NULL);
+        }
+        return 0;
+    }
+    return nanosleep(req, rem);
+}
+#endif
+
 typedef struct {
     const char* mode; // unused (always 2 ranks)
     size_t message_size;

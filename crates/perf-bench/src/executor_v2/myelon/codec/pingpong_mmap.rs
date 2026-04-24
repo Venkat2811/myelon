@@ -1,3 +1,7 @@
+use crate::codec_payloads::{
+    checksum_payloads, encoded_len, make_payloads, BincodeBatch, FlatbufBatch, RkyvBatch,
+    TestPayload,
+};
 use crate::coordination::UnifiedCoordination;
 use crate::events::nanos_now;
 use crate::harness::{
@@ -8,12 +12,11 @@ use crate::latency::LatencyRecorder;
 use crate::report_v2::BackendKind;
 use crate::reporting::{self, BenchReport, BenchTransportSpec};
 use crate::scenario_v2::myelon_pingpong::{
-    FramedPingPongScenarioSpec, FramedPingPongSelection, PingPongMode,
+    CodecPingPongScenarioSpec, CodecPingPongSelection, PingPongMode,
 };
 use disruptor_mp::MmapTransportLayout;
-use myelon::transport::{
-    FixedFrame, MmapFramedTransportConsumer, MmapFramedTransportProducer, MyelonWaitStrategy,
-};
+use myelon::transport::{FixedFrame, MyelonWaitStrategy};
+use myelon::typed_transport::{MmapTypedConsumer, MmapTypedProducer};
 use std::env;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
@@ -27,8 +30,9 @@ const PONG_INITIATOR_ID: &str = "pong_init";
 
 #[derive(Clone)]
 struct Scenario {
-    payload_label: &'static str,
-    payload_bytes: usize,
+    codec: &'static str,
+    batch_size: usize,
+    encoded_bytes: usize,
     messages: u64,
     warmup: u64,
     buffer_depth: usize,
@@ -44,7 +48,9 @@ struct MmapEnv {
     ping_segment: String,
     pong_segment: String,
     coordination_segment: String,
-    payload_bytes: usize,
+    codec: String,
+    batch_size: usize,
+    encoded_bytes: usize,
     messages: u64,
     warmup: u64,
     buffer_depth: usize,
@@ -68,7 +74,9 @@ fn read_env() -> MmapEnv {
         ping_segment: env::var("PING_SEGMENT").expect("PING_SEGMENT"),
         pong_segment: env::var("PONG_SEGMENT").expect("PONG_SEGMENT"),
         coordination_segment: env::var("COORDINATION_SEGMENT").expect("COORDINATION_SEGMENT"),
-        payload_bytes: harness::read_env_usize("BENCH_PAYLOAD_BYTES", 64),
+        codec: env::var("BENCH_CODEC").expect("BENCH_CODEC"),
+        batch_size: harness::read_env_usize("BENCH_BATCH_SIZE", 1),
+        encoded_bytes: harness::read_env_usize("BENCH_ENCODED_BYTES", 1),
         messages: harness::read_env_u64("BENCH_MESSAGES", 100_000),
         warmup: harness::read_env_u64("BENCH_WARMUP", 10_000),
         buffer_depth: harness::read_env_usize("BENCH_BUFFER_DEPTH", 4096),
@@ -90,15 +98,11 @@ fn attach_consumer_with_timeout(
     depth: usize,
     consumer_id: &str,
     wait_strategy: MyelonWaitStrategy,
-) -> Result<MmapFramedTransportConsumer<Frame>, Box<dyn std::error::Error>> {
+) -> Result<MmapTypedConsumer<Frame>, Box<dyn std::error::Error>> {
     let deadline = Instant::now() + ATTACH_TIMEOUT;
     loop {
-        match MmapFramedTransportConsumer::<Frame>::attach(
-            layout.clone(),
-            depth,
-            consumer_id,
-            wait_strategy,
-        ) {
+        match MmapTypedConsumer::<Frame>::attach(layout.clone(), depth, consumer_id, wait_strategy)
+        {
             Ok(consumer) => return Ok(consumer),
             Err(_) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(25)),
             Err(error) => return Err(format!("attach failed for {consumer_id}: {error}").into()),
@@ -106,14 +110,8 @@ fn attach_consumer_with_timeout(
     }
 }
 
-fn checksum_bytes(bytes: &[u8]) -> u64 {
-    bytes
-        .iter()
-        .fold(0u64, |acc, value| acc.wrapping_add(*value as u64))
-}
-
-fn make_payload(size: usize) -> Vec<u8> {
-    (0..size).map(|idx| (idx % 251) as u8).collect()
+fn payloads_for(batch_size: usize) -> Vec<TestPayload> {
+    make_payloads(batch_size)
 }
 
 fn producer_process() -> Result<(), Box<dyn std::error::Error>> {
@@ -121,7 +119,7 @@ fn producer_process() -> Result<(), Box<dyn std::error::Error>> {
     let wait_strategy = parse_wait_strategy(&env.wait_strategy)?;
     let coordination = UnifiedCoordination::create(&env.coordination_segment)?;
     let mut pong_producer =
-        MmapFramedTransportProducer::<Frame>::create(env.pong_layout(), env.buffer_depth)?;
+        MmapTypedProducer::<Frame>::create(env.pong_layout(), env.buffer_depth)?;
     coordination
         .data()
         .producer_ready
@@ -148,19 +146,48 @@ fn producer_process() -> Result<(), Box<dyn std::error::Error>> {
 
     let total = env.warmup + env.messages;
     let mut measured_start = None;
-    for index in 0..total {
-        if coordination.is_shutdown() {
-            return Err("shutdown requested during echo loop".into());
+    match env.codec.as_str() {
+        "bincode" => {
+            for index in 0..total {
+                if coordination.is_shutdown() {
+                    return Err("shutdown requested during echo loop".into());
+                }
+                let (_kind, message) = ping_consumer.recv::<BincodeBatch>()?;
+                if index == env.warmup {
+                    measured_start = Some(Instant::now());
+                }
+                pong_producer.publish(&message, 1)?;
+            }
         }
-        let (_kind, payload) = ping_consumer.recv_message_blocking();
-        if index == env.warmup {
-            measured_start = Some(Instant::now());
+        "rkyv" => {
+            for index in 0..total {
+                if coordination.is_shutdown() {
+                    return Err("shutdown requested during echo loop".into());
+                }
+                let (_kind, message) = ping_consumer.recv::<RkyvBatch>()?;
+                if index == env.warmup {
+                    measured_start = Some(Instant::now());
+                }
+                pong_producer.publish(&message, 1)?;
+            }
         }
-        pong_producer.publish(&payload, 1);
+        "flatbuf" => {
+            for index in 0..total {
+                if coordination.is_shutdown() {
+                    return Err("shutdown requested during echo loop".into());
+                }
+                let (_kind, message) = ping_consumer.recv::<FlatbufBatch>()?;
+                if index == env.warmup {
+                    measured_start = Some(Instant::now());
+                }
+                pong_producer.publish(&message, 1)?;
+            }
+        }
+        other => return Err(format!("unsupported codec: {other}").into()),
     }
 
     let elapsed = measured_start.unwrap_or_else(Instant::now).elapsed();
-    let output = ProducerOutput::from_elapsed(env.messages, elapsed, env.payload_bytes);
+    let output = ProducerOutput::from_elapsed(env.messages, elapsed, env.encoded_bytes);
     println!("{}", serde_json::to_string(&output)?);
     Ok(())
 }
@@ -171,7 +198,7 @@ fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
     let coordination =
         UnifiedCoordination::attach_with_timeout(&env.coordination_segment, ATTACH_TIMEOUT)?;
     let mut ping_producer =
-        MmapFramedTransportProducer::<Frame>::create(env.ping_layout(), env.buffer_depth)?;
+        MmapTypedProducer::<Frame>::create(env.ping_layout(), env.buffer_depth)?;
     let mut pong_consumer = attach_consumer_with_timeout(
         env.pong_layout(),
         env.buffer_depth,
@@ -190,8 +217,8 @@ fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
         return Err("timeout discovering ping echo consumer".into());
     }
 
-    let payload = make_payload(env.payload_bytes);
-    let expected_checksum = checksum_bytes(&payload);
+    let payloads = payloads_for(env.batch_size);
+    let expected_checksum = checksum_payloads(&payloads);
     let expected_total = expected_checksum.wrapping_mul(env.messages);
     let mut recorder = LatencyRecorder::default_range();
     let mut checksum_total = 0u64;
@@ -204,43 +231,98 @@ fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
     };
     let base_ns = nanos_now();
 
-    for index in 0..total {
-        let measured_index = index.saturating_sub(env.warmup);
-        let send_ns = if let Some(interval) = interval_ns {
-            if index >= env.warmup {
-                let intended_ns = base_ns.saturating_add(measured_index.saturating_mul(interval));
-                while nanos_now() < intended_ns {
-                    std::hint::spin_loop();
+    match env.codec.as_str() {
+        "bincode" => {
+            let message = BincodeBatch(payloads);
+            for index in 0..total {
+                let measured_index = index.saturating_sub(env.warmup);
+                let send_ns = if let Some(interval) = interval_ns {
+                    if index >= env.warmup {
+                        let intended_ns =
+                            base_ns.saturating_add(measured_index.saturating_mul(interval));
+                        while nanos_now() < intended_ns {
+                            std::hint::spin_loop();
+                        }
+                        intended_ns
+                    } else {
+                        nanos_now()
+                    }
+                } else {
+                    nanos_now()
+                };
+                if index == env.warmup {
+                    measured_start = Some(Instant::now());
                 }
-                intended_ns
-            } else {
-                nanos_now()
+                ping_producer.publish(&message, 1)?;
+                let (_kind, response) = pong_consumer.recv::<BincodeBatch>()?;
+                if index < env.warmup {
+                    continue;
+                }
+                checksum_total = checksum_total.wrapping_add(checksum_payloads(&response.0));
+                recorder.record_delta(send_ns, nanos_now());
             }
-        } else {
-            nanos_now()
-        };
-
-        if index == env.warmup {
-            measured_start = Some(Instant::now());
         }
-
-        ping_producer.publish(&payload, 1);
-        let (_kind, response) = pong_consumer.recv_message_blocking();
-        if index < env.warmup {
-            continue;
+        "rkyv" => {
+            let message = RkyvBatch(payloads);
+            for index in 0..total {
+                let measured_index = index.saturating_sub(env.warmup);
+                let send_ns = if let Some(interval) = interval_ns {
+                    if index >= env.warmup {
+                        let intended_ns =
+                            base_ns.saturating_add(measured_index.saturating_mul(interval));
+                        while nanos_now() < intended_ns {
+                            std::hint::spin_loop();
+                        }
+                        intended_ns
+                    } else {
+                        nanos_now()
+                    }
+                } else {
+                    nanos_now()
+                };
+                if index == env.warmup {
+                    measured_start = Some(Instant::now());
+                }
+                ping_producer.publish(&message, 1)?;
+                let (_kind, response) = pong_consumer.recv::<RkyvBatch>()?;
+                if index < env.warmup {
+                    continue;
+                }
+                checksum_total = checksum_total.wrapping_add(checksum_payloads(&response.0));
+                recorder.record_delta(send_ns, nanos_now());
+            }
         }
-
-        if response.len() != payload.len() {
-            return Err(format!(
-                "unexpected echoed payload size: got {} expected {}",
-                response.len(),
-                payload.len()
-            )
-            .into());
+        "flatbuf" => {
+            let message = FlatbufBatch(payloads);
+            for index in 0..total {
+                let measured_index = index.saturating_sub(env.warmup);
+                let send_ns = if let Some(interval) = interval_ns {
+                    if index >= env.warmup {
+                        let intended_ns =
+                            base_ns.saturating_add(measured_index.saturating_mul(interval));
+                        while nanos_now() < intended_ns {
+                            std::hint::spin_loop();
+                        }
+                        intended_ns
+                    } else {
+                        nanos_now()
+                    }
+                } else {
+                    nanos_now()
+                };
+                if index == env.warmup {
+                    measured_start = Some(Instant::now());
+                }
+                ping_producer.publish(&message, 1)?;
+                let (_kind, response) = pong_consumer.recv::<FlatbufBatch>()?;
+                if index < env.warmup {
+                    continue;
+                }
+                checksum_total = checksum_total.wrapping_add(checksum_payloads(&response.0));
+                recorder.record_delta(send_ns, nanos_now());
+            }
         }
-
-        checksum_total = checksum_total.wrapping_add(checksum_bytes(&response));
-        recorder.record_delta(send_ns, nanos_now());
+        other => return Err(format!("unsupported codec: {other}").into()),
     }
 
     coordination.signal_shutdown();
@@ -254,7 +336,7 @@ fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
     let elapsed = measured_start.unwrap_or_else(Instant::now).elapsed();
     let latency = recorder.stats().ok_or("no latency samples recorded")?;
     let output =
-        ConsumerOutput::from_elapsed(0, env.messages, elapsed, env.payload_bytes, checksum_total)
+        ConsumerOutput::from_elapsed(0, env.messages, elapsed, env.encoded_bytes, checksum_total)
             .with_latency(latency);
     println!("{}", serde_json::to_string(&output)?);
     Ok(())
@@ -262,11 +344,14 @@ fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
 
 impl IpcBenchmark for Scenario {
     fn bench_name(&self) -> &str {
-        "competitive_framed_mmap"
+        "pingpong_codec_mmap"
     }
 
     fn scenario_name(&self) -> String {
-        format!("competitive_framed_pingpong_1p1c_{}", self.payload_label)
+        format!(
+            "pingpong_codec_1p1c_{}_b{}",
+            self.codec, self.batch_size
+        )
     }
 
     fn backend(&self) -> &str {
@@ -274,15 +359,19 @@ impl IpcBenchmark for Scenario {
     }
 
     fn layer(&self) -> &str {
-        "framed"
+        "typed"
     }
 
     fn transport_metadata(&self) -> BenchTransportSpec {
-        let mut spec = reporting::BenchTransportSpec::unified_competitive()
+        let mut spec = reporting::BenchTransportSpec::unified_pingpong()
             .with_zero_copy(false)
             .with_framing("fixed_64k");
         spec.discovery_mode = Some("explicit_consumer_id".to_string());
         spec
+    }
+
+    fn codec(&self) -> Option<&str> {
+        Some(self.codec)
     }
 
     fn measurement_mode(&self) -> String {
@@ -297,7 +386,11 @@ impl IpcBenchmark for Scenario {
     }
 
     fn message_size_bytes(&self) -> usize {
-        self.payload_bytes
+        self.encoded_bytes
+    }
+
+    fn payload_bytes(&self) -> usize {
+        self.encoded_bytes
     }
 
     fn buffer_depth(&self) -> usize {
@@ -329,14 +422,16 @@ impl IpcBenchmark for Scenario {
     }
 
     fn launch(&self, exe: &std::path::Path) -> Result<ScenarioChildren, harness::BenchError> {
-        let root = unique_mmap_root("mppf_mmap");
-        let coordination_segment = unique_shm_segment("mppf_coord");
+        let root = unique_mmap_root("mppc_mmap");
+        let coordination_segment = unique_shm_segment("mppc_coord");
         let env_common = vec![
             ("MMAP_ROOT", root.display().to_string()),
             ("PING_SEGMENT", unique_mmap_segment("ping")),
             ("PONG_SEGMENT", unique_mmap_segment("pong")),
             ("COORDINATION_SEGMENT", coordination_segment),
-            ("BENCH_PAYLOAD_BYTES", self.payload_bytes.to_string()),
+            ("BENCH_CODEC", self.codec.to_string()),
+            ("BENCH_BATCH_SIZE", self.batch_size.to_string()),
+            ("BENCH_ENCODED_BYTES", self.encoded_bytes.to_string()),
             ("BENCH_MESSAGES", self.messages.to_string()),
             ("BENCH_WARMUP", self.warmup.to_string()),
             ("BENCH_BUFFER_DEPTH", self.buffer_depth.to_string()),
@@ -351,10 +446,12 @@ impl IpcBenchmark for Scenario {
 }
 
 impl Scenario {
-    fn from_spec(spec: &FramedPingPongScenarioSpec, selection: &FramedPingPongSelection) -> Self {
+    fn from_spec(spec: &CodecPingPongScenarioSpec, selection: &CodecPingPongSelection) -> Self {
+        let payloads = payloads_for(spec.batch_size);
         Self {
-            payload_label: spec.payload_label,
-            payload_bytes: spec.payload_bytes,
+            codec: spec.codec,
+            batch_size: spec.batch_size,
+            encoded_bytes: encoded_len(spec.codec, &payloads),
             messages: spec.messages,
             warmup: spec.warmup,
             buffer_depth: spec.buffer_depth,
@@ -368,15 +465,15 @@ impl Scenario {
 }
 
 const CHILD_ROLES: &[harness::ChildRole] = &[
-    harness::ChildRole::new("competitive_framed_mmap_echo", producer_process),
-    harness::ChildRole::new("competitive_framed_mmap_initiator", consumer_process),
+    harness::ChildRole::new("pingpong_codec_mmap_echo", producer_process),
+    harness::ChildRole::new("pingpong_codec_mmap_initiator", consumer_process),
 ];
 
-pub struct CompetitiveFramedMmapBench;
+pub struct PingPongCodecMmapBench;
 
-impl harness::BenchHarness for CompetitiveFramedMmapBench {
+impl harness::BenchHarness for PingPongCodecMmapBench {
     fn bench_name(&self) -> &'static str {
-        "competitive_framed_mmap"
+        "pingpong_codec_mmap"
     }
 
     fn child_roles(&self) -> &'static [harness::ChildRole] {
@@ -384,15 +481,15 @@ impl harness::BenchHarness for CompetitiveFramedMmapBench {
     }
 
     fn run_orchestrator(&self, args: &[String]) -> harness::BenchRunResult {
-        let selection = FramedPingPongSelection::parse(args)?;
+        let selection = CodecPingPongSelection::parse(args)?;
 
         if !selection.output_args.json_mode {
-            println!("=== Myelon Framed MMAP Ping-Pong ===");
+            println!("=== Myelon Codec MMAP Ping-Pong ===");
             println!("Mode: {}", selection.mode.description());
             if selection.target_rate > 0 {
                 println!("Target rate: {} msgs/s", selection.target_rate);
             }
-            println!("Transport: FramedTransport over mmap, strict 1p1c");
+            println!("Transport: TypedTransport over mmap, strict 1p1c");
             println!();
         }
 

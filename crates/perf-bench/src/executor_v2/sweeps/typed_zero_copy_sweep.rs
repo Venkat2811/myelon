@@ -17,84 +17,19 @@ use crate::harness::{
 use crate::reporting::{self, BenchReport, ReportOutputArgs};
 use crate::scenario_v2::sweeps::{self as sweep_specs, BasicSweepSelection, SweepBackend};
 use disruptor_mp::AutoWaitStrategy;
-use myelon::transport::{FrameMeta, MyelonWaitStrategy, ReassemblyBuffer};
+use myelon::transport::{MyelonWaitStrategy, ReassemblyBuffer};
 use myelon::typed_transport::{
     MmapTypedConsumer, MmapTypedProducer, TypedConsumer, TypedProducer,
 };
+use myelon::AlignedFixedFrame;
 use std::collections::HashMap;
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
 const MMAP_BACKLOG_CHECK_INTERVAL: u64 = 32;
 
-#[repr(C)]
-#[derive(Clone, Copy, Debug)]
-struct ZeroCopyFrameHeader {
-    len: u32,
-    kind: u8,
-    flags: u8,
-    msg_id: u32,
-    _aligned_header: u64,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug)]
-struct ZeroCopyFrame<const DATA_BYTES: usize> {
-    len: u32,
-    kind: u8,
-    flags: u8,
-    msg_id: u32,
-    _aligned_header: u64,
-    data: [u8; DATA_BYTES],
-}
-
-impl<const DATA_BYTES: usize> Default for ZeroCopyFrame<DATA_BYTES> {
-    fn default() -> Self {
-        Self {
-            len: 0,
-            kind: 0,
-            flags: 0,
-            msg_id: 0,
-            _aligned_header: 0,
-            data: [0; DATA_BYTES],
-        }
-    }
-}
-
-impl<const DATA_BYTES: usize> myelon::transport::FramedTransportFrame
-    for ZeroCopyFrame<DATA_BYTES>
-{
-    fn payload_capacity() -> usize {
-        DATA_BYTES
-    }
-
-    fn frame_meta(&self) -> FrameMeta<'_> {
-        FrameMeta {
-            len: self.len as usize,
-            kind: self.kind,
-            flags: self.flags,
-            msg_id: self.msg_id,
-            timestamp_ns: None,
-            data: &self.data[..self.len as usize],
-        }
-    }
-
-    fn write_frame(&mut self, payload: &[u8], kind: u8, msg_id: u32, flags: u8) {
-        assert!(
-            payload.len() <= DATA_BYTES,
-            "payload len {} exceeds zero-copy frame capacity {}",
-            payload.len(),
-            DATA_BYTES
-        );
-        self.len = payload.len() as u32;
-        self.kind = kind;
-        self.flags = flags;
-        self.msg_id = msg_id;
-        self.data[..payload.len()].copy_from_slice(payload);
-    }
-}
-
-type ZcFrame = ZeroCopyFrame<{ 64 * 1024 - std::mem::size_of::<ZeroCopyFrameHeader>() }>;
+/// Aligned zero-copy frame sized for a 64KB ring slot.
+type ZcFrame = AlignedFixedFrame<{ 64 * 1024 - 16 }>;
 
 fn scaled_buffer(base_buffer: usize, consumers: usize) -> usize {
     base_buffer

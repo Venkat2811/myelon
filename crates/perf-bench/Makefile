@@ -3,7 +3,7 @@
 # Usage:
 #   make smoke          # Quick smoke test (~60s)
 #   make simple-smoke   # Ultra-quick exact-size raw+signal smoke
-#   make competitive    # Competitive ping-pong benches
+#   make pingpong       # Ping-pong benches
 #   make myelon-sweep   # Framed + zero-copy myelon sweeps
 #   make all-multi      # Multi-consumer coverage matrix
 #   make sweep          # Monster sweep SHM + mmap (full)
@@ -24,7 +24,7 @@ SIMPLE_SMOKE_WARMUP ?= 100
 SIMPLE_SMOKE_RATE ?= 400000
 SIMPLE_SMOKE_SIGNAL_EVENTS ?= 1000000
 
-.PHONY: smoke simple-smoke competitive myelon-sweep all-multi sweep sweep-quick layers nofrag wait wait-full codec codec-phase framed raw layout repeatability all results clean
+.PHONY: smoke simple-smoke pingpong myelon-sweep all-multi sweep sweep-quick layers nofrag wait wait-full codec codec-phase framed raw layout repeatability all results clean
 
 simple-smoke:
 	@echo "=== Simple Smoke ==="
@@ -32,14 +32,14 @@ simple-smoke:
 	$(BENCH) --bench raw_ring_mmap -- --timeout 30 --class signal --consumers 1 --events $(SIMPLE_SMOKE_SIGNAL_EVENTS)
 	@set -e; \
 	for sz in $(SIMPLE_SMOKE_SIZES); do \
-		$(BENCH) --bench competitive_shm -- --timeout 30 --no-compare -s $$sz -n $(SIMPLE_SMOKE_MESSAGES) -w $(SIMPLE_SMOKE_WARMUP); \
-		$(BENCH) --bench competitive_mmap -- --timeout 30 --no-compare -s $$sz -n $(SIMPLE_SMOKE_MESSAGES) -w $(SIMPLE_SMOKE_WARMUP); \
-		$(BENCH) --bench competitive_raw_myelon_shm -- --timeout 30 --no-compare -s $$sz -n $(SIMPLE_SMOKE_MESSAGES) -w $(SIMPLE_SMOKE_WARMUP); \
-		$(BENCH) --bench competitive_raw_myelon_mmap -- --timeout 30 --no-compare -s $$sz -n $(SIMPLE_SMOKE_MESSAGES) -w $(SIMPLE_SMOKE_WARMUP); \
-		$(BENCH) --bench competitive_shm -- --timeout 30 --no-compare -s $$sz -n $(SIMPLE_SMOKE_MESSAGES) -w $(SIMPLE_SMOKE_WARMUP) --target-rate $(SIMPLE_SMOKE_RATE); \
-		$(BENCH) --bench competitive_mmap -- --timeout 30 --no-compare -s $$sz -n $(SIMPLE_SMOKE_MESSAGES) -w $(SIMPLE_SMOKE_WARMUP) --target-rate $(SIMPLE_SMOKE_RATE); \
-		$(BENCH) --bench competitive_raw_myelon_shm -- --timeout 30 --no-compare -s $$sz -n $(SIMPLE_SMOKE_MESSAGES) -w $(SIMPLE_SMOKE_WARMUP) --target-rate $(SIMPLE_SMOKE_RATE); \
-		$(BENCH) --bench competitive_raw_myelon_mmap -- --timeout 30 --no-compare -s $$sz -n $(SIMPLE_SMOKE_MESSAGES) -w $(SIMPLE_SMOKE_WARMUP) --target-rate $(SIMPLE_SMOKE_RATE); \
+		$(BENCH) --bench pingpong_shm -- --timeout 30 --no-compare -s $$sz -n $(SIMPLE_SMOKE_MESSAGES) -w $(SIMPLE_SMOKE_WARMUP); \
+		$(BENCH) --bench pingpong_mmap -- --timeout 30 --no-compare -s $$sz -n $(SIMPLE_SMOKE_MESSAGES) -w $(SIMPLE_SMOKE_WARMUP); \
+		$(BENCH) --bench pingpong_raw_myelon_shm -- --timeout 30 --no-compare -s $$sz -n $(SIMPLE_SMOKE_MESSAGES) -w $(SIMPLE_SMOKE_WARMUP); \
+		$(BENCH) --bench pingpong_raw_myelon_mmap -- --timeout 30 --no-compare -s $$sz -n $(SIMPLE_SMOKE_MESSAGES) -w $(SIMPLE_SMOKE_WARMUP); \
+		$(BENCH) --bench pingpong_shm -- --timeout 30 --no-compare -s $$sz -n $(SIMPLE_SMOKE_MESSAGES) -w $(SIMPLE_SMOKE_WARMUP) --target-rate $(SIMPLE_SMOKE_RATE); \
+		$(BENCH) --bench pingpong_mmap -- --timeout 30 --no-compare -s $$sz -n $(SIMPLE_SMOKE_MESSAGES) -w $(SIMPLE_SMOKE_WARMUP) --target-rate $(SIMPLE_SMOKE_RATE); \
+		$(BENCH) --bench pingpong_raw_myelon_shm -- --timeout 30 --no-compare -s $$sz -n $(SIMPLE_SMOKE_MESSAGES) -w $(SIMPLE_SMOKE_WARMUP) --target-rate $(SIMPLE_SMOKE_RATE); \
+		$(BENCH) --bench pingpong_raw_myelon_mmap -- --timeout 30 --no-compare -s $$sz -n $(SIMPLE_SMOKE_MESSAGES) -w $(SIMPLE_SMOKE_WARMUP) --target-rate $(SIMPLE_SMOKE_RATE); \
 	done
 	@echo "=== Simple Smoke PASSED ==="
 
@@ -50,14 +50,14 @@ smoke:
 	$(BENCH) --bench raw_ring_mmap -- --timeout 30 --class signal --consumers 1
 	$(BENCH) --bench framed_shm -- --timeout 30 --payload 1K_1c
 	$(BENCH) --bench framed_mmap -- --timeout 30 --payload 1K_1c
-	$(BENCH) --bench competitive_framed_shm -- --timeout 30 --payload 64B -n 1000 -w 100
-	$(BENCH) --bench competitive_framed_mmap -- --timeout 30 --payload 64B -n 1000 -w 100
+	$(BENCH) --bench pingpong_framed_shm -- --timeout 30 --payload 64B -n 1000 -w 100
+	$(BENCH) --bench pingpong_framed_mmap -- --timeout 30 --payload 64B -n 1000 -w 100
 	$(BENCH) --bench codec_e2e_shm -- --timeout 30 --codec bincode --batch 8 --consumers 1
 	$(BENCH) --bench codec_e2e_mmap -- --timeout 30 --codec bincode --batch 8 --consumers 1
-	$(BENCH) --bench competitive_codec_shm -- --timeout 30 --codec bincode --batch 1 -n 1000 -w 100
-	$(BENCH) --bench competitive_codec_mmap -- --timeout 30 --codec bincode --batch 1 -n 1000 -w 100
-	$(BENCH) --bench competitive_typed_zero_copy_shm -- --timeout 30 --codec rkyv --batch 1 -n 1000 -w 100
-	$(BENCH) --bench competitive_typed_zero_copy_mmap -- --timeout 30 --codec rkyv --batch 1 -n 1000 -w 100
+	$(BENCH) --bench pingpong_codec_shm -- --timeout 30 --codec bincode --batch 1 -n 1000 -w 100
+	$(BENCH) --bench pingpong_codec_mmap -- --timeout 30 --codec bincode --batch 1 -n 1000 -w 100
+	$(BENCH) --bench pingpong_typed_zero_copy_shm -- --timeout 30 --codec rkyv --batch 1 -n 1000 -w 100
+	$(BENCH) --bench pingpong_typed_zero_copy_mmap -- --timeout 30 --codec rkyv --batch 1 -n 1000 -w 100
 	$(BENCH) --bench codec_nofrag_shm -- --timeout 30 --codec rkyv --batch 8 --consumers 1
 	$(BENCH) --bench wait_strategy_shm -- --timeout 30 quick
 	$(BENCH) --bench wait_strategy_mmap -- --timeout 30 quick
@@ -66,43 +66,43 @@ smoke:
 	$(BENCH) --bench nofrag_all -- --timeout 30 --size 1KB --consumers 2 --layer raw_ring --backend shm
 	$(BENCH) --bench monster_sweep_shm -- --timeout 30 --quick --size 64B --mode throughput
 	$(BENCH) --bench monster_sweep_mmap -- --timeout 30 --quick --size 64B --mode throughput
-	$(BENCH) --bench competitive_shm -- --timeout 30 -s 64 -n 1000 -w 100 --json --no-compare
-	$(BENCH) --bench competitive_mmap -- --timeout 30 -s 64 -n 1000 -w 100 --json --no-compare
-	$(BENCH) --bench competitive_raw_myelon_shm -- --timeout 30 -s 64 -n 1000 -w 100 --json --no-compare
-	$(BENCH) --bench competitive_raw_myelon_mmap -- --timeout 30 -s 64 -n 1000 -w 100 --json --no-compare
+	$(BENCH) --bench pingpong_shm -- --timeout 30 -s 64 -n 1000 -w 100 --json --no-compare
+	$(BENCH) --bench pingpong_mmap -- --timeout 30 -s 64 -n 1000 -w 100 --json --no-compare
+	$(BENCH) --bench pingpong_raw_myelon_shm -- --timeout 30 -s 64 -n 1000 -w 100 --json --no-compare
+	$(BENCH) --bench pingpong_raw_myelon_mmap -- --timeout 30 -s 64 -n 1000 -w 100 --json --no-compare
 	$(BENCH) --bench layout_validation --no-run
 	@echo "=== Smoke Test PASSED ==="
 
 # --- Competitive ping-pong ---
-competitive:
-	$(BENCH) --bench competitive_shm -- --timeout 60 -s 64 -n 100000 -w 10000 --no-compare
-	$(BENCH) --bench competitive_shm -- --timeout 60 -s 64 -n 100000 -w 10000 --target-rate 20000 --no-compare
-	$(BENCH) --bench competitive_shm -- --timeout 60 -s 64 -n 100000 -w 10000 --batch-timing --no-compare
-	$(BENCH) --bench competitive_mmap -- --timeout 60 -s 64 -n 100000 -w 10000 --no-compare
-	$(BENCH) --bench competitive_mmap -- --timeout 60 -s 64 -n 100000 -w 10000 --target-rate 20000 --no-compare
-	$(BENCH) --bench competitive_mmap -- --timeout 60 -s 64 -n 100000 -w 10000 --batch-timing --no-compare
-	$(BENCH) --bench competitive_raw_myelon_shm -- --timeout 60 -s 64 -n 100000 -w 10000 --no-compare
-	$(BENCH) --bench competitive_raw_myelon_shm -- --timeout 60 -s 64 -n 100000 -w 10000 --target-rate 20000 --no-compare
-	$(BENCH) --bench competitive_raw_myelon_shm -- --timeout 60 -s 64 -n 100000 -w 10000 --batch-timing --no-compare
-	$(BENCH) --bench competitive_raw_myelon_mmap -- --timeout 60 -s 64 -n 100000 -w 10000 --no-compare
-	$(BENCH) --bench competitive_raw_myelon_mmap -- --timeout 60 -s 64 -n 100000 -w 10000 --target-rate 20000 --no-compare
-	$(BENCH) --bench competitive_raw_myelon_mmap -- --timeout 60 -s 64 -n 100000 -w 10000 --batch-timing --no-compare
-	$(BENCH) --bench competitive_framed_shm -- --timeout 60 --payload 64B -n 100000 -w 10000
-	$(BENCH) --bench competitive_framed_shm -- --timeout 60 --payload 64B -n 100000 -w 10000 --mode co --target-rate 20000
-	$(BENCH) --bench competitive_framed_mmap -- --timeout 60 --payload 64B -n 100000 -w 10000
-	$(BENCH) --bench competitive_framed_mmap -- --timeout 60 --payload 64B -n 100000 -w 10000 --mode co --target-rate 20000
-	$(BENCH) --bench competitive_codec_shm -- --timeout 60 --codec bincode --batch 1 -n 100000 -w 10000
-	$(BENCH) --bench competitive_codec_shm -- --timeout 60 --codec bincode --batch 1 -n 100000 -w 10000 --mode co --target-rate 20000
-	$(BENCH) --bench competitive_codec_mmap -- --timeout 60 --codec bincode --batch 1 -n 100000 -w 10000
-	$(BENCH) --bench competitive_codec_mmap -- --timeout 60 --codec bincode --batch 1 -n 100000 -w 10000 --mode co --target-rate 20000
-	$(BENCH) --bench competitive_typed_zero_copy_shm -- --timeout 60 --codec rkyv --batch 1 -n 100000 -w 10000
-	$(BENCH) --bench competitive_typed_zero_copy_shm -- --timeout 60 --codec rkyv --batch 1 -n 100000 -w 10000 --mode co --target-rate 20000
-	$(BENCH) --bench competitive_typed_zero_copy_mmap -- --timeout 60 --codec rkyv --batch 1 -n 100000 -w 10000
-	$(BENCH) --bench competitive_typed_zero_copy_mmap -- --timeout 60 --codec rkyv --batch 1 -n 100000 -w 10000 --mode co --target-rate 20000
-	$(BENCH) --bench competitive_typed_zero_copy_shm -- --timeout 60 --codec flatbuf --batch 1 -n 100000 -w 10000
-	$(BENCH) --bench competitive_typed_zero_copy_shm -- --timeout 60 --codec flatbuf --batch 1 -n 100000 -w 10000 --mode co --target-rate 20000
-	$(BENCH) --bench competitive_typed_zero_copy_mmap -- --timeout 60 --codec flatbuf --batch 1 -n 100000 -w 10000
-	$(BENCH) --bench competitive_typed_zero_copy_mmap -- --timeout 60 --codec flatbuf --batch 1 -n 100000 -w 10000 --mode co --target-rate 20000
+pingpong:
+	$(BENCH) --bench pingpong_shm -- --timeout 60 -s 64 -n 100000 -w 10000 --no-compare
+	$(BENCH) --bench pingpong_shm -- --timeout 60 -s 64 -n 100000 -w 10000 --target-rate 20000 --no-compare
+	$(BENCH) --bench pingpong_shm -- --timeout 60 -s 64 -n 100000 -w 10000 --batch-timing --no-compare
+	$(BENCH) --bench pingpong_mmap -- --timeout 60 -s 64 -n 100000 -w 10000 --no-compare
+	$(BENCH) --bench pingpong_mmap -- --timeout 60 -s 64 -n 100000 -w 10000 --target-rate 20000 --no-compare
+	$(BENCH) --bench pingpong_mmap -- --timeout 60 -s 64 -n 100000 -w 10000 --batch-timing --no-compare
+	$(BENCH) --bench pingpong_raw_myelon_shm -- --timeout 60 -s 64 -n 100000 -w 10000 --no-compare
+	$(BENCH) --bench pingpong_raw_myelon_shm -- --timeout 60 -s 64 -n 100000 -w 10000 --target-rate 20000 --no-compare
+	$(BENCH) --bench pingpong_raw_myelon_shm -- --timeout 60 -s 64 -n 100000 -w 10000 --batch-timing --no-compare
+	$(BENCH) --bench pingpong_raw_myelon_mmap -- --timeout 60 -s 64 -n 100000 -w 10000 --no-compare
+	$(BENCH) --bench pingpong_raw_myelon_mmap -- --timeout 60 -s 64 -n 100000 -w 10000 --target-rate 20000 --no-compare
+	$(BENCH) --bench pingpong_raw_myelon_mmap -- --timeout 60 -s 64 -n 100000 -w 10000 --batch-timing --no-compare
+	$(BENCH) --bench pingpong_framed_shm -- --timeout 60 --payload 64B -n 100000 -w 10000
+	$(BENCH) --bench pingpong_framed_shm -- --timeout 60 --payload 64B -n 100000 -w 10000 --mode co --target-rate 20000
+	$(BENCH) --bench pingpong_framed_mmap -- --timeout 60 --payload 64B -n 100000 -w 10000
+	$(BENCH) --bench pingpong_framed_mmap -- --timeout 60 --payload 64B -n 100000 -w 10000 --mode co --target-rate 20000
+	$(BENCH) --bench pingpong_codec_shm -- --timeout 60 --codec bincode --batch 1 -n 100000 -w 10000
+	$(BENCH) --bench pingpong_codec_shm -- --timeout 60 --codec bincode --batch 1 -n 100000 -w 10000 --mode co --target-rate 20000
+	$(BENCH) --bench pingpong_codec_mmap -- --timeout 60 --codec bincode --batch 1 -n 100000 -w 10000
+	$(BENCH) --bench pingpong_codec_mmap -- --timeout 60 --codec bincode --batch 1 -n 100000 -w 10000 --mode co --target-rate 20000
+	$(BENCH) --bench pingpong_typed_zero_copy_shm -- --timeout 60 --codec rkyv --batch 1 -n 100000 -w 10000
+	$(BENCH) --bench pingpong_typed_zero_copy_shm -- --timeout 60 --codec rkyv --batch 1 -n 100000 -w 10000 --mode co --target-rate 20000
+	$(BENCH) --bench pingpong_typed_zero_copy_mmap -- --timeout 60 --codec rkyv --batch 1 -n 100000 -w 10000
+	$(BENCH) --bench pingpong_typed_zero_copy_mmap -- --timeout 60 --codec rkyv --batch 1 -n 100000 -w 10000 --mode co --target-rate 20000
+	$(BENCH) --bench pingpong_typed_zero_copy_shm -- --timeout 60 --codec flatbuf --batch 1 -n 100000 -w 10000
+	$(BENCH) --bench pingpong_typed_zero_copy_shm -- --timeout 60 --codec flatbuf --batch 1 -n 100000 -w 10000 --mode co --target-rate 20000
+	$(BENCH) --bench pingpong_typed_zero_copy_mmap -- --timeout 60 --codec flatbuf --batch 1 -n 100000 -w 10000
+	$(BENCH) --bench pingpong_typed_zero_copy_mmap -- --timeout 60 --codec flatbuf --batch 1 -n 100000 -w 10000 --mode co --target-rate 20000
 
 # --- Myelon layer sweeps ---
 myelon-sweep:
@@ -190,12 +190,12 @@ repeatability:
 	cargo run -p perf-bench --bin repeatability -- \
 		--repeat 3 --threshold-pct 10 \
 		--json-env DISRUPTOR_MP_BENCHMARK_JSON_OUT \
-		--json-out $(OUT_DIR)/repeat_competitive_shm_64b_1p1c_10m.json \
-		--md-out $(OUT_DIR)/repeat_competitive_shm_64b_1p1c_10m.md \
-		-- cargo bench -p perf-bench --bench competitive_shm -- --timeout 300 --no-compare -s 64 -n 10000000 -w 1000000 --consumers 1
+		--json-out $(OUT_DIR)/repeat_pingpong_shm_64b_1p1c_10m.json \
+		--md-out $(OUT_DIR)/repeat_pingpong_shm_64b_1p1c_10m.md \
+		-- cargo bench -p perf-bench --bench pingpong_shm -- --timeout 300 --no-compare -s 64 -n 10000000 -w 1000000 --consumers 1
 
 # --- All benchmarks (sequential) ---
-all: raw framed codec wait myelon-sweep competitive sweep layout
+all: raw framed codec wait myelon-sweep pingpong sweep layout
 
 # --- Full matrix with all output formats ---
 results:
@@ -206,19 +206,19 @@ results:
 	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/raw_ring_mmap.json $(BENCH) --bench raw_ring_mmap -- --timeout 300
 	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/framed_shm.json $(BENCH) --bench framed_shm
 	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/framed_mmap.json $(BENCH) --bench framed_mmap
-	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/competitive_framed_shm.json $(BENCH) --bench competitive_framed_shm -- --json --csv-out $(OUT_DIR)/competitive_framed_shm.csv --md-out $(OUT_DIR)/competitive_framed_shm.md
-	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/competitive_framed_mmap.json $(BENCH) --bench competitive_framed_mmap -- --json --csv-out $(OUT_DIR)/competitive_framed_mmap.csv --md-out $(OUT_DIR)/competitive_framed_mmap.md
+	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/pingpong_framed_shm.json $(BENCH) --bench pingpong_framed_shm -- --json --csv-out $(OUT_DIR)/pingpong_framed_shm.csv --md-out $(OUT_DIR)/pingpong_framed_shm.md
+	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/pingpong_framed_mmap.json $(BENCH) --bench pingpong_framed_mmap -- --json --csv-out $(OUT_DIR)/pingpong_framed_mmap.csv --md-out $(OUT_DIR)/pingpong_framed_mmap.md
 	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/codec_e2e_shm.json $(BENCH) --bench codec_e2e_shm
 	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/codec_e2e_mmap.json $(BENCH) --bench codec_e2e_mmap
-	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/competitive_codec_shm.json $(BENCH) --bench competitive_codec_shm -- --json --csv-out $(OUT_DIR)/competitive_codec_shm.csv --md-out $(OUT_DIR)/competitive_codec_shm.md
-	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/competitive_codec_mmap.json $(BENCH) --bench competitive_codec_mmap -- --json --csv-out $(OUT_DIR)/competitive_codec_mmap.csv --md-out $(OUT_DIR)/competitive_codec_mmap.md
-	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/competitive_typed_zero_copy_shm.json $(BENCH) --bench competitive_typed_zero_copy_shm -- --json --csv-out $(OUT_DIR)/competitive_typed_zero_copy_shm.csv --md-out $(OUT_DIR)/competitive_typed_zero_copy_shm.md
-	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/competitive_typed_zero_copy_mmap.json $(BENCH) --bench competitive_typed_zero_copy_mmap -- --json --csv-out $(OUT_DIR)/competitive_typed_zero_copy_mmap.csv --md-out $(OUT_DIR)/competitive_typed_zero_copy_mmap.md
+	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/pingpong_codec_shm.json $(BENCH) --bench pingpong_codec_shm -- --json --csv-out $(OUT_DIR)/pingpong_codec_shm.csv --md-out $(OUT_DIR)/pingpong_codec_shm.md
+	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/pingpong_codec_mmap.json $(BENCH) --bench pingpong_codec_mmap -- --json --csv-out $(OUT_DIR)/pingpong_codec_mmap.csv --md-out $(OUT_DIR)/pingpong_codec_mmap.md
+	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/pingpong_typed_zero_copy_shm.json $(BENCH) --bench pingpong_typed_zero_copy_shm -- --json --csv-out $(OUT_DIR)/pingpong_typed_zero_copy_shm.csv --md-out $(OUT_DIR)/pingpong_typed_zero_copy_shm.md
+	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/pingpong_typed_zero_copy_mmap.json $(BENCH) --bench pingpong_typed_zero_copy_mmap -- --json --csv-out $(OUT_DIR)/pingpong_typed_zero_copy_mmap.csv --md-out $(OUT_DIR)/pingpong_typed_zero_copy_mmap.md
 	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/codec_nofrag_shm.json $(BENCH) --bench codec_nofrag_shm
-	DISRUPTOR_MP_BENCHMARK_JSON_OUT=$(OUT_DIR)/competitive_shm.json $(BENCH) --bench competitive_shm -- --json-canonical --no-compare --csv-out $(OUT_DIR)/competitive_shm.csv --md-out $(OUT_DIR)/competitive_shm.md
-	DISRUPTOR_MP_BENCHMARK_JSON_OUT=$(OUT_DIR)/competitive_mmap.json $(BENCH) --bench competitive_mmap -- --json-canonical --no-compare --csv-out $(OUT_DIR)/competitive_mmap.csv --md-out $(OUT_DIR)/competitive_mmap.md
-	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/competitive_raw_myelon_shm.json $(BENCH) --bench competitive_raw_myelon_shm -- --json --csv-out $(OUT_DIR)/competitive_raw_myelon_shm.csv --md-out $(OUT_DIR)/competitive_raw_myelon_shm.md
-	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/competitive_raw_myelon_mmap.json $(BENCH) --bench competitive_raw_myelon_mmap -- --json --csv-out $(OUT_DIR)/competitive_raw_myelon_mmap.csv --md-out $(OUT_DIR)/competitive_raw_myelon_mmap.md
+	DISRUPTOR_MP_BENCHMARK_JSON_OUT=$(OUT_DIR)/pingpong_shm.json $(BENCH) --bench pingpong_shm -- --json-canonical --no-compare --csv-out $(OUT_DIR)/pingpong_shm.csv --md-out $(OUT_DIR)/pingpong_shm.md
+	DISRUPTOR_MP_BENCHMARK_JSON_OUT=$(OUT_DIR)/pingpong_mmap.json $(BENCH) --bench pingpong_mmap -- --json-canonical --no-compare --csv-out $(OUT_DIR)/pingpong_mmap.csv --md-out $(OUT_DIR)/pingpong_mmap.md
+	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/pingpong_raw_myelon_shm.json $(BENCH) --bench pingpong_raw_myelon_shm -- --json --csv-out $(OUT_DIR)/pingpong_raw_myelon_shm.csv --md-out $(OUT_DIR)/pingpong_raw_myelon_shm.md
+	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/pingpong_raw_myelon_mmap.json $(BENCH) --bench pingpong_raw_myelon_mmap -- --json --csv-out $(OUT_DIR)/pingpong_raw_myelon_mmap.csv --md-out $(OUT_DIR)/pingpong_raw_myelon_mmap.md
 	$(BENCH) --bench layout_validation -- --json-out $(OUT_DIR)/layout_validation.json --csv-out $(OUT_DIR)/layout_validation.csv --md-out $(OUT_DIR)/layout_validation.md
 	BENCH_MODE=full MYELON_BENCH_JSON_OUT=$(OUT_DIR)/wait_shm.json $(BENCH) --bench wait_strategy_shm
 	BENCH_MODE=full MYELON_BENCH_JSON_OUT=$(OUT_DIR)/wait_mmap.json $(BENCH) --bench wait_strategy_mmap

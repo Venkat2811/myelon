@@ -329,16 +329,16 @@ fn infer_family(benchmark: &str) -> ScenarioFamily {
     match benchmark {
         "raw_ring_shm" | "raw_ring_mmap" => ScenarioFamily::RawRing,
         "wait_strategy_shm" | "wait_strategy_mmap" => ScenarioFamily::WaitStrategy,
-        "competitive_shm"
-        | "competitive_mmap"
-        | "competitive_raw_myelon_shm"
-        | "competitive_raw_myelon_mmap"
-        | "competitive_framed_shm"
-        | "competitive_framed_mmap"
-        | "competitive_codec_shm"
-        | "competitive_codec_mmap"
-        | "competitive_typed_zero_copy_shm"
-        | "competitive_typed_zero_copy_mmap" => ScenarioFamily::Competitive,
+        "pingpong_shm"
+        | "pingpong_mmap"
+        | "pingpong_raw_myelon_shm"
+        | "pingpong_raw_myelon_mmap"
+        | "pingpong_framed_shm"
+        | "pingpong_framed_mmap"
+        | "pingpong_codec_shm"
+        | "pingpong_codec_mmap"
+        | "pingpong_typed_zero_copy_shm"
+        | "pingpong_typed_zero_copy_mmap" => ScenarioFamily::PingPong,
         "framed_shm" | "framed_mmap" => ScenarioFamily::Framed,
         "codec_e2e_shm" | "codec_e2e_mmap" => ScenarioFamily::CodecE2E,
         "codec_nofrag_shm" => ScenarioFamily::CodecNoFrag,
@@ -741,14 +741,14 @@ mod tests {
     }
 
     #[test]
-    fn competitive_typed_zero_copy_benches_map_to_competitive_family() {
+    fn pingpong_typed_zero_copy_benches_map_to_pingpong_family() {
         assert_eq!(
-            infer_family("competitive_typed_zero_copy_shm"),
-            ScenarioFamily::Competitive
+            infer_family("pingpong_typed_zero_copy_shm"),
+            ScenarioFamily::PingPong
         );
         assert_eq!(
-            infer_family("competitive_typed_zero_copy_mmap"),
-            ScenarioFamily::Competitive
+            infer_family("pingpong_typed_zero_copy_mmap"),
+            ScenarioFamily::PingPong
         );
     }
 }

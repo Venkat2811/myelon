@@ -30,10 +30,11 @@ use disruptor_mp::{
     build_shared_single_producer, CoordinationMode, SharedDisruptorBuilder, SharedMemoryConfig,
 };
 use myelon::transport::{
-    FixedFrame, FrameMeta, FramedTransportConsumer, FramedTransportFrame, FramedTransportProducer,
+    FixedFrame, FramedTransportConsumer, FramedTransportProducer,
     MyelonWaitStrategy, ReassemblyBuffer,
 };
 use myelon::typed_transport::{TypedConsumer, TypedProducer};
+use myelon::AlignedFixedFrame;
 use myelon::{
     attach_shared_consumer as my_attach_shared_consumer,
     build_shared_single_producer as my_build_shared_single_producer,
@@ -64,74 +65,8 @@ where
 const FRAME_DATA_BYTES: usize = 64 * 1024 - 12;
 type Frame = FixedFrame<FRAME_DATA_BYTES>;
 
-const ZC_FRAME_HEADER_BYTES: usize = std::mem::size_of::<ZeroCopyFrameHeader>();
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug)]
-struct ZeroCopyFrameHeader {
-    len: u32,
-    kind: u8,
-    flags: u8,
-    msg_id: u32,
-    _aligned_header: u64,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug)]
-struct ZeroCopyFrame<const DATA_BYTES: usize> {
-    len: u32,
-    kind: u8,
-    flags: u8,
-    msg_id: u32,
-    _aligned_header: u64,
-    data: [u8; DATA_BYTES],
-}
-
-impl<const DATA_BYTES: usize> Default for ZeroCopyFrame<DATA_BYTES> {
-    fn default() -> Self {
-        Self {
-            len: 0,
-            kind: 0,
-            flags: 0,
-            msg_id: 0,
-            _aligned_header: 0,
-            data: [0u8; DATA_BYTES],
-        }
-    }
-}
-
-impl<const DATA_BYTES: usize> FramedTransportFrame for ZeroCopyFrame<DATA_BYTES> {
-    fn payload_capacity() -> usize {
-        DATA_BYTES
-    }
-
-    fn frame_meta(&self) -> FrameMeta<'_> {
-        FrameMeta {
-            len: self.len as usize,
-            kind: self.kind,
-            flags: self.flags,
-            msg_id: self.msg_id,
-            timestamp_ns: None,
-            data: &self.data[..self.len as usize],
-        }
-    }
-
-    fn write_frame(&mut self, payload: &[u8], kind: u8, msg_id: u32, flags: u8) {
-        assert!(
-            payload.len() <= DATA_BYTES,
-            "payload len {} exceeds zero-copy frame capacity {}",
-            payload.len(),
-            DATA_BYTES
-        );
-        self.len = payload.len() as u32;
-        self.kind = kind;
-        self.flags = flags;
-        self.msg_id = msg_id;
-        self.data[..payload.len()].copy_from_slice(payload);
-    }
-}
-
-type ZcFrame = ZeroCopyFrame<{ 64 * 1024 - ZC_FRAME_HEADER_BYTES }>;
+/// Aligned zero-copy frame sized for a 64KB ring slot.
+type ZcFrame = AlignedFixedFrame<{ 64 * 1024 - 16 }>;
 
 // Right-sized frames: slot matches payload to eliminate bandwidth waste
 type Frame2K = FixedFrame<{ 2 * 1024 - 12 }>; // for 1KB payloads

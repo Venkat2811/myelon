@@ -1,5 +1,5 @@
 pub mod codec;
-pub mod competitive;
+pub mod pingpong;
 pub mod framed;
 pub mod layout;
 pub mod myelon_pingpong;

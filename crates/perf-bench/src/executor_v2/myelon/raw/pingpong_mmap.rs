@@ -1,6 +1,6 @@
-//! Competitive ping-pong benchmark over the SHM backend.
+//! PingPong raw-myelon benchmark over the mmap backend.
 //!
-//! This replaces the previous wrapper with a real 1p1c ping-pong benchmark that
+//! This replaces the previous stub with a real 1p1c ping-pong benchmark that
 //! supports maximum-throughput, coordinated-omission-aware fixed-rate, and
 //! low-overhead batch-timing modes.
 
@@ -8,50 +8,39 @@
 #[allow(clippy::duplicate_mod)]
 #[path = "../../../../../disruptor-mp/benches/ipc/competitive/common.rs"]
 mod common;
-#[path = "../../../../../disruptor-mp/benches/ipc/competitive/table.rs"]
-mod table;
 
 use crate::coordination::UnifiedCoordination;
 use crate::harness;
 use crate::latency::{self, LatencyRecorder};
 use crate::reporting::{self, BenchReport};
-use crate::scenario_v2::competitive::{self, CompetitiveArgs as Args, CompetitiveBackend};
+use crate::scenario_v2::pingpong::{self, PingPongArgs as Args};
 use clap::Parser;
 use common::{calculate_data_rate_gbps, format_throughput, BenchmarkEvent};
-use disruptor_mp::{
-    attach_shared_consumer, build_shared_single_producer, portable_shm_segment_name,
-    CoordinationMode, SharedConsumer, SharedProducer,
-};
+use disruptor_mp::portable_shm_segment_name;
+use myelon::{MmapConsumer, MmapProducer, MmapTransportLayout};
 use std::env;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
-type CompetitiveRunResult =
+type PingPongRunResult =
     Result<(f64, Duration, Option<latency::LatencyStats>, bool, u64), Box<dyn std::error::Error>>;
 
-const DISCOVERY_SCAN_SLEEP: Duration = Duration::from_millis(150);
-const CONSUMER_PREFIX: &str = "cp";
-const ECHO_CONSUMER_ID: &str = "cp_0";
-const MAIN_CONSUMER_ID: &str = "cp_0";
+struct RootCleanupGuard {
+    root: PathBuf,
+}
 
-fn discovery_scan_rounds(num_consumers: usize) -> usize {
-    if num_consumers > 1 {
-        8 + num_consumers
-    } else {
-        8
+impl RootCleanupGuard {
+    fn new(root: PathBuf) -> Self {
+        Self { root }
     }
 }
 
-fn warm_discovery_scans<F>(mut scan: F, rounds: usize)
-where
-    F: FnMut() -> i64,
-{
-    for _ in 0..rounds {
-        let _ = scan();
-        std::thread::sleep(DISCOVERY_SCAN_SLEEP);
+impl Drop for RootCleanupGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.root);
     }
 }
 
@@ -83,9 +72,9 @@ impl Drop for ChildProcessGuard {
     }
 }
 
-struct ShmLane<const SIZE: usize> {
-    producer_ping: SharedProducer<BenchmarkEvent<SIZE>>,
-    pong_consumer: SharedConsumer<BenchmarkEvent<SIZE>>,
+struct MmapLane<const SIZE: usize> {
+    producer_ping: MmapProducer<BenchmarkEvent<SIZE>>,
+    pong_consumer: MmapConsumer<BenchmarkEvent<SIZE>>,
     coordination: UnifiedCoordination,
 }
 
@@ -101,7 +90,7 @@ fn write_event<const SIZE: usize>(
 }
 
 fn wait_for_next_event<E: Copy + Default, R, F: FnOnce(&E) -> R>(
-    consumer: &mut SharedConsumer<E>,
+    consumer: &mut MmapConsumer<E>,
     wait_strategy: &str,
     deadline: Instant,
     context: &str,
@@ -115,38 +104,24 @@ fn wait_for_next_event<E: Copy + Default, R, F: FnOnce(&E) -> R>(
             return Err("shutdown requested".into());
         }
         harness::check_deadline(deadline, context);
-        competitive::apply_wait_strategy(wait_strategy);
+        pingpong::apply_wait_strategy(wait_strategy);
     }
 }
 
-fn attach_consumer_with_timeout<E: Copy + Default + 'static>(
-    segment: &str,
+fn attach_consumer_with_timeout<E: Copy + Default>(
+    layout: MmapTransportLayout,
     buffer_size: usize,
     consumer_id: &str,
     timeout: Duration,
-) -> Result<SharedConsumer<E>, Box<dyn std::error::Error>> {
+) -> Result<MmapConsumer<E>, Box<dyn std::error::Error>> {
     let deadline = Instant::now() + timeout;
     loop {
-        match attach_shared_consumer::<E>(segment, buffer_size)
-            .with_consumer_id(consumer_id)
-            .build_consumer()
-        {
+        match MmapConsumer::<E>::attach(layout.clone(), buffer_size, consumer_id) {
             Ok(consumer) => return Ok(consumer),
             Err(_) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(25)),
             Err(error) => return Err(format!("attach failed for {consumer_id}: {error}").into()),
         }
     }
-}
-
-fn wait_for_echo_attached(coordination: &UnifiedCoordination, timeout: Duration) -> bool {
-    let start = Instant::now();
-    while coordination.data().echo_attached.load(Ordering::Acquire) == 0 {
-        if start.elapsed() > timeout {
-            return false;
-        }
-        std::hint::spin_loop();
-    }
-    true
 }
 
 fn build_report(
@@ -157,20 +132,49 @@ fn build_report(
     verification_passed: bool,
     messages_processed: u64,
 ) -> BenchReport {
-    competitive::build_report(
-        CompetitiveBackend::Shm,
-        args,
-        throughput,
-        buffer_size,
+    let mut result = reporting::make_result(reporting::BenchResultSpec {
+        bench_name: "pingpong_raw_myelon_mmap".to_string(),
+        scenario: format!(
+            "pingpong_raw_myelon_1p{}c_{}",
+            args.consumers,
+            pingpong::human_size(args.message_size)
+        ),
+        backend: "mmap".to_string(),
+        layer: "raw_myelon".to_string(),
+        codec: None,
+        measurement_mode: pingpong::measurement_mode(args),
+        wait_strategy: args.wait_strategy.clone(),
+        transport: reporting::BenchTransportSpec::unified_pingpong()
+            .with_zero_copy(false)
+            .with_framing("none"),
+        message_size_bytes: args.message_size,
+        payload_bytes: args.message_size,
+        buffer_depth: buffer_size,
+        num_messages: args.num_messages,
+        warmup_messages: args.warmup,
+        num_producers: 1,
+        num_consumers: args.consumers,
+        producer_throughput_ops_sec: throughput,
+        consumer_throughput_ops_sec: throughput,
         latency,
-        verification_passed,
-        messages_processed,
-    )
+    });
+    result.results.verification_passed = verification_passed;
+    result.results.messages_processed = messages_processed;
+    result.results.data_rate_mbps = throughput * args.message_size as f64 / 1_000_000.0;
+
+    let mut report = BenchReport::new();
+    report.add(result);
+    report
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "benchmark child launch keeps transport wiring explicit"
+)]
 fn spawn_echo_process(
     exe: &Path,
     args: &Args,
+    root: &Path,
     ping_segment: &str,
     pong_segment: &str,
     coordination_name: &str,
@@ -180,6 +184,7 @@ fn spawn_echo_process(
     let mut child_cmd = Command::new(exe);
     child_cmd
         .arg("--process-two")
+        .env("MMAP_ROOT", root)
         .env("PING_SEGMENT", ping_segment)
         .env("PONG_SEGMENT", pong_segment)
         .env("COORDINATION_SEGMENT", coordination_name)
@@ -189,7 +194,7 @@ fn spawn_echo_process(
         .stdout(Stdio::null())
         .stderr(Stdio::inherit());
 
-    if competitive::json_mode(args) {
+    if pingpong::json_mode(args) {
         child_cmd.env("JSON_MODE", "1");
     }
 
@@ -223,7 +228,7 @@ fn print_results(
     if let Some(stats) = latency {
         println!("\nLatency: {}", stats.summary());
     } else if args.batch_timing {
-        if let Some(avg_rtt_ns) = competitive::average_rtt_ns(duration, messages_processed) {
+        if let Some(avg_rtt_ns) = pingpong::average_rtt_ns(duration, messages_processed) {
             println!(
                 "\nAverage RTT: {:.0} ns (batch timing mode; no histogram)",
                 avg_rtt_ns
@@ -233,31 +238,14 @@ fn print_results(
         }
     }
 
-    if !args.no_compare && !args.batch_timing && args.target_rate.is_none() && args.consumers == 1 {
-        if let Some(stats) = latency {
-            let competitors = table::CompetitorBenchmarks::new();
-            println!("\nComparison:");
-            if let Some(speedup) =
-                competitors.get_speedup(args.message_size, stats.p50_ns as f64, "shmipc-rs")
-            {
-                println!("vs shmipc-rs: {speedup}");
-            }
-            if let Some(speedup) =
-                competitors.get_speedup(args.message_size, stats.p50_ns as f64, "shmipc-go")
-            {
-                println!("vs shmipc-go: {speedup}");
-            }
-        } else {
-            println!("\nComparison: no latency histogram available for this mode");
-        }
-    } else if !args.no_compare && args.consumers > 1 {
-        println!("\nComparison: no external competitor data for multi-consumer mode");
+    if !args.no_compare {
+        println!("\nComparison: self-comparison only for mmap backend");
     }
 }
 
 fn run_warmup<const SIZE: usize>(
     args: &Args,
-    lanes: &mut [ShmLane<SIZE>],
+    lanes: &mut [MmapLane<SIZE>],
     context: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let deadline = harness::spin_deadline();
@@ -310,8 +298,8 @@ fn run_warmup<const SIZE: usize>(
 
 fn run_throughput_mode<const SIZE: usize>(
     args: &Args,
-    lanes: &mut [ShmLane<SIZE>],
-) -> CompetitiveRunResult {
+    lanes: &mut [MmapLane<SIZE>],
+) -> PingPongRunResult {
     let deadline = harness::spin_deadline();
     let benchmark_start = Instant::now();
     let mut recorder = LatencyRecorder::default_range();
@@ -349,7 +337,7 @@ fn run_throughput_mode<const SIZE: usize>(
                 &mut lanes[lane_idx].pong_consumer,
                 &args.wait_strategy,
                 deadline,
-                "competitive_shm throughput receive",
+                "pingpong_raw_myelon_mmap throughput receive",
                 |response| response.sequence,
             )?;
             assert_eq!(response_sequence, expected);
@@ -377,8 +365,8 @@ fn run_throughput_mode<const SIZE: usize>(
 
 fn run_batch_timing_mode<const SIZE: usize>(
     args: &Args,
-    lanes: &mut [ShmLane<SIZE>],
-) -> CompetitiveRunResult {
+    lanes: &mut [MmapLane<SIZE>],
+) -> PingPongRunResult {
     let deadline = harness::spin_deadline();
     let benchmark_start = Instant::now();
     let lane_count = lanes.len();
@@ -416,7 +404,7 @@ fn run_batch_timing_mode<const SIZE: usize>(
                 &mut lanes[lane_idx].pong_consumer,
                 &args.wait_strategy,
                 deadline,
-                "competitive_shm batch timing receive",
+                "pingpong_raw_myelon_mmap batch timing receive",
                 |response| response.sequence,
             )?;
             assert_eq!(response_sequence, expected);
@@ -444,8 +432,8 @@ fn run_batch_timing_mode<const SIZE: usize>(
 
 fn run_fixed_rate_mode<const SIZE: usize>(
     args: &Args,
-    lanes: &mut [ShmLane<SIZE>],
-) -> CompetitiveRunResult {
+    lanes: &mut [MmapLane<SIZE>],
+) -> PingPongRunResult {
     let target_rate = args
         .target_rate
         .ok_or("--target-rate is required for fixed-rate mode")?;
@@ -456,7 +444,11 @@ fn run_fixed_rate_mode<const SIZE: usize>(
     let mut corrected = LatencyRecorder::default_range();
     let lane_count = lanes.len();
 
-    run_warmup(args, lanes, "competitive_shm fixed-rate warmup receive")?;
+    run_warmup(
+        args,
+        lanes,
+        "pingpong_raw_myelon_mmap fixed-rate warmup receive",
+    )?;
 
     let benchmark_start = Instant::now();
     let base = Instant::now();
@@ -498,7 +490,7 @@ fn run_fixed_rate_mode<const SIZE: usize>(
                     &mut lanes[lane_idx].pong_consumer,
                     &args.wait_strategy,
                     deadline,
-                    "competitive_shm fixed-rate receive",
+                    "pingpong_raw_myelon_mmap fixed-rate receive",
                     |response| {
                         (
                             response.sequence,
@@ -531,7 +523,7 @@ fn run_fixed_rate_mode<const SIZE: usize>(
     let actual_stats = actual.stats();
     let corrected_stats = corrected.stats();
 
-    if !competitive::json_mode(args) {
+    if !pingpong::json_mode(args) {
         if let Some(actual_stats) = actual_stats.as_ref() {
             println!("\nActual RTT latency: {}", actual_stats.summary());
         }
@@ -556,28 +548,51 @@ fn run_benchmark<const SIZE: usize>(
     args: Args,
     buffer_size: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    competitive::validate_args(&args)?;
+    pingpong::validate_args(&args)?;
 
-    if !competitive::json_mode(&args) {
-        competitive::print_header(CompetitiveBackend::Shm, &args, buffer_size);
+    if !pingpong::json_mode(&args) {
+        println!("=== PingPong Raw Myelon MMAP ===");
+        println!(
+            "Message size: {}",
+            pingpong::human_size(args.message_size)
+        );
+        println!("Buffer size: {} slots", buffer_size);
+        println!("Messages: {} (+ {} warmup)", args.num_messages, args.warmup);
+        println!("Echo consumers: {}", args.consumers);
+        println!("Wait strategy: {}", args.wait_strategy);
+        println!("Mode: {}", pingpong::measurement_mode(&args));
+        if let Some(target_rate) = args.target_rate {
+            println!("Target rate: {} msgs/sec", target_rate);
+        }
+        println!();
     }
 
     let timeout = harness::bench_timeout_duration(120);
+    let root = harness::unique_mmap_root("pingpong_raw_myelon_mmap");
+    std::fs::create_dir_all(&root)?;
+    let _cleanup = RootCleanupGuard::new(root.clone());
+
     let exe = env::current_exe()?;
     let mut lanes = Vec::with_capacity(args.consumers);
     let mut child_guards = Vec::with_capacity(args.consumers);
 
     for lane_idx in 0..args.consumers {
-        let ping_segment = portable_shm_segment_name(&format!("cpshmpg{lane_idx}"));
-        let pong_segment = portable_shm_segment_name(&format!("cpshmpo{lane_idx}"));
-        let coordination_name = portable_shm_segment_name(&format!("cpshmc{lane_idx}"));
+        let ping_segment = harness::unique_mmap_segment(&format!("cmp_ping_{lane_idx}"));
+        let pong_segment = harness::unique_mmap_segment(&format!("cmp_pong_{lane_idx}"));
+        let coordination_name = portable_shm_segment_name(&format!("cmpm{lane_idx}"));
 
         let coordination = UnifiedCoordination::create(&coordination_name)?;
-        let mut producer_ping =
-            build_shared_single_producer::<BenchmarkEvent<SIZE>>(&ping_segment, buffer_size)
-                .discover_consumer_with_prefix(1, CONSUMER_PREFIX)
-                .with_coordination(CoordinationMode::Immediate)
-                .build_producer(BenchmarkEvent::default)?;
+
+        let ping_layout = MmapTransportLayout::new(root.clone(), ping_segment.clone())?;
+        ping_layout.ensure_directories()?;
+        let pong_layout = MmapTransportLayout::new(root.clone(), pong_segment.clone())?;
+        pong_layout.ensure_directories()?;
+
+        let producer_ping = MmapProducer::<BenchmarkEvent<SIZE>>::create(
+            ping_layout,
+            buffer_size,
+            BenchmarkEvent::default,
+        )?;
         coordination
             .data()
             .producer_ready
@@ -586,6 +601,7 @@ fn run_benchmark<const SIZE: usize>(
         let child_guard = spawn_echo_process(
             &exe,
             &args,
+            &root,
             &ping_segment,
             &pong_segment,
             &coordination_name,
@@ -596,28 +612,24 @@ fn run_benchmark<const SIZE: usize>(
         if !coordination.wait_for_echo_ready(timeout) {
             return Err(format!("timeout waiting for echo process on lane {lane_idx}").into());
         }
-        warm_discovery_scans(
-            || producer_ping.min_gating_sequence(),
-            discovery_scan_rounds(1),
-        );
+        if !producer_ping.wait_for_consumers_ready(1, timeout) {
+            return Err(
+                format!("timeout waiting for ping consumer readiness on lane {lane_idx}").into(),
+            );
+        }
 
         let pong_consumer = attach_consumer_with_timeout::<BenchmarkEvent<SIZE>>(
-            &pong_segment,
+            pong_layout,
             buffer_size,
-            MAIN_CONSUMER_ID,
+            "main",
             timeout,
         )?;
         coordination
             .data()
             .consumer_attached
             .store(1, Ordering::Release);
-        if !wait_for_echo_attached(&coordination, timeout) {
-            return Err(
-                format!("timeout waiting for echo service readiness on lane {lane_idx}").into(),
-            );
-        }
 
-        lanes.push(ShmLane {
+        lanes.push(MmapLane {
             producer_ping,
             pong_consumer,
             coordination,
@@ -626,7 +638,11 @@ fn run_benchmark<const SIZE: usize>(
     }
 
     if args.target_rate.is_none() {
-        run_warmup(&args, &mut lanes, "competitive_shm warmup receive")?;
+        run_warmup(
+            &args,
+            &mut lanes,
+            "pingpong_raw_myelon_mmap warmup receive",
+        )?;
     }
 
     let (throughput, duration, latency, verification_passed, messages_processed) =
@@ -657,9 +673,9 @@ fn run_benchmark<const SIZE: usize>(
         messages_processed,
     );
 
-    if competitive::should_emit_report(&args) {
-        let output_args = competitive::report_output_args(&args);
-        let canonical_json_out = competitive::benchmark_json_output_path();
+    if pingpong::should_emit_report(&args) {
+        let output_args = pingpong::report_output_args(&args);
+        let canonical_json_out = pingpong::benchmark_json_output_path();
         reporting::emit_report_with_extra_json(
             &report,
             &output_args,
@@ -685,11 +701,11 @@ fn run_benchmark<const SIZE: usize>(
 fn run_process_one(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     let buffer_size = args
         .buffer_size
-        .unwrap_or_else(|| competitive::default_buffer_size(args.message_size));
+        .unwrap_or_else(|| pingpong::default_buffer_size(args.message_size));
 
-    competitive::run_with_large_stack_if_needed(
+    pingpong::run_with_large_stack_if_needed(
         args.message_size,
-        "competitive-shm-process-one",
+        "pingpong-raw-myelon-mmap-process-one",
         move || {
             match args.message_size {
             32 => run_benchmark::<32>(args, buffer_size),
@@ -721,6 +737,7 @@ fn run_process_one(args: Args) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn run_process_two() -> Result<(), Box<dyn std::error::Error>> {
+    let root = PathBuf::from(env::var("MMAP_ROOT")?);
     let ping_segment = env::var("PING_SEGMENT")?;
     let pong_segment = env::var("PONG_SEGMENT")?;
     let coordination_name = env::var("COORDINATION_SEGMENT")?;
@@ -734,11 +751,12 @@ fn run_process_two() -> Result<(), Box<dyn std::error::Error>> {
         return Err("timeout waiting for producer readiness".into());
     }
 
-    competitive::run_with_large_stack_if_needed(
+    pingpong::run_with_large_stack_if_needed(
         message_size,
-        "competitive-shm-process-two",
+        "pingpong-raw-myelon-mmap-process-two",
         move || match message_size {
             32 => echo_server::<32>(
+                root.clone(),
                 &ping_segment,
                 &pong_segment,
                 &coordination,
@@ -746,6 +764,7 @@ fn run_process_two() -> Result<(), Box<dyn std::error::Error>> {
                 &wait_strategy,
             ),
             64 => echo_server::<64>(
+                root,
                 &ping_segment,
                 &pong_segment,
                 &coordination,
@@ -753,6 +772,7 @@ fn run_process_two() -> Result<(), Box<dyn std::error::Error>> {
                 &wait_strategy,
             ),
             128 => echo_server::<128>(
+                root.clone(),
                 &ping_segment,
                 &pong_segment,
                 &coordination,
@@ -760,6 +780,7 @@ fn run_process_two() -> Result<(), Box<dyn std::error::Error>> {
                 &wait_strategy,
             ),
             512 => echo_server::<512>(
+                root,
                 &ping_segment,
                 &pong_segment,
                 &coordination,
@@ -767,6 +788,7 @@ fn run_process_two() -> Result<(), Box<dyn std::error::Error>> {
                 &wait_strategy,
             ),
             1024 => echo_server::<1024>(
+                root,
                 &ping_segment,
                 &pong_segment,
                 &coordination,
@@ -774,6 +796,7 @@ fn run_process_two() -> Result<(), Box<dyn std::error::Error>> {
                 &wait_strategy,
             ),
             2048 => echo_server::<2048>(
+                root,
                 &ping_segment,
                 &pong_segment,
                 &coordination,
@@ -781,6 +804,7 @@ fn run_process_two() -> Result<(), Box<dyn std::error::Error>> {
                 &wait_strategy,
             ),
             4096 => echo_server::<4096>(
+                root,
                 &ping_segment,
                 &pong_segment,
                 &coordination,
@@ -788,6 +812,7 @@ fn run_process_two() -> Result<(), Box<dyn std::error::Error>> {
                 &wait_strategy,
             ),
             16384 => echo_server::<16384>(
+                root,
                 &ping_segment,
                 &pong_segment,
                 &coordination,
@@ -795,6 +820,7 @@ fn run_process_two() -> Result<(), Box<dyn std::error::Error>> {
                 &wait_strategy,
             ),
             32768 => echo_server::<32768>(
+                root,
                 &ping_segment,
                 &pong_segment,
                 &coordination,
@@ -802,6 +828,7 @@ fn run_process_two() -> Result<(), Box<dyn std::error::Error>> {
                 &wait_strategy,
             ),
             65536 => echo_server::<65536>(
+                root,
                 &ping_segment,
                 &pong_segment,
                 &coordination,
@@ -809,6 +836,7 @@ fn run_process_two() -> Result<(), Box<dyn std::error::Error>> {
                 &wait_strategy,
             ),
             131072 => echo_server::<131072>(
+                root,
                 &ping_segment,
                 &pong_segment,
                 &coordination,
@@ -816,6 +844,7 @@ fn run_process_two() -> Result<(), Box<dyn std::error::Error>> {
                 &wait_strategy,
             ),
             524288 => echo_server::<524288>(
+                root,
                 &ping_segment,
                 &pong_segment,
                 &coordination,
@@ -823,6 +852,7 @@ fn run_process_two() -> Result<(), Box<dyn std::error::Error>> {
                 &wait_strategy,
             ),
             1048576 => echo_server::<1048576>(
+                root,
                 &ping_segment,
                 &pong_segment,
                 &coordination,
@@ -830,6 +860,7 @@ fn run_process_two() -> Result<(), Box<dyn std::error::Error>> {
                 &wait_strategy,
             ),
             2097152 => echo_server::<2097152>(
+                root,
                 &ping_segment,
                 &pong_segment,
                 &coordination,
@@ -837,6 +868,7 @@ fn run_process_two() -> Result<(), Box<dyn std::error::Error>> {
                 &wait_strategy,
             ),
             8388608 => echo_server::<8388608>(
+                root,
                 &ping_segment,
                 &pong_segment,
                 &coordination,
@@ -844,6 +876,7 @@ fn run_process_two() -> Result<(), Box<dyn std::error::Error>> {
                 &wait_strategy,
             ),
             16777216 => echo_server::<16777216>(
+                root,
                 &ping_segment,
                 &pong_segment,
                 &coordination,
@@ -851,6 +884,7 @@ fn run_process_two() -> Result<(), Box<dyn std::error::Error>> {
                 &wait_strategy,
             ),
             33554432 => echo_server::<33554432>(
+                root,
                 &ping_segment,
                 &pong_segment,
                 &coordination,
@@ -858,6 +892,7 @@ fn run_process_two() -> Result<(), Box<dyn std::error::Error>> {
                 &wait_strategy,
             ),
             67108864 => echo_server::<67108864>(
+                root,
                 &ping_segment,
                 &pong_segment,
                 &coordination,
@@ -870,37 +905,37 @@ fn run_process_two() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn echo_server<const SIZE: usize>(
+    root: PathBuf,
     ping_segment: &str,
     pong_segment: &str,
     coordination: &UnifiedCoordination,
     buffer_size: usize,
     wait_strategy: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let ping_layout = MmapTransportLayout::new(root.clone(), ping_segment.to_string())?;
+    let pong_layout = MmapTransportLayout::new(root, pong_segment.to_string())?;
+    pong_layout.ensure_directories()?;
+
     let mut ping_consumer = attach_consumer_with_timeout::<BenchmarkEvent<SIZE>>(
-        ping_segment,
+        ping_layout,
         buffer_size,
-        ECHO_CONSUMER_ID,
+        "echo",
         Duration::from_secs(30),
     )?;
-    let mut pong_producer =
-        build_shared_single_producer::<BenchmarkEvent<SIZE>>(pong_segment, buffer_size)
-            .discover_consumer_with_prefix(1, CONSUMER_PREFIX)
-            .with_coordination(CoordinationMode::Immediate)
-            .build_producer(BenchmarkEvent::default)?;
+    let mut pong_producer = MmapProducer::<BenchmarkEvent<SIZE>>::create(
+        pong_layout,
+        buffer_size,
+        BenchmarkEvent::default,
+    )?;
 
     coordination.data().echo_ready.store(1, Ordering::Release);
 
     if !coordination.wait_for_consumer_attached(Duration::from_secs(30)) {
         return Err("timeout waiting for pong consumer attachment".into());
     }
-    warm_discovery_scans(
-        || pong_producer.min_gating_sequence(),
-        discovery_scan_rounds(1),
-    );
-    coordination
-        .data()
-        .echo_attached
-        .store(1, Ordering::Release);
+    if !pong_producer.wait_for_consumers_ready(1, Duration::from_secs(30)) {
+        return Err("timeout waiting for pong consumer readiness".into());
+    }
 
     let deadline = harness::spin_deadline_or(120);
     while !coordination.is_shutdown() {
@@ -912,8 +947,8 @@ fn echo_server<const SIZE: usize>(
                 if SHUTDOWN_REQUESTED.load(Ordering::Acquire) {
                     break;
                 }
-                harness::check_deadline(deadline, "competitive_shm echo loop");
-                competitive::apply_wait_strategy(wait_strategy);
+                harness::check_deadline(deadline, "pingpong_raw_myelon_mmap echo loop");
+                pingpong::apply_wait_strategy(wait_strategy);
             }
         }
     }
@@ -928,7 +963,7 @@ pub fn run_main() -> Result<(), Box<dyn std::error::Error>> {
 
     let filtered_args: Vec<String> = env::args().filter(|arg| arg != "--bench").collect();
     let filtered_args = harness::apply_timeout_arg(&filtered_args)
-        .map_err(|error| format!("competitive_shm failed: {error}"))?;
+        .map_err(|error| format!("pingpong_raw_myelon_mmap failed: {error}"))?;
     let args = Args::parse_from(filtered_args);
 
     if args.process_two {

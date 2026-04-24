@@ -5,8 +5,8 @@ use crate::codec_payloads::{
 use crate::coordination::UnifiedCoordination;
 use crate::events::nanos_now;
 use crate::harness::{
-    self, spawn_child, unique_mmap_root, unique_mmap_segment, unique_shm_segment, ConsumerOutput,
-    IpcBenchmark, ProducerOutput, ScenarioChildren,
+    self, segment_from_env, spawn_child, unique_shm_segment, ConsumerOutput, IpcBenchmark,
+    ProducerOutput, ScenarioChildren,
 };
 use crate::latency::LatencyRecorder;
 use crate::report_v2::BackendKind;
@@ -14,11 +14,9 @@ use crate::reporting::{self, BenchReport, BenchTransportSpec};
 use crate::scenario_v2::myelon_pingpong::{
     CodecPingPongScenarioSpec, CodecPingPongSelection, PingPongMode,
 };
-use disruptor_mp::MmapTransportLayout;
 use myelon::transport::{FixedFrame, MyelonWaitStrategy};
-use myelon::typed_transport::{MmapTypedConsumer, MmapTypedProducer};
+use myelon::typed_transport::{TypedConsumer, TypedProducer};
 use std::env;
-use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
@@ -43,8 +41,7 @@ struct Scenario {
     consumer_role: &'static str,
 }
 
-struct MmapEnv {
-    root: PathBuf,
+struct ShmEnv {
     ping_segment: String,
     pong_segment: String,
     coordination_segment: String,
@@ -58,22 +55,11 @@ struct MmapEnv {
     target_rate: u64,
 }
 
-impl MmapEnv {
-    fn ping_layout(&self) -> MmapTransportLayout {
-        MmapTransportLayout::new(self.root.clone(), self.ping_segment.clone()).expect("ping layout")
-    }
-
-    fn pong_layout(&self) -> MmapTransportLayout {
-        MmapTransportLayout::new(self.root.clone(), self.pong_segment.clone()).expect("pong layout")
-    }
-}
-
-fn read_env() -> MmapEnv {
-    MmapEnv {
-        root: PathBuf::from(env::var("MMAP_ROOT").expect("MMAP_ROOT")),
-        ping_segment: env::var("PING_SEGMENT").expect("PING_SEGMENT"),
-        pong_segment: env::var("PONG_SEGMENT").expect("PONG_SEGMENT"),
-        coordination_segment: env::var("COORDINATION_SEGMENT").expect("COORDINATION_SEGMENT"),
+fn read_env() -> ShmEnv {
+    ShmEnv {
+        ping_segment: segment_from_env("PING_SEGMENT"),
+        pong_segment: segment_from_env("PONG_SEGMENT"),
+        coordination_segment: segment_from_env("COORDINATION_SEGMENT"),
         codec: env::var("BENCH_CODEC").expect("BENCH_CODEC"),
         batch_size: harness::read_env_usize("BENCH_BATCH_SIZE", 1),
         encoded_bytes: harness::read_env_usize("BENCH_ENCODED_BYTES", 1),
@@ -94,15 +80,19 @@ fn parse_wait_strategy(value: &str) -> Result<MyelonWaitStrategy, String> {
 }
 
 fn attach_consumer_with_timeout(
-    layout: MmapTransportLayout,
+    segment: &str,
     depth: usize,
     consumer_id: &str,
     wait_strategy: MyelonWaitStrategy,
-) -> Result<MmapTypedConsumer<Frame>, Box<dyn std::error::Error>> {
+) -> Result<TypedConsumer<Frame>, Box<dyn std::error::Error>> {
     let deadline = Instant::now() + ATTACH_TIMEOUT;
     loop {
-        match MmapTypedConsumer::<Frame>::attach(layout.clone(), depth, consumer_id, wait_strategy)
-        {
+        match TypedConsumer::<Frame>::attach_with_consumer_id(
+            segment,
+            depth,
+            consumer_id,
+            wait_strategy,
+        ) {
             Ok(consumer) => return Ok(consumer),
             Err(_) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(25)),
             Err(error) => return Err(format!("attach failed for {consumer_id}: {error}").into()),
@@ -119,14 +109,14 @@ fn producer_process() -> Result<(), Box<dyn std::error::Error>> {
     let wait_strategy = parse_wait_strategy(&env.wait_strategy)?;
     let coordination = UnifiedCoordination::create(&env.coordination_segment)?;
     let mut pong_producer =
-        MmapTypedProducer::<Frame>::create(env.pong_layout(), env.buffer_depth)?;
+        TypedProducer::<Frame>::create_with_consumers(&env.pong_segment, env.buffer_depth, 1)?;
     coordination
         .data()
         .producer_ready
         .store(1, Ordering::Release);
 
     let mut ping_consumer = attach_consumer_with_timeout(
-        env.ping_layout(),
+        &env.ping_segment,
         env.buffer_depth,
         PING_ECHO_ID,
         wait_strategy,
@@ -198,9 +188,9 @@ fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
     let coordination =
         UnifiedCoordination::attach_with_timeout(&env.coordination_segment, ATTACH_TIMEOUT)?;
     let mut ping_producer =
-        MmapTypedProducer::<Frame>::create(env.ping_layout(), env.buffer_depth)?;
+        TypedProducer::<Frame>::create_with_consumers(&env.ping_segment, env.buffer_depth, 1)?;
     let mut pong_consumer = attach_consumer_with_timeout(
-        env.pong_layout(),
+        &env.pong_segment,
         env.buffer_depth,
         PONG_INITIATOR_ID,
         wait_strategy,
@@ -344,18 +334,18 @@ fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
 
 impl IpcBenchmark for Scenario {
     fn bench_name(&self) -> &str {
-        "competitive_codec_mmap"
+        "pingpong_codec_shm"
     }
 
     fn scenario_name(&self) -> String {
         format!(
-            "competitive_codec_pingpong_1p1c_{}_b{}",
+            "pingpong_codec_1p1c_{}_b{}",
             self.codec, self.batch_size
         )
     }
 
     fn backend(&self) -> &str {
-        "mmap"
+        "shm"
     }
 
     fn layer(&self) -> &str {
@@ -363,7 +353,7 @@ impl IpcBenchmark for Scenario {
     }
 
     fn transport_metadata(&self) -> BenchTransportSpec {
-        let mut spec = reporting::BenchTransportSpec::unified_competitive()
+        let mut spec = reporting::BenchTransportSpec::unified_pingpong()
             .with_zero_copy(false)
             .with_framing("fixed_64k");
         spec.discovery_mode = Some("explicit_consumer_id".to_string());
@@ -422,12 +412,12 @@ impl IpcBenchmark for Scenario {
     }
 
     fn launch(&self, exe: &std::path::Path) -> Result<ScenarioChildren, harness::BenchError> {
-        let root = unique_mmap_root("mppc_mmap");
+        let ping_segment = unique_shm_segment("mppc_ping");
+        let pong_segment = unique_shm_segment("mppc_pong");
         let coordination_segment = unique_shm_segment("mppc_coord");
         let env_common = vec![
-            ("MMAP_ROOT", root.display().to_string()),
-            ("PING_SEGMENT", unique_mmap_segment("ping")),
-            ("PONG_SEGMENT", unique_mmap_segment("pong")),
+            ("PING_SEGMENT", ping_segment),
+            ("PONG_SEGMENT", pong_segment),
             ("COORDINATION_SEGMENT", coordination_segment),
             ("BENCH_CODEC", self.codec.to_string()),
             ("BENCH_BATCH_SIZE", self.batch_size.to_string()),
@@ -441,7 +431,7 @@ impl IpcBenchmark for Scenario {
 
         let producer = spawn_child(exe, self.producer_role, &env_common);
         let consumer = spawn_child(exe, self.consumer_role, &env_common);
-        Ok(ScenarioChildren::new(producer, vec![consumer]).with_cleanup_path(root))
+        Ok(ScenarioChildren::new(producer, vec![consumer]))
     }
 }
 
@@ -465,15 +455,15 @@ impl Scenario {
 }
 
 const CHILD_ROLES: &[harness::ChildRole] = &[
-    harness::ChildRole::new("competitive_codec_mmap_echo", producer_process),
-    harness::ChildRole::new("competitive_codec_mmap_initiator", consumer_process),
+    harness::ChildRole::new("pingpong_codec_shm_echo", producer_process),
+    harness::ChildRole::new("pingpong_codec_shm_initiator", consumer_process),
 ];
 
-pub struct CompetitiveCodecMmapBench;
+pub struct PingPongCodecShmBench;
 
-impl harness::BenchHarness for CompetitiveCodecMmapBench {
+impl harness::BenchHarness for PingPongCodecShmBench {
     fn bench_name(&self) -> &'static str {
-        "competitive_codec_mmap"
+        "pingpong_codec_shm"
     }
 
     fn child_roles(&self) -> &'static [harness::ChildRole] {
@@ -484,17 +474,17 @@ impl harness::BenchHarness for CompetitiveCodecMmapBench {
         let selection = CodecPingPongSelection::parse(args)?;
 
         if !selection.output_args.json_mode {
-            println!("=== Myelon Codec MMAP Ping-Pong ===");
+            println!("=== Myelon Codec SHM Ping-Pong ===");
             println!("Mode: {}", selection.mode.description());
             if selection.target_rate > 0 {
                 println!("Target rate: {} msgs/s", selection.target_rate);
             }
-            println!("Transport: TypedTransport over mmap, strict 1p1c");
+            println!("Transport: TypedTransport over SHM, strict 1p1c");
             println!();
         }
 
         let mut report = BenchReport::new();
-        for spec in selection.scenario_specs(BackendKind::Mmap) {
+        for spec in selection.scenario_specs(BackendKind::Shm) {
             report.add(Scenario::from_spec(&spec, &selection).run_benchmark()?);
         }
 

@@ -289,7 +289,7 @@ impl CodecPingPongSelection {
             .is_some_and(|codec| !codec_supports_zero_copy(codec))
         {
             return Err(
-                "zero-copy competitive ping-pong only supports codecs: rkyv, flatbuf".into(),
+                "zero-copy ping-pong only supports codecs: rkyv, flatbuf".into(),
             );
         }
         Ok(())
@@ -356,12 +356,12 @@ fn default_buffer_depth(payload_bytes: usize) -> usize {
 fn framed_specs(backend: BackendKind) -> Vec<FramedPingPongScenarioSpec> {
     let (producer_role, consumer_role) = match backend {
         BackendKind::Shm => (
-            "competitive_framed_shm_echo",
-            "competitive_framed_shm_initiator",
+            "pingpong_framed_shm_echo",
+            "pingpong_framed_shm_initiator",
         ),
         BackendKind::Mmap => (
-            "competitive_framed_mmap_echo",
-            "competitive_framed_mmap_initiator",
+            "pingpong_framed_mmap_echo",
+            "pingpong_framed_mmap_initiator",
         ),
         _ => unreachable!("framed ping-pong only supports shm and mmap"),
     };
@@ -399,12 +399,12 @@ fn framed_specs(backend: BackendKind) -> Vec<FramedPingPongScenarioSpec> {
 fn codec_specs(backend: BackendKind) -> Vec<CodecPingPongScenarioSpec> {
     let (producer_role, consumer_role) = match backend {
         BackendKind::Shm => (
-            "competitive_codec_shm_echo",
-            "competitive_codec_shm_initiator",
+            "pingpong_codec_shm_echo",
+            "pingpong_codec_shm_initiator",
         ),
         BackendKind::Mmap => (
-            "competitive_codec_mmap_echo",
-            "competitive_codec_mmap_initiator",
+            "pingpong_codec_mmap_echo",
+            "pingpong_codec_mmap_initiator",
         ),
         _ => unreachable!("codec ping-pong only supports shm and mmap"),
     };
@@ -442,12 +442,12 @@ fn codec_specs(backend: BackendKind) -> Vec<CodecPingPongScenarioSpec> {
 fn codec_specs_zero_copy(backend: BackendKind) -> Vec<CodecPingPongScenarioSpec> {
     let (producer_role, consumer_role) = match backend {
         BackendKind::Shm => (
-            "competitive_typed_zero_copy_shm_echo",
-            "competitive_typed_zero_copy_shm_initiator",
+            "pingpong_typed_zero_copy_shm_echo",
+            "pingpong_typed_zero_copy_shm_initiator",
         ),
         BackendKind::Mmap => (
-            "competitive_typed_zero_copy_mmap_echo",
-            "competitive_typed_zero_copy_mmap_initiator",
+            "pingpong_typed_zero_copy_mmap_echo",
+            "pingpong_typed_zero_copy_mmap_initiator",
         ),
         _ => unreachable!("zero-copy codec ping-pong only supports shm and mmap"),
     };
@@ -504,7 +504,7 @@ mod tests {
 
         assert_eq!(
             selection.validate_zero_copy_codec_filter(),
-            Err("zero-copy competitive ping-pong only supports codecs: rkyv, flatbuf".into())
+            Err("zero-copy ping-pong only supports codecs: rkyv, flatbuf".into())
         );
         assert!(selection
             .scenario_specs_zero_copy(BackendKind::Shm)

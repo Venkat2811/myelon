@@ -7,7 +7,7 @@ pub mod allocation;
 pub mod bench_log;
 pub mod codec_bench;
 pub mod codec_payloads;
-pub mod competitive;
+pub mod pingpong;
 pub mod competitors;
 pub mod coordination;
 pub mod events;

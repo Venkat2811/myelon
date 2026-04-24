@@ -254,11 +254,11 @@ fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
 
 impl IpcBenchmark for Scenario {
     fn bench_name(&self) -> &str {
-        "competitive_framed_shm"
+        "pingpong_framed_shm"
     }
 
     fn scenario_name(&self) -> String {
-        format!("competitive_framed_pingpong_1p1c_{}", self.payload_label)
+        format!("pingpong_framed_1p1c_{}", self.payload_label)
     }
 
     fn backend(&self) -> &str {
@@ -270,7 +270,7 @@ impl IpcBenchmark for Scenario {
     }
 
     fn transport_metadata(&self) -> BenchTransportSpec {
-        let mut spec = reporting::BenchTransportSpec::unified_competitive()
+        let mut spec = reporting::BenchTransportSpec::unified_pingpong()
             .with_zero_copy(false)
             .with_framing("fixed_64k");
         spec.discovery_mode = Some("explicit_consumer_id".to_string());
@@ -360,15 +360,15 @@ impl Scenario {
 }
 
 const CHILD_ROLES: &[harness::ChildRole] = &[
-    harness::ChildRole::new("competitive_framed_shm_echo", producer_process),
-    harness::ChildRole::new("competitive_framed_shm_initiator", consumer_process),
+    harness::ChildRole::new("pingpong_framed_shm_echo", producer_process),
+    harness::ChildRole::new("pingpong_framed_shm_initiator", consumer_process),
 ];
 
-pub struct CompetitiveFramedShmBench;
+pub struct PingPongFramedShmBench;
 
-impl harness::BenchHarness for CompetitiveFramedShmBench {
+impl harness::BenchHarness for PingPongFramedShmBench {
     fn bench_name(&self) -> &'static str {
-        "competitive_framed_shm"
+        "pingpong_framed_shm"
     }
 
     fn child_roles(&self) -> &'static [harness::ChildRole] {

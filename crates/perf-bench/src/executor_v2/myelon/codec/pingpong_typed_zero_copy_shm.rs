@@ -328,12 +328,12 @@ fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
 
 impl IpcBenchmark for Scenario {
     fn bench_name(&self) -> &str {
-        "competitive_typed_zero_copy_shm"
+        "pingpong_typed_zero_copy_shm"
     }
 
     fn scenario_name(&self) -> String {
         format!(
-            "competitive_codec_pingpong_1p1c_{}_b{}",
+            "pingpong_codec_1p1c_{}_b{}",
             self.codec, self.batch_size
         )
     }
@@ -347,7 +347,7 @@ impl IpcBenchmark for Scenario {
     }
 
     fn transport_metadata(&self) -> BenchTransportSpec {
-        let mut spec = reporting::BenchTransportSpec::unified_competitive()
+        let mut spec = reporting::BenchTransportSpec::unified_pingpong()
             .with_zero_copy(true)
             .with_framing("fixed_64k");
         spec.discovery_mode = Some("explicit_consumer_id".to_string());
@@ -450,18 +450,18 @@ impl Scenario {
 }
 
 const CHILD_ROLES: &[harness::ChildRole] = &[
-    harness::ChildRole::new("competitive_typed_zero_copy_shm_echo", producer_process),
+    harness::ChildRole::new("pingpong_typed_zero_copy_shm_echo", producer_process),
     harness::ChildRole::new(
-        "competitive_typed_zero_copy_shm_initiator",
+        "pingpong_typed_zero_copy_shm_initiator",
         consumer_process,
     ),
 ];
 
-pub struct CompetitiveTypedZeroCopyShmBench;
+pub struct PingPongTypedZeroCopyShmBench;
 
-impl harness::BenchHarness for CompetitiveTypedZeroCopyShmBench {
+impl harness::BenchHarness for PingPongTypedZeroCopyShmBench {
     fn bench_name(&self) -> &'static str {
-        "competitive_typed_zero_copy_shm"
+        "pingpong_typed_zero_copy_shm"
     }
 
     fn child_roles(&self) -> &'static [harness::ChildRole] {

@@ -1,4 +1,4 @@
-//! Competitive raw-myelon ping-pong benchmark over the SHM backend.
+//! PingPong benchmark over the SHM backend.
 //!
 //! This replaces the previous wrapper with a real 1p1c ping-pong benchmark that
 //! supports maximum-throughput, coordinated-omission-aware fixed-rate, and
@@ -8,7 +8,6 @@
 #[allow(clippy::duplicate_mod)]
 #[path = "../../../../../disruptor-mp/benches/ipc/competitive/common.rs"]
 mod common;
-#[allow(clippy::duplicate_mod)]
 #[path = "../../../../../disruptor-mp/benches/ipc/competitive/table.rs"]
 mod table;
 
@@ -16,13 +15,12 @@ use crate::coordination::UnifiedCoordination;
 use crate::harness;
 use crate::latency::{self, LatencyRecorder};
 use crate::reporting::{self, BenchReport};
-use crate::scenario_v2::competitive::{self, CompetitiveArgs as Args};
+use crate::scenario_v2::pingpong::{self, PingPongArgs as Args, PingPongBackend};
 use clap::Parser;
 use common::{calculate_data_rate_gbps, format_throughput, BenchmarkEvent};
-use disruptor_mp::portable_shm_segment_name;
-use myelon::{
-    attach_shared_consumer, build_shared_single_producer, producer::CoordinationMode,
-    SharedConsumer, SharedProducer,
+use disruptor_mp::{
+    attach_shared_consumer, build_shared_single_producer, portable_shm_segment_name,
+    CoordinationMode, SharedConsumer, SharedProducer,
 };
 use std::env;
 use std::path::Path;
@@ -31,7 +29,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
-type CompetitiveRunResult =
+type PingPongRunResult =
     Result<(f64, Duration, Option<latency::LatencyStats>, bool, u64), Box<dyn std::error::Error>>;
 
 const DISCOVERY_SCAN_SLEEP: Duration = Duration::from_millis(150);
@@ -117,7 +115,7 @@ fn wait_for_next_event<E: Copy + Default, R, F: FnOnce(&E) -> R>(
             return Err("shutdown requested".into());
         }
         harness::check_deadline(deadline, context);
-        competitive::apply_wait_strategy(wait_strategy);
+        pingpong::apply_wait_strategy(wait_strategy);
     }
 }
 
@@ -159,39 +157,15 @@ fn build_report(
     verification_passed: bool,
     messages_processed: u64,
 ) -> BenchReport {
-    let mut result = reporting::make_result(reporting::BenchResultSpec {
-        bench_name: "competitive_raw_myelon_shm".to_string(),
-        scenario: format!(
-            "competitive_raw_myelon_pingpong_1p{}c_{}",
-            args.consumers,
-            competitive::human_size(args.message_size)
-        ),
-        backend: "shm".to_string(),
-        layer: "raw_myelon".to_string(),
-        codec: None,
-        measurement_mode: competitive::measurement_mode(args),
-        wait_strategy: args.wait_strategy.clone(),
-        transport: reporting::BenchTransportSpec::unified_competitive()
-            .with_zero_copy(false)
-            .with_framing("none"),
-        message_size_bytes: args.message_size,
-        payload_bytes: args.message_size,
-        buffer_depth: buffer_size,
-        num_messages: args.num_messages,
-        warmup_messages: args.warmup,
-        num_producers: 1,
-        num_consumers: args.consumers,
-        producer_throughput_ops_sec: throughput,
-        consumer_throughput_ops_sec: throughput,
+    pingpong::build_report(
+        PingPongBackend::Shm,
+        args,
+        throughput,
+        buffer_size,
         latency,
-    });
-    result.results.verification_passed = verification_passed;
-    result.results.messages_processed = messages_processed;
-    result.results.data_rate_mbps = throughput * args.message_size as f64 / 1_000_000.0;
-
-    let mut report = BenchReport::new();
-    report.add(result);
-    report
+        verification_passed,
+        messages_processed,
+    )
 }
 
 fn spawn_echo_process(
@@ -215,7 +189,7 @@ fn spawn_echo_process(
         .stdout(Stdio::null())
         .stderr(Stdio::inherit());
 
-    if competitive::json_mode(args) {
+    if pingpong::json_mode(args) {
         child_cmd.env("JSON_MODE", "1");
     }
 
@@ -249,7 +223,7 @@ fn print_results(
     if let Some(stats) = latency {
         println!("\nLatency: {}", stats.summary());
     } else if args.batch_timing {
-        if let Some(avg_rtt_ns) = competitive::average_rtt_ns(duration, messages_processed) {
+        if let Some(avg_rtt_ns) = pingpong::average_rtt_ns(duration, messages_processed) {
             println!(
                 "\nAverage RTT: {:.0} ns (batch timing mode; no histogram)",
                 avg_rtt_ns
@@ -337,7 +311,7 @@ fn run_warmup<const SIZE: usize>(
 fn run_throughput_mode<const SIZE: usize>(
     args: &Args,
     lanes: &mut [ShmLane<SIZE>],
-) -> CompetitiveRunResult {
+) -> PingPongRunResult {
     let deadline = harness::spin_deadline();
     let benchmark_start = Instant::now();
     let mut recorder = LatencyRecorder::default_range();
@@ -375,7 +349,7 @@ fn run_throughput_mode<const SIZE: usize>(
                 &mut lanes[lane_idx].pong_consumer,
                 &args.wait_strategy,
                 deadline,
-                "competitive_raw_myelon_shm throughput receive",
+                "pingpong_shm throughput receive",
                 |response| response.sequence,
             )?;
             assert_eq!(response_sequence, expected);
@@ -404,7 +378,7 @@ fn run_throughput_mode<const SIZE: usize>(
 fn run_batch_timing_mode<const SIZE: usize>(
     args: &Args,
     lanes: &mut [ShmLane<SIZE>],
-) -> CompetitiveRunResult {
+) -> PingPongRunResult {
     let deadline = harness::spin_deadline();
     let benchmark_start = Instant::now();
     let lane_count = lanes.len();
@@ -442,7 +416,7 @@ fn run_batch_timing_mode<const SIZE: usize>(
                 &mut lanes[lane_idx].pong_consumer,
                 &args.wait_strategy,
                 deadline,
-                "competitive_raw_myelon_shm batch timing receive",
+                "pingpong_shm batch timing receive",
                 |response| response.sequence,
             )?;
             assert_eq!(response_sequence, expected);
@@ -471,7 +445,7 @@ fn run_batch_timing_mode<const SIZE: usize>(
 fn run_fixed_rate_mode<const SIZE: usize>(
     args: &Args,
     lanes: &mut [ShmLane<SIZE>],
-) -> CompetitiveRunResult {
+) -> PingPongRunResult {
     let target_rate = args
         .target_rate
         .ok_or("--target-rate is required for fixed-rate mode")?;
@@ -482,11 +456,7 @@ fn run_fixed_rate_mode<const SIZE: usize>(
     let mut corrected = LatencyRecorder::default_range();
     let lane_count = lanes.len();
 
-    run_warmup(
-        args,
-        lanes,
-        "competitive_raw_myelon_shm fixed-rate warmup receive",
-    )?;
+    run_warmup(args, lanes, "pingpong_shm fixed-rate warmup receive")?;
 
     let benchmark_start = Instant::now();
     let base = Instant::now();
@@ -528,7 +498,7 @@ fn run_fixed_rate_mode<const SIZE: usize>(
                     &mut lanes[lane_idx].pong_consumer,
                     &args.wait_strategy,
                     deadline,
-                    "competitive_raw_myelon_shm fixed-rate receive",
+                    "pingpong_shm fixed-rate receive",
                     |response| {
                         (
                             response.sequence,
@@ -561,7 +531,7 @@ fn run_fixed_rate_mode<const SIZE: usize>(
     let actual_stats = actual.stats();
     let corrected_stats = corrected.stats();
 
-    if !competitive::json_mode(args) {
+    if !pingpong::json_mode(args) {
         if let Some(actual_stats) = actual_stats.as_ref() {
             println!("\nActual RTT latency: {}", actual_stats.summary());
         }
@@ -586,23 +556,10 @@ fn run_benchmark<const SIZE: usize>(
     args: Args,
     buffer_size: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    competitive::validate_args(&args)?;
+    pingpong::validate_args(&args)?;
 
-    if !competitive::json_mode(&args) {
-        println!("=== Competitive Raw Myelon SHM Ping-Pong ===");
-        println!(
-            "Message size: {}",
-            competitive::human_size(args.message_size)
-        );
-        println!("Buffer size: {} slots", buffer_size);
-        println!("Messages: {} (+ {} warmup)", args.num_messages, args.warmup);
-        println!("Echo consumers: {}", args.consumers);
-        println!("Wait strategy: {}", args.wait_strategy);
-        println!("Mode: {}", competitive::measurement_mode(&args));
-        if let Some(target_rate) = args.target_rate {
-            println!("Target rate: {} msgs/sec", target_rate);
-        }
-        println!();
+    if !pingpong::json_mode(&args) {
+        pingpong::print_header(PingPongBackend::Shm, &args, buffer_size);
     }
 
     let timeout = harness::bench_timeout_duration(120);
@@ -669,11 +626,7 @@ fn run_benchmark<const SIZE: usize>(
     }
 
     if args.target_rate.is_none() {
-        run_warmup(
-            &args,
-            &mut lanes,
-            "competitive_raw_myelon_shm warmup receive",
-        )?;
+        run_warmup(&args, &mut lanes, "pingpong_shm warmup receive")?;
     }
 
     let (throughput, duration, latency, verification_passed, messages_processed) =
@@ -704,9 +657,9 @@ fn run_benchmark<const SIZE: usize>(
         messages_processed,
     );
 
-    if competitive::should_emit_report(&args) {
-        let output_args = competitive::report_output_args(&args);
-        let canonical_json_out = competitive::benchmark_json_output_path();
+    if pingpong::should_emit_report(&args) {
+        let output_args = pingpong::report_output_args(&args);
+        let canonical_json_out = pingpong::benchmark_json_output_path();
         reporting::emit_report_with_extra_json(
             &report,
             &output_args,
@@ -732,11 +685,11 @@ fn run_benchmark<const SIZE: usize>(
 fn run_process_one(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     let buffer_size = args
         .buffer_size
-        .unwrap_or_else(|| competitive::default_buffer_size(args.message_size));
+        .unwrap_or_else(|| pingpong::default_buffer_size(args.message_size));
 
-    competitive::run_with_large_stack_if_needed(
+    pingpong::run_with_large_stack_if_needed(
         args.message_size,
-        "competitive-raw-myelon-shm-process-one",
+        "pingpong-shm-process-one",
         move || {
             match args.message_size {
             32 => run_benchmark::<32>(args, buffer_size),
@@ -781,9 +734,9 @@ fn run_process_two() -> Result<(), Box<dyn std::error::Error>> {
         return Err("timeout waiting for producer readiness".into());
     }
 
-    competitive::run_with_large_stack_if_needed(
+    pingpong::run_with_large_stack_if_needed(
         message_size,
-        "competitive-raw-myelon-shm-process-two",
+        "pingpong-shm-process-two",
         move || match message_size {
             32 => echo_server::<32>(
                 &ping_segment,
@@ -959,8 +912,8 @@ fn echo_server<const SIZE: usize>(
                 if SHUTDOWN_REQUESTED.load(Ordering::Acquire) {
                     break;
                 }
-                harness::check_deadline(deadline, "competitive_raw_myelon_shm echo loop");
-                competitive::apply_wait_strategy(wait_strategy);
+                harness::check_deadline(deadline, "pingpong_shm echo loop");
+                pingpong::apply_wait_strategy(wait_strategy);
             }
         }
     }
@@ -975,7 +928,7 @@ pub fn run_main() -> Result<(), Box<dyn std::error::Error>> {
 
     let filtered_args: Vec<String> = env::args().filter(|arg| arg != "--bench").collect();
     let filtered_args = harness::apply_timeout_arg(&filtered_args)
-        .map_err(|error| format!("competitive_raw_myelon_shm failed: {error}"))?;
+        .map_err(|error| format!("pingpong_shm failed: {error}"))?;
     let args = Args::parse_from(filtered_args);
 
     if args.process_two {

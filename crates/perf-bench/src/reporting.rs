@@ -174,7 +174,7 @@ impl BenchTransportSpec {
         }
     }
 
-    pub fn unified_competitive() -> Self {
+    pub fn unified_pingpong() -> Self {
         Self {
             coordination: Some("UnifiedCoordination".to_string()),
             discovery_mode: Some("disabled".to_string()),
@@ -423,10 +423,10 @@ fn codec_speedup_key(result: &BenchResult) -> Option<String> {
 
 fn codec_speedup_benchmark_family(benchmark: &str) -> &str {
     match benchmark {
-        "competitive_codec_shm"
-        | "competitive_codec_mmap"
-        | "competitive_typed_zero_copy_shm"
-        | "competitive_typed_zero_copy_mmap" => "competitive_codec_family",
+        "pingpong_codec_shm"
+        | "pingpong_codec_mmap"
+        | "pingpong_typed_zero_copy_shm"
+        | "pingpong_typed_zero_copy_mmap" => "pingpong_codec_family",
         other => other,
     }
 }
@@ -868,8 +868,8 @@ mod tests {
         bincode.results.consumer_avg_data_rate_gbps = Some(0.00216);
 
         let mut raw_myelon = make_test_result(
-            "competitive_raw_myelon_shm",
-            "competitive_raw_myelon_pingpong_1p2c_144B",
+            "pingpong_raw_myelon_shm",
+            "pingpong_raw_myelon_1p2c_144B",
             "shm",
             "raw_myelon",
             None,
@@ -912,13 +912,13 @@ mod tests {
         rkyv.results.consumer_avg_data_rate_gbps = Some(0.002592);
 
         let mut zero_copy_rkyv = make_test_result(
-            "competitive_typed_zero_copy_shm",
-            "competitive_codec_pingpong_1p1c_rkyv_b8",
+            "pingpong_typed_zero_copy_shm",
+            "pingpong_codec_1p1c_rkyv_b8",
             "shm",
             "typed_zero_copy",
             Some("rkyv"),
             "max_throughput",
-            BenchTransportSpec::unified_competitive()
+            BenchTransportSpec::unified_pingpong()
                 .with_zero_copy(true)
                 .with_framing("fixed_64k"),
             384,
@@ -933,14 +933,14 @@ mod tests {
         );
         zero_copy_rkyv.results.consumer_avg_data_rate_gbps = Some(0.002664);
 
-        let mut competitive_bincode = make_test_result(
-            "competitive_codec_shm",
-            "competitive_codec_pingpong_1p1c_bincode_b8",
+        let mut pingpong_bincode = make_test_result(
+            "pingpong_codec_shm",
+            "pingpong_codec_1p1c_bincode_b8",
             "shm",
             "typed",
             Some("bincode"),
             "max_throughput",
-            BenchTransportSpec::unified_competitive()
+            BenchTransportSpec::unified_pingpong()
                 .with_zero_copy(false)
                 .with_framing("fixed_64k"),
             512,
@@ -953,14 +953,14 @@ mod tests {
             16_500.0,
             None,
         );
-        competitive_bincode.results.consumer_avg_data_rate_gbps = Some(0.002376);
+        pingpong_bincode.results.consumer_avg_data_rate_gbps = Some(0.002376);
 
         let mut report = BenchReport::new();
         report.add(raw);
         report.add(raw_single);
         report.add(raw_myelon);
         report.add(bincode);
-        report.add(competitive_bincode);
+        report.add(pingpong_bincode);
         report.add(rkyv);
         report.add(zero_copy_rkyv);
 

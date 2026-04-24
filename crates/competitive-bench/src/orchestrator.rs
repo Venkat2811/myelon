@@ -82,10 +82,10 @@ pub fn internal_fixed_rate_commands(out_dir: &str) -> Vec<InternalCommand> {
 
 fn bench_name(adapter: AdapterId) -> &'static str {
     match adapter {
-        AdapterId::DisruptorShm => "competitive_shm",
-        AdapterId::DisruptorMmap => "competitive_mmap",
-        AdapterId::MyelonRawShm => "competitive_raw_myelon_shm",
-        AdapterId::MyelonRawMmap => "competitive_raw_myelon_mmap",
+        AdapterId::DisruptorShm => "pingpong_shm",
+        AdapterId::DisruptorMmap => "pingpong_mmap",
+        AdapterId::MyelonRawShm => "pingpong_raw_myelon_shm",
+        AdapterId::MyelonRawMmap => "pingpong_raw_myelon_mmap",
         _ => panic!("non-internal adapter is not backed by a perf-bench bench"),
     }
 }
@@ -119,10 +119,10 @@ mod tests {
         )));
         assert!(commands.iter().all(|cmd| matches!(
             cmd.bench_name,
-            "competitive_shm"
-                | "competitive_mmap"
-                | "competitive_raw_myelon_shm"
-                | "competitive_raw_myelon_mmap"
+            "pingpong_shm"
+                | "pingpong_mmap"
+                | "pingpong_raw_myelon_shm"
+                | "pingpong_raw_myelon_mmap"
         )));
         assert!(commands.iter().all(|cmd| !cmd.command.contains("/tmp/")));
         assert!(commands

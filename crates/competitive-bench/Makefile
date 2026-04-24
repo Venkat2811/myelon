@@ -45,6 +45,18 @@ endif
 RUN_SIZES ?= $(SIZES_SMALL)
 EXTENSIVE_RUN_SIZES ?= $(SIZES_EXTENSIVE)
 
+# Platform-aware Aeron library path setup (rusteron needs libaeron / libaeron_driver)
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+  AERON_LIB_GLOB := libaeron*.dylib
+  AERON_FIND_DIRS = $$(find $(abspath ../..)/target/competitive/build -type f -name '$(AERON_LIB_GLOB)' 2>/dev/null | xargs -I{} dirname {} | sort -u | tr '\n' ':' | sed 's/:$$//')
+  AERON_ENV = DYLD_LIBRARY_PATH="$$(echo $(AERON_FIND_DIRS)):$$DYLD_LIBRARY_PATH"
+else
+  AERON_LIB_GLOB := libaeron*.so
+  AERON_FIND_DIRS = $$(find $(abspath ../..)/target/competitive/build -type f -name '$(AERON_LIB_GLOB)' 2>/dev/null | xargs -I{} dirname {} | sort -u | tr '\n' ':' | sed 's/:$$//')
+  AERON_ENV = LD_LIBRARY_PATH="$$(echo $(AERON_FIND_DIRS)):$$LD_LIBRARY_PATH"
+endif
+
 SIZE_TUNING = if [ $$sz -ge $(GIANT_SIZE_THRESHOLD) ]; then msgs=$(GIANT_NUM_MESSAGES); warmup=$(GIANT_WARMUP); rates="$(GIANT_RATES)"; headon_smoke_rate=$(GIANT_HEADON_RATE_SMOKE); stack_kb=524288; \
 elif [ $$sz -ge $(MASSIVE_SIZE_THRESHOLD) ]; then msgs=$(MASSIVE_NUM_MESSAGES); warmup=$(MASSIVE_WARMUP); rates="$(MASSIVE_RATES)"; headon_smoke_rate=$(MASSIVE_HEADON_RATE_SMOKE); stack_kb=262144; \
 elif [ $$sz -ge $(HUGE_SIZE_THRESHOLD) ]; then msgs=$(HUGE_NUM_MESSAGES); warmup=$(HUGE_WARMUP); rates="$(HUGE_RATES)"; headon_smoke_rate=$(HUGE_HEADON_RATE_SMOKE); stack_kb=131072; \
@@ -135,10 +147,10 @@ internal-run-quick:
 	@echo "[run] internal SHM+mmap parity throughput sizes: $(RUN_SIZES)"
 	@for sz in $(RUN_SIZES); do \
 		$(SIZE_TUNING); \
-		ulimit -s $$stack_kb >/dev/null 2>&1 || true; $(TIMEOUT_CMD) cargo bench -p perf-bench --profile competitive --manifest-path $(WORKSPACE_MANIFEST) --bench competitive_shm -- --json-canonical --no-compare -s $$sz -n $$msgs -w $$warmup > $(OUTDIR)/disruptor_$${sz}.json && echo "  ✓ disruptor $$sz B" || exit 1; \
-		ulimit -s $$stack_kb >/dev/null 2>&1 || true; $(TIMEOUT_CMD) cargo bench -p perf-bench --profile competitive --manifest-path $(WORKSPACE_MANIFEST) --bench competitive_mmap -- --json-canonical --no-compare -s $$sz -n $$msgs -w $$warmup > $(OUTDIR)/disruptor_mmap_$${sz}.json && echo "  ✓ disruptor_mmap $$sz B" || exit 1; \
-		ulimit -s $$stack_kb >/dev/null 2>&1 || true; $(TIMEOUT_CMD) cargo bench -p perf-bench --profile competitive --manifest-path $(WORKSPACE_MANIFEST) --bench competitive_raw_myelon_shm -- --json --no-compare -s $$sz -n $$msgs -w $$warmup > $(OUTDIR)/myelon_raw_$${sz}.json && echo "  ✓ myelon_raw $$sz B" || exit 1; \
-		ulimit -s $$stack_kb >/dev/null 2>&1 || true; $(TIMEOUT_CMD) cargo bench -p perf-bench --profile competitive --manifest-path $(WORKSPACE_MANIFEST) --bench competitive_raw_myelon_mmap -- --json --no-compare -s $$sz -n $$msgs -w $$warmup > $(OUTDIR)/myelon_raw_mmap_$${sz}.json && echo "  ✓ myelon_raw_mmap $$sz B" || exit 1; \
+		ulimit -s $$stack_kb >/dev/null 2>&1 || true; $(TIMEOUT_CMD) cargo bench -p perf-bench --profile competitive --manifest-path $(WORKSPACE_MANIFEST) --bench pingpong_shm -- --json-canonical --no-compare -s $$sz -n $$msgs -w $$warmup > $(OUTDIR)/disruptor_$${sz}.json && echo "  ✓ disruptor $$sz B" || exit 1; \
+		ulimit -s $$stack_kb >/dev/null 2>&1 || true; $(TIMEOUT_CMD) cargo bench -p perf-bench --profile competitive --manifest-path $(WORKSPACE_MANIFEST) --bench pingpong_mmap -- --json-canonical --no-compare -s $$sz -n $$msgs -w $$warmup > $(OUTDIR)/disruptor_mmap_$${sz}.json && echo "  ✓ disruptor_mmap $$sz B" || exit 1; \
+		ulimit -s $$stack_kb >/dev/null 2>&1 || true; $(TIMEOUT_CMD) cargo bench -p perf-bench --profile competitive --manifest-path $(WORKSPACE_MANIFEST) --bench pingpong_raw_myelon_shm -- --json --no-compare -s $$sz -n $$msgs -w $$warmup > $(OUTDIR)/myelon_raw_$${sz}.json && echo "  ✓ myelon_raw $$sz B" || exit 1; \
+		ulimit -s $$stack_kb >/dev/null 2>&1 || true; $(TIMEOUT_CMD) cargo bench -p perf-bench --profile competitive --manifest-path $(WORKSPACE_MANIFEST) --bench pingpong_raw_myelon_mmap -- --json --no-compare -s $$sz -n $$msgs -w $$warmup > $(OUTDIR)/myelon_raw_mmap_$${sz}.json && echo "  ✓ myelon_raw_mmap $$sz B" || exit 1; \
 	done
 
 internal-run-fixed-rate-quick:
@@ -147,10 +159,10 @@ internal-run-fixed-rate-quick:
 	@for sz in $(RUN_SIZES); do \
 		$(SIZE_TUNING); \
 		for rate in $$rates; do \
-			ulimit -s $$stack_kb >/dev/null 2>&1 || true; $(TIMEOUT_CMD) cargo bench -p perf-bench --profile competitive --manifest-path $(WORKSPACE_MANIFEST) --bench competitive_shm -- --json-canonical --no-compare -s $$sz -n $$msgs -w $$warmup --target-rate $$rate > $(OUTDIR)/disruptor_$${sz}_$${rate}.json && echo "  ✓ disruptor $$sz B @ $$rate/s" || exit 1; \
-			ulimit -s $$stack_kb >/dev/null 2>&1 || true; $(TIMEOUT_CMD) cargo bench -p perf-bench --profile competitive --manifest-path $(WORKSPACE_MANIFEST) --bench competitive_mmap -- --json-canonical --no-compare -s $$sz -n $$msgs -w $$warmup --target-rate $$rate > $(OUTDIR)/disruptor_mmap_$${sz}_$${rate}.json && echo "  ✓ disruptor_mmap $$sz B @ $$rate/s" || exit 1; \
-			ulimit -s $$stack_kb >/dev/null 2>&1 || true; $(TIMEOUT_CMD) cargo bench -p perf-bench --profile competitive --manifest-path $(WORKSPACE_MANIFEST) --bench competitive_raw_myelon_shm -- --json --no-compare -s $$sz -n $$msgs -w $$warmup --target-rate $$rate > $(OUTDIR)/myelon_raw_$${sz}_$${rate}.json && echo "  ✓ myelon_raw $$sz B @ $$rate/s" || exit 1; \
-			ulimit -s $$stack_kb >/dev/null 2>&1 || true; $(TIMEOUT_CMD) cargo bench -p perf-bench --profile competitive --manifest-path $(WORKSPACE_MANIFEST) --bench competitive_raw_myelon_mmap -- --json --no-compare -s $$sz -n $$msgs -w $$warmup --target-rate $$rate > $(OUTDIR)/myelon_raw_mmap_$${sz}_$${rate}.json && echo "  ✓ myelon_raw_mmap $$sz B @ $$rate/s" || exit 1; \
+			ulimit -s $$stack_kb >/dev/null 2>&1 || true; $(TIMEOUT_CMD) cargo bench -p perf-bench --profile competitive --manifest-path $(WORKSPACE_MANIFEST) --bench pingpong_shm -- --json-canonical --no-compare -s $$sz -n $$msgs -w $$warmup --target-rate $$rate > $(OUTDIR)/disruptor_$${sz}_$${rate}.json && echo "  ✓ disruptor $$sz B @ $$rate/s" || exit 1; \
+			ulimit -s $$stack_kb >/dev/null 2>&1 || true; $(TIMEOUT_CMD) cargo bench -p perf-bench --profile competitive --manifest-path $(WORKSPACE_MANIFEST) --bench pingpong_mmap -- --json-canonical --no-compare -s $$sz -n $$msgs -w $$warmup --target-rate $$rate > $(OUTDIR)/disruptor_mmap_$${sz}_$${rate}.json && echo "  ✓ disruptor_mmap $$sz B @ $$rate/s" || exit 1; \
+			ulimit -s $$stack_kb >/dev/null 2>&1 || true; $(TIMEOUT_CMD) cargo bench -p perf-bench --profile competitive --manifest-path $(WORKSPACE_MANIFEST) --bench pingpong_raw_myelon_shm -- --json --no-compare -s $$sz -n $$msgs -w $$warmup --target-rate $$rate > $(OUTDIR)/myelon_raw_$${sz}_$${rate}.json && echo "  ✓ myelon_raw $$sz B @ $$rate/s" || exit 1; \
+			ulimit -s $$stack_kb >/dev/null 2>&1 || true; $(TIMEOUT_CMD) cargo bench -p perf-bench --profile competitive --manifest-path $(WORKSPACE_MANIFEST) --bench pingpong_raw_myelon_mmap -- --json --no-compare -s $$sz -n $$msgs -w $$warmup --target-rate $$rate > $(OUTDIR)/myelon_raw_mmap_$${sz}_$${rate}.json && echo "  ✓ myelon_raw_mmap $$sz B @ $$rate/s" || exit 1; \
 		done; \
 	done
 
@@ -289,8 +301,8 @@ internal-headon:
 	@echo "[headon] internal raw disruptor vs raw myelon sizes: $(HEADON_SIZES)"
 	@for sz in $(HEADON_SIZES); do \
 		$(SIZE_TUNING); \
-		$(TIMEOUT_CMD) cargo bench -p perf-bench --profile competitive --manifest-path $(WORKSPACE_MANIFEST) --bench competitive_shm -- --json-canonical --no-compare -s $$sz -n $$msgs -w $$warmup > $(HEADON_DIR)/disruptor/pingpong_$${sz}B.json && echo "  ✓ disruptor $$sz B" || exit 1; \
-		$(TIMEOUT_CMD) cargo bench -p perf-bench --profile competitive --manifest-path $(WORKSPACE_MANIFEST) --bench competitive_raw_myelon_shm -- --json --no-compare -s $$sz -n $$msgs -w $$warmup > $(HEADON_DIR)/myelon_raw/pingpong_$${sz}B.json && echo "  ✓ myelon_raw $$sz B" || exit 1; \
+		$(TIMEOUT_CMD) cargo bench -p perf-bench --profile competitive --manifest-path $(WORKSPACE_MANIFEST) --bench pingpong_shm -- --json-canonical --no-compare -s $$sz -n $$msgs -w $$warmup > $(HEADON_DIR)/disruptor/pingpong_$${sz}B.json && echo "  ✓ disruptor $$sz B" || exit 1; \
+		$(TIMEOUT_CMD) cargo bench -p perf-bench --profile competitive --manifest-path $(WORKSPACE_MANIFEST) --bench pingpong_raw_myelon_shm -- --json --no-compare -s $$sz -n $$msgs -w $$warmup > $(HEADON_DIR)/myelon_raw/pingpong_$${sz}B.json && echo "  ✓ myelon_raw $$sz B" || exit 1; \
 	done
 	@python3 scripts/aggregate_headon.py $(HEADON_DIR)
 
@@ -368,7 +380,7 @@ headon-smoke:
 	 done; \
 	 echo "[headon] disruptor throughput"; \
 	 for sz in $(HEADON_SIZES); do \
-	   $(TIMEOUT_CMD) cargo bench -p perf-bench --profile competitive --manifest-path $(WORKSPACE_MANIFEST) --bench competitive_shm -- --json-canonical --no-compare -s $$sz -n 100 -w 10 > $(HEADON_DIR)/disruptor/pingpong_$${sz}B.json || exit 1; \
+	   $(TIMEOUT_CMD) cargo bench -p perf-bench --profile competitive --manifest-path $(WORKSPACE_MANIFEST) --bench pingpong_shm -- --json-canonical --no-compare -s $$sz -n 100 -w 10 > $(HEADON_DIR)/disruptor/pingpong_$${sz}B.json || exit 1; \
 	 done; \
 	 echo "[headon] rusteron fixed-rate (CO) smoke"; \
 	 $(MAKE) WARMUP=$(CO_WARMUP) NUM_MESSAGES=$(CO_NUM_MESSAGES) LARGE_WARMUP=10 LARGE_NUM_MESSAGES=100 SIZES_SMALL="$(HEADON_SIZES)" RATES=$(HEADON_RATE_SMOKE) LARGE_RATES=$(LARGE_HEADON_RATE_SMOKE) rusteron-run-fixed-rate-quick; \
@@ -380,7 +392,7 @@ headon-smoke:
 	 echo "[headon] disruptor fixed-rate (CO) smoke"; \
 	 for sz in $(HEADON_SIZES); do \
 	   if [ $$sz -ge $(LARGE_SIZE_THRESHOLD) ]; then msgs=100; warmup=10; rate=$(LARGE_HEADON_RATE_SMOKE); else msgs=$(CO_NUM_MESSAGES); warmup=$(CO_WARMUP); rate=$(HEADON_RATE_SMOKE); fi; \
-	   $(TIMEOUT_CMD) cargo bench -p perf-bench --profile competitive --manifest-path $(WORKSPACE_MANIFEST) --bench competitive_shm -- --json-canonical --no-compare -s $$sz -n $$msgs -w $$warmup --target-rate $$rate > $(HEADON_DIR)/disruptor/co_$${sz}B_$${rate}.json || exit 1; \
+	   $(TIMEOUT_CMD) cargo bench -p perf-bench --profile competitive --manifest-path $(WORKSPACE_MANIFEST) --bench pingpong_shm -- --json-canonical --no-compare -s $$sz -n $$msgs -w $$warmup --target-rate $$rate > $(HEADON_DIR)/disruptor/co_$${sz}B_$${rate}.json || exit 1; \
 	 done; \
 	 echo ""; \
 	 echo "===== raw disruptor vs rusteron (smoke) ====="; \
@@ -398,7 +410,7 @@ headon-full:
 	 echo "[headon] disruptor throughput"; \
 	 for sz in $(HEADON_SIZES); do \
 	   $(SIZE_TUNING); \
-	   ulimit -s $$stack_kb >/dev/null 2>&1 || true; $(TIMEOUT_CMD) cargo bench -p perf-bench --profile competitive --manifest-path $(WORKSPACE_MANIFEST) --bench competitive_shm -- --json-canonical --no-compare -s $$sz -n $$msgs -w $$warmup > $(HEADON_DIR)/disruptor/pingpong_$${sz}B.json || exit 1; \
+	   ulimit -s $$stack_kb >/dev/null 2>&1 || true; $(TIMEOUT_CMD) cargo bench -p perf-bench --profile competitive --manifest-path $(WORKSPACE_MANIFEST) --bench pingpong_shm -- --json-canonical --no-compare -s $$sz -n $$msgs -w $$warmup > $(HEADON_DIR)/disruptor/pingpong_$${sz}B.json || exit 1; \
 	 done; \
 	 echo "[headon] rusteron fixed-rate (CO) full rates: core $(RATES), large $(LARGE_RATES)"; \
 	 $(MAKE) WARMUP=$(WARMUP) NUM_MESSAGES=$(NUM_MESSAGES) SIZES_SMALL="$(HEADON_SIZES)" rusteron-run-fixed-rate-quick; \
@@ -411,7 +423,7 @@ headon-full:
 	 for sz in $(HEADON_SIZES); do \
 	   $(SIZE_TUNING); \
 	   for rate in $$rates; do \
-	     ulimit -s $$stack_kb >/dev/null 2>&1 || true; $(TIMEOUT_CMD) cargo bench -p perf-bench --profile competitive --manifest-path $(WORKSPACE_MANIFEST) --bench competitive_shm -- --json-canonical --no-compare -s $$sz -n $$msgs -w $$warmup --target-rate $$rate > $(HEADON_DIR)/disruptor/co_$${sz}B_$$rate.json || exit 1; \
+	     ulimit -s $$stack_kb >/dev/null 2>&1 || true; $(TIMEOUT_CMD) cargo bench -p perf-bench --profile competitive --manifest-path $(WORKSPACE_MANIFEST) --bench pingpong_shm -- --json-canonical --no-compare -s $$sz -n $$msgs -w $$warmup --target-rate $$rate > $(HEADON_DIR)/disruptor/co_$${sz}B_$$rate.json || exit 1; \
 	   done; \
 	 done; \
 	 echo ""; \
@@ -429,18 +441,18 @@ verify-align-disruptor:
 verify-align-rusteron: rusteron-build
 	@echo "[verify] rusteron (aeron ipc) alignment per size: $(RUN_SIZES)"
 	@for sz in $(RUN_SIZES); do \
-		aeron_libdirs=$$(find $(abspath ../..)/target/competitive/build -type f \( -name 'libaeron.so' -o -name 'libaeron_driver.so' \) -printf '%h:' | sed 's/:$$//'); \
-		LD_LIBRARY_PATH="$$aeron_libdirs:$$LD_LIBRARY_PATH" $(RUSTERON_BIN) --verify-align --message-size $$sz || exit 1; \
+		aeron_libdirs=$(AERON_FIND_DIRS); \
+		$(AERON_ENV) $(RUSTERON_BIN) --verify-align --message-size $$sz || exit 1; \
 	done
 verify-align-quick: verify-align
 verify-align-extensive:
 	@$(MAKE) RUN_SIZES="$(EXTENSIVE_RUN_SIZES)" verify-align
 
 kill-pingpong:
-	-@pkill -f 'competitive_shm' 2>/dev/null || true
-	-@pkill -f 'competitive_mmap' 2>/dev/null || true
-	-@pkill -f 'competitive_raw_myelon_shm' 2>/dev/null || true
-	-@pkill -f 'competitive_raw_myelon_mmap' 2>/dev/null || true
+	-@pkill -f 'pingpong_shm' 2>/dev/null || true
+	-@pkill -f 'pingpong_mmap' 2>/dev/null || true
+	-@pkill -f 'pingpong_raw_myelon_shm' 2>/dev/null || true
+	-@pkill -f 'pingpong_raw_myelon_mmap' 2>/dev/null || true
 	-@pkill -f 'crossbar_pingpong' 2>/dev/null || true
 	-@pkill -f 'shmipc_pingpong' 2>/dev/null || true
 	-@pkill -f '/third_party/boost_pingpong/boost_pingpong' 2>/dev/null || true
@@ -455,7 +467,7 @@ kill-pingpong:
 	-@pkill -f 'crossbar_broadcast' 2>/dev/null || true
 	-@$(DOCKER) rm -f $(IGGY_CONTAINER) >/dev/null 2>&1 || true
 	-@$(DOCKER) rm -f $(REDPANDA_CONTAINER) >/dev/null 2>&1 || true
-	-@pgrep -fa 'competitive_shm|competitive_mmap|competitive_raw_myelon_shm|competitive_raw_myelon_mmap|internal_broadcast|crossbar_pingpong|crossbar_broadcast|shmipc_pingpong|boost_pingpong|ompi_pingpong|rusteron_pingpong|iceoryx2_pingpong|zmq_pingpong|iggy_pingpong|redpanda_pingpong|mpirun .*third_party/ompi_pingpong/pingpong' || true
+	-@pgrep -fa 'pingpong_shm|pingpong_mmap|pingpong_raw_myelon_shm|pingpong_raw_myelon_mmap|internal_broadcast|crossbar_pingpong|crossbar_broadcast|shmipc_pingpong|boost_pingpong|ompi_pingpong|rusteron_pingpong|iceoryx2_pingpong|zmq_pingpong|iggy_pingpong|redpanda_pingpong|mpirun .*third_party/ompi_pingpong/pingpong' || true
 
 external-status:
 	@echo "[status] internal parity backends: raw disruptor/myelon ping-pong + broadcast over shm + mmap"
@@ -752,11 +764,11 @@ rusteron-run-quick: rusteron-build
 		fi; \
 		$(SIZE_TUNING); \
 		base="rusteron_$${sz}_$$RANDOM_$$PPID"; \
-		aeron_libdirs=$$(find $(abspath ../..)/target/competitive/build -type f \( -name 'libaeron.so' -o -name 'libaeron_driver.so' \) -printf '%h:' | sed 's/:$$//'); \
-		LD_LIBRARY_PATH="$$aeron_libdirs:$$LD_LIBRARY_PATH" $(TIMEOUT_CMD) $(RUSTERON_BIN) --mode server --base $$base --message-size $$sz >/dev/null 2>&1 & \
+		aeron_libdirs=$(AERON_FIND_DIRS); \
+		$(AERON_ENV) $(TIMEOUT_CMD) $(RUSTERON_BIN) --mode server --base $$base --message-size $$sz >/dev/null 2>&1 & \
 		server_pid=$$!; \
 		sleep 0.5; \
-		LD_LIBRARY_PATH="$$aeron_libdirs:$$LD_LIBRARY_PATH" $(TIMEOUT_CMD) $(RUSTERON_BIN) --mode client --base $$base --message-size $$sz --num-messages $$msgs --warmup $$warmup --json > $(OUTDIR)/rusteron_$${sz}.json; \
+		$(AERON_ENV) $(TIMEOUT_CMD) $(RUSTERON_BIN) --mode client --base $$base --message-size $$sz --num-messages $$msgs --warmup $$warmup --json > $(OUTDIR)/rusteron_$${sz}.json; \
 		status=$$?; \
 		kill $$server_pid 2>/dev/null || true; \
 		wait $$server_pid 2>/dev/null || true; \
@@ -775,11 +787,11 @@ rusteron-run-fixed-rate-quick: rusteron-build
 		$(SIZE_TUNING); \
 		for rate in $$rates; do \
 			base="rusteron_$${sz}_$${rate}_$$RANDOM_$$PPID"; \
-			aeron_libdirs=$$(find $(abspath ../..)/target/competitive/build -type f \( -name 'libaeron.so' -o -name 'libaeron_driver.so' \) -printf '%h:' | sed 's/:$$//'); \
-			LD_LIBRARY_PATH="$$aeron_libdirs:$$LD_LIBRARY_PATH" $(TIMEOUT_CMD) $(RUSTERON_BIN) --mode server --base $$base --message-size $$sz >/dev/null 2>&1 & \
+			aeron_libdirs=$(AERON_FIND_DIRS); \
+			$(AERON_ENV) $(TIMEOUT_CMD) $(RUSTERON_BIN) --mode server --base $$base --message-size $$sz >/dev/null 2>&1 & \
 			server_pid=$$!; \
 			sleep 0.5; \
-			LD_LIBRARY_PATH="$$aeron_libdirs:$$LD_LIBRARY_PATH" $(TIMEOUT_CMD) $(RUSTERON_BIN) --mode client --base $$base --message-size $$sz --num-messages $$msgs --warmup $$warmup --target-rate $$rate --json > $(OUTDIR)/rusteron_$${sz}_$${rate}.json; \
+			$(AERON_ENV) $(TIMEOUT_CMD) $(RUSTERON_BIN) --mode client --base $$base --message-size $$sz --num-messages $$msgs --warmup $$warmup --target-rate $$rate --json > $(OUTDIR)/rusteron_$${sz}_$${rate}.json; \
 			status=$$?; \
 			kill $$server_pid 2>/dev/null || true; \
 			wait $$server_pid 2>/dev/null || true; \

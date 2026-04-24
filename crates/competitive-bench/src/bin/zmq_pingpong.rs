@@ -48,10 +48,25 @@ fn default_base_name() -> String {
     format!("zmq_pp_{}", std::process::id())
 }
 
+fn ipc_dir() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "/tmp"
+    } else {
+        "/dev/shm"
+    }
+}
+
 fn endpoint(base: &str, transport: &str) -> String {
     match transport {
-        "ipc" => format!("ipc:///dev/shm/{}.zmq", base),
-        "ipc-abs" => format!("ipc://@{}", base), // Linux abstract UDS
+        "ipc" => format!("ipc://{}/{}.zmq", ipc_dir(), base),
+        "ipc-abs" => {
+            if cfg!(target_os = "linux") {
+                format!("ipc://@{}", base) // Linux abstract UDS
+            } else {
+                // Abstract namespace not available on macOS — fall back to filesystem UDS
+                format!("ipc://{}/{}.abs.zmq", ipc_dir(), base)
+            }
+        }
         "tcp" => {
             // Stable pseudo-random port derived from base
             let sum: u32 = base.as_bytes().iter().map(|b| *b as u32).sum();
@@ -63,7 +78,7 @@ fn endpoint(base: &str, transport: &str) -> String {
 }
 
 fn endpoint_path(base: &str) -> String {
-    format!("/dev/shm/{}.zmq", base)
+    format!("{}/{}.zmq", ipc_dir(), base)
 }
 
 #[derive(Debug, Clone, Serialize)]

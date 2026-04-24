@@ -54,13 +54,13 @@ path = "benches/disruptor_mp/mmap/wait_strategy.rs"
 harness = false
 
 [[bench]]
-name = "competitive_shm"
-path = "benches/disruptor_mp/shm/competitive.rs"
+name = "pingpong_shm"
+path = "benches/disruptor_mp/shm/pingpong.rs"
 harness = false
 
 [[bench]]
-name = "competitive_mmap"
-path = "benches/disruptor_mp/mmap/competitive.rs"
+name = "pingpong_mmap"
+path = "benches/disruptor_mp/mmap/pingpong.rs"
 harness = false
 
 # --- myelon layer: framed + codec ---
@@ -76,23 +76,23 @@ path = "benches/myelon/framed/mmap.rs"
 harness = false
 
 [[bench]]
-name = "competitive_framed_shm"
-path = "benches/myelon/framed/competitive_shm.rs"
+name = "pingpong_framed_shm"
+path = "benches/myelon/framed/pingpong_shm.rs"
 harness = false
 
 [[bench]]
-name = "competitive_raw_myelon_shm"
-path = "benches/myelon/raw/competitive_shm.rs"
+name = "pingpong_raw_myelon_shm"
+path = "benches/myelon/raw/pingpong_shm.rs"
 harness = false
 
 [[bench]]
-name = "competitive_framed_mmap"
-path = "benches/myelon/framed/competitive_mmap.rs"
+name = "pingpong_framed_mmap"
+path = "benches/myelon/framed/pingpong_mmap.rs"
 harness = false
 
 [[bench]]
-name = "competitive_raw_myelon_mmap"
-path = "benches/myelon/raw/competitive_mmap.rs"
+name = "pingpong_raw_myelon_mmap"
+path = "benches/myelon/raw/pingpong_mmap.rs"
 harness = false
 
 [[bench]]
@@ -106,28 +106,33 @@ path = "benches/myelon/codec/mmap.rs"
 harness = false
 
 [[bench]]
-name = "competitive_codec_shm"
-path = "benches/myelon/codec/competitive_shm.rs"
+name = "pingpong_codec_shm"
+path = "benches/myelon/codec/pingpong_shm.rs"
 harness = false
 
 [[bench]]
-name = "competitive_codec_mmap"
-path = "benches/myelon/codec/competitive_mmap.rs"
+name = "pingpong_codec_mmap"
+path = "benches/myelon/codec/pingpong_mmap.rs"
 harness = false
 
 [[bench]]
-name = "competitive_typed_zero_copy_shm"
-path = "benches/myelon/codec/competitive_typed_zero_copy_shm.rs"
+name = "pingpong_typed_zero_copy_shm"
+path = "benches/myelon/codec/pingpong_typed_zero_copy_shm.rs"
 harness = false
 
 [[bench]]
-name = "competitive_typed_zero_copy_mmap"
-path = "benches/myelon/codec/competitive_typed_zero_copy_mmap.rs"
+name = "pingpong_typed_zero_copy_mmap"
+path = "benches/myelon/codec/pingpong_typed_zero_copy_mmap.rs"
 harness = false
 
 [[bench]]
 name = "codec_nofrag_shm"
 path = "benches/myelon/codec/nofrag_shm.rs"
+harness = false
+
+[[bench]]
+name = "codec_nofrag_mmap"
+path = "benches/myelon/codec/nofrag_mmap.rs"
 harness = false
 
 [[bench]]

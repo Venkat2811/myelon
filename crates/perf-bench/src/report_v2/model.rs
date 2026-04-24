@@ -164,7 +164,7 @@ pub struct LayoutOutcome {
 pub enum ScenarioFamily {
     RawRing,
     WaitStrategy,
-    Competitive,
+    PingPong,
     Framed,
     CodecE2E,
     CodecNoFrag,

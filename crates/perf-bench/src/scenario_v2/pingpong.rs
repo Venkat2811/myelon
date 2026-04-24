@@ -6,23 +6,23 @@ use std::env;
 use std::time::Duration;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CompetitiveBackend {
+pub enum PingPongBackend {
     Shm,
     Mmap,
 }
 
-impl CompetitiveBackend {
+impl PingPongBackend {
     pub fn title(self) -> &'static str {
         match self {
-            Self::Shm => "Competitive SHM Ping-Pong",
-            Self::Mmap => "Competitive MMAP Ping-Pong",
+            Self::Shm => "PingPong SHM",
+            Self::Mmap => "PingPong MMAP",
         }
     }
 
     pub fn bench_name(self) -> &'static str {
         match self {
-            Self::Shm => "competitive_shm",
-            Self::Mmap => "competitive_mmap",
+            Self::Shm => "pingpong_shm",
+            Self::Mmap => "pingpong_mmap",
         }
     }
 
@@ -43,7 +43,7 @@ impl CompetitiveBackend {
 
 #[derive(Parser, Debug, Clone)]
 #[command(author, version, about, long_about = None)]
-pub struct CompetitiveArgs {
+pub struct PingPongArgs {
     /// Message size in bytes
     #[arg(short = 's', long, default_value = "64")]
     pub message_size: usize,
@@ -125,7 +125,7 @@ pub fn legacy_json_output_path() -> Option<String> {
         .filter(|value| !value.trim().is_empty())
 }
 
-pub fn json_mode(args: &CompetitiveArgs) -> bool {
+pub fn json_mode(args: &PingPongArgs) -> bool {
     args.json
         || args.json_canonical
         || args.json_out.is_some()
@@ -134,11 +134,11 @@ pub fn json_mode(args: &CompetitiveArgs) -> bool {
         || benchmark_json_output_path().is_some()
 }
 
-pub fn should_emit_report(args: &CompetitiveArgs) -> bool {
+pub fn should_emit_report(args: &PingPongArgs) -> bool {
     json_mode(args) || args.tree || legacy_json_output_path().is_some()
 }
 
-pub fn report_output_args(args: &CompetitiveArgs) -> reporting::ReportOutputArgs {
+pub fn report_output_args(args: &PingPongArgs) -> reporting::ReportOutputArgs {
     reporting::ReportOutputArgs {
         json_mode: args.json || args.json_canonical,
         quick_mode: false,
@@ -149,7 +149,7 @@ pub fn report_output_args(args: &CompetitiveArgs) -> reporting::ReportOutputArgs
     }
 }
 
-pub fn measurement_mode(args: &CompetitiveArgs) -> String {
+pub fn measurement_mode(args: &PingPongArgs) -> String {
     if args.batch_timing {
         "batch_timing".to_string()
     } else if let Some(target_rate) = args.target_rate {
@@ -174,9 +174,9 @@ pub fn default_buffer_size(message_size: usize) -> usize {
     }
 }
 
-pub fn scenario_label(args: &CompetitiveArgs) -> String {
+pub fn scenario_label(args: &PingPongArgs) -> String {
     format!(
-        "competitive_pingpong_1p{}c_{}",
+        "pingpong_1p{}c_{}",
         args.consumers,
         human_size(args.message_size)
     )
@@ -192,8 +192,8 @@ pub fn apply_wait_strategy(wait_strategy: &str) {
 }
 
 pub fn build_report(
-    backend: CompetitiveBackend,
-    args: &CompetitiveArgs,
+    backend: PingPongBackend,
+    args: &PingPongArgs,
     throughput: f64,
     buffer_size: usize,
     latency: Option<latency::LatencyStats>,
@@ -208,7 +208,7 @@ pub fn build_report(
         codec: None,
         measurement_mode: measurement_mode(args),
         wait_strategy: args.wait_strategy.clone(),
-        transport: reporting::BenchTransportSpec::unified_competitive()
+        transport: reporting::BenchTransportSpec::unified_pingpong()
             .with_zero_copy(false)
             .with_framing("none"),
         message_size_bytes: args.message_size,
@@ -275,7 +275,7 @@ where
     }
 }
 
-pub fn print_header(backend: CompetitiveBackend, args: &CompetitiveArgs, buffer_size: usize) {
+pub fn print_header(backend: PingPongBackend, args: &PingPongArgs, buffer_size: usize) {
     println!("=== {} ===", backend.title());
     println!("Message size: {}", human_size(args.message_size));
     println!("Buffer size: {} slots", buffer_size);
@@ -296,7 +296,7 @@ pub fn average_rtt_ns(duration: Duration, messages: u64) -> Option<f64> {
     Some(duration.as_nanos() as f64 / messages as f64)
 }
 
-pub fn validate_args(args: &CompetitiveArgs) -> Result<(), String> {
+pub fn validate_args(args: &PingPongArgs) -> Result<(), String> {
     if args.batch_timing && args.target_rate.is_some() {
         return Err("--batch-timing cannot be combined with --target-rate".into());
     }
@@ -339,26 +339,26 @@ mod tests {
 
     #[test]
     fn measurement_mode_tracks_cli_mode() {
-        let throughput = CompetitiveArgs::parse_from(["bench"]);
+        let throughput = PingPongArgs::parse_from(["bench"]);
         assert_eq!(measurement_mode(&throughput), "max_throughput");
 
-        let batch = CompetitiveArgs::parse_from(["bench", "--batch-timing"]);
+        let batch = PingPongArgs::parse_from(["bench", "--batch-timing"]);
         assert_eq!(measurement_mode(&batch), "batch_timing");
 
-        let co = CompetitiveArgs::parse_from(["bench", "--target-rate", "20000"]);
+        let co = PingPongArgs::parse_from(["bench", "--target-rate", "20000"]);
         assert_eq!(measurement_mode(&co), "co_aware@20000");
     }
 
     #[test]
     fn validate_args_rejects_invalid_combinations() {
         let args =
-            CompetitiveArgs::parse_from(["bench", "--batch-timing", "--target-rate", "20000"]);
+            PingPongArgs::parse_from(["bench", "--batch-timing", "--target-rate", "20000"]);
         assert_eq!(
             validate_args(&args).unwrap_err(),
             "--batch-timing cannot be combined with --target-rate"
         );
 
-        let args = CompetitiveArgs::parse_from(["bench", "--batch-size", "0"]);
+        let args = PingPongArgs::parse_from(["bench", "--batch-size", "0"]);
         assert_eq!(
             validate_args(&args).unwrap_err(),
             "--batch-size must be greater than zero"
@@ -367,8 +367,8 @@ mod tests {
 
     #[test]
     fn scenario_label_tracks_size_and_consumers() {
-        let args = CompetitiveArgs::parse_from(["bench", "--consumers", "4", "-s", "65536"]);
-        assert_eq!(scenario_label(&args), "competitive_pingpong_1p4c_64KB");
+        let args = PingPongArgs::parse_from(["bench", "--consumers", "4", "-s", "65536"]);
+        assert_eq!(scenario_label(&args), "pingpong_1p4c_64KB");
     }
 
     #[test]
@@ -376,7 +376,7 @@ mod tests {
         unsafe {
             env::set_var("MYELON_BENCH_JSON_OUT", "/tmp/out.json");
         }
-        let args = CompetitiveArgs::parse_from(["bench"]);
+        let args = PingPongArgs::parse_from(["bench"]);
         assert!(should_emit_report(&args));
         unsafe {
             env::remove_var("MYELON_BENCH_JSON_OUT");
