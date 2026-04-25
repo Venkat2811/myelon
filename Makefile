@@ -16,19 +16,14 @@ endef
 	bench-matrix-raw bench-matrix-framed bench-matrix-codec bench-matrix-wait bench-matrix-competitive bench-matrix-layout \
 	workspace-smoke competitive myelon-sweep all-multi repeatability results \
 	test-rust-fast test-rust-extended test-rust-perf-gate test-rust-manifest \
-	test-py-fast test-py-extended test-py-manifest py-check py-test py-setup \
-	check-layer-boundaries check-layout-refs check-hot-path-ffi \
-	test-dst test-dst-fuzz test-dst-nightly run-rust-examples run-rust-benches run-py-examples run-py-benches \
-	smoke orchestrate-rust orchestrate-python orchestrate-all \
-	validate-ci-workflows
+	test-dst test-dst-fuzz test-dst-nightly run-rust-examples run-rust-benches \
+	smoke orchestrate-rust validate-ci-workflows
 
 help:
 	@echo "myelon workspace commands"
 	@echo "  make smoke               - perf-bench smoke lane (~60s)"
-	@echo "  make workspace-smoke     - fast wiring check for rust+python tiers"
+	@echo "  make workspace-smoke     - fast wiring check for rust tiers"
 	@echo "  make orchestrate-rust    - rust-tier CI-style workflow"
-	@echo "  make orchestrate-python  - python-tier workflow"
-	@echo "  make orchestrate-all     - rust + python workflows"
 	@echo "  make validate-ci-workflows - verify copied workflow path/platform expectations"
 	@echo "  make fmt                 - cargo fmt for workspace"
 	@echo "  make check               - cargo check --workspace --all-targets"
@@ -46,21 +41,11 @@ help:
 	@echo "  make test-rust-extended  - disruptor-mp Linux lane + stress/perf smoke"
 	@echo "  make test-rust-perf-gate - live disruptor-mp Linux perf regression gate"
 	@echo "  make test-rust-manifest  - emit disruptor-mp machine-readable test manifest"
-	@echo "  make test-py-fast        - canonical myelon-py Linux Python lane"
-	@echo "  make test-py-extended    - myelon-py Linux lane + stress/perf/large-element lanes"
-	@echo "  make test-py-manifest    - emit myelon-py machine-readable test manifest"
-	@echo "  make py-check            - cargo check for Python extension crate"
-	@echo "  make py-test             - alias for canonical myelon-py Linux Python lane"
 	@echo "  make test-dst            - run deterministic DST lanes for disruptor-mp and myelon"
 	@echo "  make test-dst-fuzz       - run 100-seed DST CI fuzz envelopes"
 	@echo "  make test-dst-nightly    - run 1000-seed DST nightly fuzz envelopes"
 	@echo "  make run-rust-examples   - run supported Rust examples with timeout protection"
 	@echo "  make run-rust-benches    - run supported Rust benches with timeout protection"
-	@echo "  make run-py-examples     - run supported Python examples with timeout protection"
-	@echo "  make run-py-benches      - run supported Python benchmark suite with timeout protection"
-	@echo "  make check-layer-boundaries - fail cross-layer import violations"
-	@echo "  make check-layout-refs   - fail stale pre-monorepo user-facing paths"
-	@echo "  make check-hot-path-ffi  - fail unexpected Python hot-path per-event FFI spread"
 
 fmt:
 	@$(CARGO) fmt --all
@@ -134,24 +119,6 @@ test-rust-perf-gate:
 test-rust-manifest:
 	@$(MAKE) test-manifest-json
 
-test-py-fast:
-	@$(MAKE) -C python-surface-archive test-linux
-
-test-py-extended:
-	@$(MAKE) -C python-surface-archive test-linux-extended
-
-test-py-manifest:
-	@$(MAKE) -C python-surface-archive test-manifest-json
-
-py-check:
-	@$(CARGO) check -p python-surface-archive
-
-py-test:
-	@$(MAKE) test-py-fast
-
-py-setup:
-	@$(MAKE) -C python-surface-archive setup
-
 test-dst:
 	@$(MAKE) test-dst
 	@$(CARGO) test -p dst-runner --features dst -- --test-threads=1
@@ -178,21 +145,6 @@ run-rust-examples:
 run-rust-benches:
 	@$(MAKE) bench-all
 
-run-py-examples:
-	@$(MAKE) -C python-surface-archive example-all
-
-run-py-benches:
-	@$(MAKE) -C python-surface-archive benchmark-all
-
-check-layer-boundaries:
-	@python3 scripts/check_layer_boundaries.py
-
-check-layout-refs:
-	@python3 scripts/check_monorepo_layout_refs.py
-
-check-hot-path-ffi:
-	@python3 scripts/check_python_hot_path_ffi.py
-
 validate-ci-workflows:
 	@bash scripts/validate_ci_workflows.sh
 
@@ -200,20 +152,13 @@ smoke:
 	@$(PERF_BENCH_MAKE) smoke
 
 workspace-smoke:
-	@$(MAKE) check-layer-boundaries
-	@$(MAKE) check-layout-refs
-	@$(MAKE) check-hot-path-ffi
 	@$(MAKE) drift-check
 	@$(MAKE) drift-check-shell-matrix
 	@$(MAKE) test-unit
 	@$(CARGO) check -p myelon
-	@$(CARGO) check -p python-surface-archive
 
 orchestrate-rust:
 	@$(CARGO) fmt --all
-	@$(MAKE) check-layer-boundaries
-	@$(MAKE) check-layout-refs
-	@$(MAKE) check-hot-path-ffi
 	@$(MAKE) drift-check
 	@$(MAKE) drift-check-shell-matrix
 	@$(CARGO) clippy -p disruptor-mp -- -D warnings
@@ -225,8 +170,3 @@ orchestrate-rust:
 	@$(CARGO) test -p myelon --test compile_api
 	@$(CARGO) test -p disruptor-mp --benches --no-run
 	@$(CARGO) test -p disruptor-mp --examples --no-run
-
-orchestrate-python: validate-ci-workflows check-layer-boundaries check-layout-refs check-hot-path-ffi py-check test-py-fast test-py-manifest
-
-
-orchestrate-all: orchestrate-rust orchestrate-python

@@ -5,7 +5,6 @@ members = [
   "crates/legacy-wip",
   "crates/perf-bench",
   "crates/competitive-bench",
-  "python-surface-archive",
   "crates/dst-fixtures",
 ]
 resolver = "2"
