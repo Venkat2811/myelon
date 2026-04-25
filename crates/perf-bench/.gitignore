@@ -1,2 +1,3 @@
-# Benchmark output directory (timestamped runs)
-output/
+# Benchmark output directory (timestamped runs) at crate root.
+# Anchored with leading slash to avoid masking src/infra/output/ source module.
+/output/

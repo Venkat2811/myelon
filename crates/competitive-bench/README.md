@@ -61,22 +61,52 @@ Use `crates/perf-bench` when you want the full internal benchmark platform.
 
 ## Layout
 
-- `config/parity.mk`
-  - default and extensive size/rate/count policy
-- `src/bin/*.rs`
-  - per-peer benchmark adapters
-- `scripts/aggregate_results.py`
-  - family-separated, protocol-separated throughput / fixed-rate tables
-- `scripts/aggregate_headon.py`
-  - head-on summaries
-- `scripts/pareto_frontier.py`
-  - SVG frontier plots
-- `scripts/cleanup_shm.py`
-  - removes competitive-bench-owned `/dev/shm` artifacts after interrupted or heavy runs
-- `third_party/`
-  - pinned local source trees that must stay scoped to this crate
-- `output/`
-  - durable result bundles, graphs, and aggregate text
+```
+crates/competitive-bench/
+├── Cargo.toml
+├── Makefile                 # thin layer over competitive-bench-runner
+├── README.md, SETUP.md
+├── config/
+│   └── parity.mk            # default + extensive size/rate/count policy
+│                            # (loaded by infra::parity at compile time)
+├── output/                  # local-only result bundles (gitignored)
+├── patches/                 # workspace cargo patches
+├── src/
+│   ├── lib.rs               # pub mod adapters, infra, runner
+│   ├── bin/                 # entry points -- thin 3-line wrappers
+│   │   ├── competitive_bench_runner.rs   (the orchestrator)
+│   │   ├── crossbar_pingpong.rs          → adapters::crossbar::pingpong
+│   │   ├── crossbar_broadcast.rs         → adapters::crossbar::broadcast
+│   │   ├── iceoryx2_pingpong.rs          → adapters::iceoryx2::pingpong
+│   │   ├── internal_broadcast.rs         → adapters::internal::broadcast
+│   │   ├── rusteron_pingpong.rs          → adapters::rusteron::pingpong
+│   │   ├── shmipc_pingpong.rs            → adapters::shmipc::pingpong
+│   │   └── zmq_pingpong.rs               → adapters::zmq::pingpong
+│   ├── runner/              # cross-adapter orchestration
+│   │   ├── cli.rs           CLI surface
+│   │   ├── dispatch.rs      adapter -> ExecutionStrategy
+│   │   ├── executor.rs      spawn/collect/cleanup
+│   │   └── platform.rs      OS-specific paths (shm, aeron env)
+│   ├── infra/               # cross-adapter library code
+│   │   ├── adapter.rs       AdapterId / Origin / parity registry
+│   │   ├── parity.rs        ParityConfig + per-size message-count tuning
+│   │   ├── pingpong.rs      shared protocol helpers (control, pacing)
+│   │   └── result_json.rs   JSON output schema
+│   └── adapters/            # per-IPC-library implementations
+│       ├── crossbar/{pingpong,broadcast}.rs
+│       ├── iceoryx2/pingpong.rs
+│       ├── internal/broadcast.rs        # disruptor + myelon raw broadcast
+│       ├── rusteron/pingpong.rs
+│       ├── shmipc/pingpong.rs
+│       └── zmq/pingpong.rs
+└── third_party/             # pinned crate-local peer source trees
+    ├── boost_pingpong/      # C++ (Boost.Interprocess message_queue)
+    ├── crossbar/            # vendored Rust crate
+    └── ompi_pingpong/       # C with OpenMPI
+```
+
+Result aggregation / pareto plotting is not in-tree -- the runner emits
+JSON per run and the JSON is the source of truth.
 
 ## Why `third_party/` Only Has Three Peers
 
@@ -120,72 +150,52 @@ Rule:
 
 ## Build and Run
 
-Typical flow:
+Typical flow (from `crates/competitive-bench`):
 
 ```bash
-cd crates/competitive-bench
-make help
-make simple-smoke
-make build-all
-make cleanup-shm
-make ubermensh-smoke
-make run-all-quick
-make run-all-fixed-rate-quick
-make aggregate
-make graphs
-make headon-smoke
-make verify-align
+make help            # show all available targets
+make build-all       # cargo + boost C++ + ompi C
+make simple-smoke    # ultra-quick sanity sweep
+make quick           # core sizes (64B-2MB), all 14 adapters,
+                     # throughput + fixed-rate (CO) + broadcast
+make headon-smoke    # disruptor-shm vs rusteron-aeron-ipc
 ```
 
-Extensive large-object flow:
+Larger sweeps:
 
 ```bash
-cd crates/competitive-bench
-make build-all
-make cleanup-shm
-OUTDIR=output/results_extensive_full make run-all-extensive-quick
-OUTDIR=output/results_extensive_full make run-all-extensive-fixed-rate-quick
-OUTDIR=output/results_extensive_full make aggregate
-make headon-extensive HEADON_DIR=output/headon_extensive
-make verify-align-extensive
+make extensive       # 16KB-64MB sizes, all 14 adapters
+make headon-extensive
 ```
+
+Direct runner invocation (skip the Makefile when iterating):
+
+```bash
+cargo run -p competitive-bench --profile competitive \
+    --bin competitive_bench_runner -- --help
+```
+
+The runner is the single source of dispatch logic; the Makefile is a
+thin convenience layer that knows about build prerequisites and tier
+shorthands.
 
 ## Result Layout
 
-Outputs are durable and crate-local:
+Per-run JSON files are written under `--outdir` (default `output/results/`,
+or `output/headon/` for headon tiers). One JSON file per (adapter, size,
+mode) tuple. Each file carries:
 
-- `output/results*`
-- `output/headon*`
+- `adapter`, `family` (`pingpong` / `broadcast`)
+- `config` (size, message count, warmup, wait strategy, consumers)
+- `throughput`, `messages_processed`, `duration_secs`
+- `latency_stats` -- 12 percentiles (P1, P10, P25, P50, P75, P90, P95,
+  P99, P99.9, P99.99, P99.999, P99.9999)
+- `measurement_mode` (`max_throughput` | `fixed_rate`)
+- `target_rate` and `coordinated_omission_stats` when the run used
+  fixed-rate CO mode
+- `consumer_count` for broadcast runs
 
-Aggregate reports are split by:
-
-- family
-  - `Signal`
-  - `Ping-Pong`
-  - `Broadcast`
-- protocol
-  - `SHM`, `MMAP`, `IPC`, `TCP`, `TCP / Brokered`, `MPI`, `Message Queue`
-- measurement mode
-  - max throughput
-  - fixed-rate CO-aware
-
-Broker peers appear only under:
-
-- `TCP / Brokered`
-
-Latency columns include:
-
-- `P1`
-- `P10`
-- `P25`
-- `P50`
-- `P90`
-- `P95`
-- `P99`
-- `P99.9`
-- `P99.99`
-- `P99.999`
-- `P99.9999`
+Outputs are local-only -- the `output/` directory is gitignored.
 
 ## Setup
 

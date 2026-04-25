@@ -1,5 +1,5 @@
 use clap::Parser;
-use perf_bench::repeatability;
+use perf_bench::infra::repeatability;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;

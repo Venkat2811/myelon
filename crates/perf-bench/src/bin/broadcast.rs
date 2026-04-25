@@ -128,51 +128,87 @@ fn main() -> Result<(), Box<dyn Error>> {
 // Child process dispatch helpers
 // ---------------------------------------------------------------------------
 
-/// Dispatch a BenchHarness child process by checking all known child role tables.
+/// Dispatch a BenchHarness child process.
 ///
-/// Collects all child roles from all broadcast BenchHarness instances into a
-/// single flat list, then dispatches once.
+/// Uses `PERF_BENCH_BROADCAST_HARNESS` env var (set by the orchestrator) to
+/// select the correct harness, then dispatches against that harness's child
+/// roles only. This avoids role name collisions (e.g., both codec/shm.rs and
+/// codec/mmap.rs use "codec_producer" as a role name).
 fn dispatch_bench_harness_child(args: &[String]) -> Result<(), Box<dyn Error>> {
-    use perf_bench::harness::runner::ChildRole;
-    use perf_bench::harness::BenchHarness;
+    use perf_bench::infra::BenchHarness;
 
-    // Collect ALL child roles from all broadcast BenchHarness instances.
-    let harnesses: &[&dyn BenchHarness] = &[
-        // raw_ring e2e
-        &perf_bench::executor_v2::disruptor_mp::shm::raw_ring::RawRingShmBench,
-        &perf_bench::executor_v2::disruptor_mp::mmap::raw_ring::RawRingMmapBench,
-        // framed e2e
-        &perf_bench::executor_v2::myelon::framed::shm::FramedShmBench,
-        &perf_bench::executor_v2::myelon::framed::mmap::FramedMmapBench,
-        // codec e2e
-        &perf_bench::executor_v2::myelon::codec::shm::CodecE2eShmBench,
-        &perf_bench::executor_v2::myelon::codec::mmap::CodecE2eMmapBench,
-        // codec nofrag
-        &perf_bench::executor_v2::myelon::codec::nofrag_shm::CodecNoFragShmBench,
-        &perf_bench::executor_v2::myelon::codec::nofrag_mmap::CodecNoFragMmapBench,
-        // wait strategy
-        &perf_bench::executor_v2::disruptor_mp::shm::wait_strategy::WaitStrategyShmBench,
-        &perf_bench::executor_v2::disruptor_mp::mmap::wait_strategy::WaitStrategyMmapBench,
-        // sweeps
-        &perf_bench::executor_v2::sweeps::myelon_layers::MyelonLayersBench,
-        &perf_bench::executor_v2::sweeps::myelon_framed_sweep::MyelonFramedSweep,
-        &perf_bench::executor_v2::sweeps::typed_zero_copy_sweep::TypedZeroCopySweep,
-        &perf_bench::executor_v2::sweeps::nofrag_all::NofragAllBench,
-        // monster sweep
-        &perf_bench::executor_v2::sweeps::monster_sweep_shm::MonsterSweepShm,
-        &perf_bench::executor_v2::sweeps::monster_sweep_mmap::MonsterSweepMmap,
+    let harness_key = std::env::var("PERF_BENCH_BROADCAST_HARNESS").unwrap_or_default();
+
+    let harness: Option<&dyn BenchHarness> = match harness_key.as_str() {
+        "raw_ring_shm" => {
+            Some(&perf_bench::layers::raw::disruptor_mp::broadcast_shm::RawRingShmBench)
+        }
+        "raw_ring_mmap" => {
+            Some(&perf_bench::layers::raw::disruptor_mp::broadcast_mmap::RawRingMmapBench)
+        }
+        "framed_shm" => {
+            Some(&perf_bench::layers::framed_myelon::frag::broadcast_shm::FramedShmBench)
+        }
+        "framed_mmap" => {
+            Some(&perf_bench::layers::framed_myelon::frag::broadcast_mmap::FramedMmapBench)
+        }
+        "codec_shm" => Some(&perf_bench::layers::framed_myelon::codec::shm::CodecE2eShmBench),
+        "codec_mmap" => Some(&perf_bench::layers::framed_myelon::codec::mmap::CodecE2eMmapBench),
+        "nofrag_shm" => {
+            Some(&perf_bench::layers::framed_myelon::codec::nofrag_shm::CodecNoFragShmBench)
+        }
+        "nofrag_mmap" => {
+            Some(&perf_bench::layers::framed_myelon::codec::nofrag_mmap::CodecNoFragMmapBench)
+        }
+        "wait_shm" => {
+            Some(&perf_bench::layers::raw::disruptor_mp::wait_strategy_shm::WaitStrategyShmBench)
+        }
+        "wait_mmap" => {
+            Some(&perf_bench::layers::raw::disruptor_mp::wait_strategy_mmap::WaitStrategyMmapBench)
+        }
+        "myelon_layers" => Some(&perf_bench::layers::sweeps::myelon_layers::MyelonLayersBench),
+        "framed_sweep" => Some(&perf_bench::layers::sweeps::myelon_framed_sweep::MyelonFramedSweep),
+        "typed_zc_sweep" => {
+            Some(&perf_bench::layers::sweeps::typed_zero_copy_sweep::TypedZeroCopySweep)
+        }
+        "nofrag_all" => Some(&perf_bench::layers::sweeps::nofrag_all::NofragAllBench),
+        "monster_shm" => Some(&perf_bench::layers::sweeps::monster_sweep_shm::MonsterSweepShm),
+        "monster_mmap" => Some(&perf_bench::layers::sweeps::monster_sweep_mmap::MonsterSweepMmap),
+        _ => None,
+    };
+
+    if let Some(h) = harness {
+        if perf_bench::infra::dispatch_child_or_exit(args, h.child_roles()) {
+            return Ok(());
+        }
+    }
+
+    // No harness key set or role didn't match — try all harnesses as fallback
+    // (works for harnesses with unique role names)
+    let all_harnesses: &[&dyn BenchHarness] = &[
+        &perf_bench::layers::raw::disruptor_mp::broadcast_shm::RawRingShmBench,
+        &perf_bench::layers::raw::disruptor_mp::broadcast_mmap::RawRingMmapBench,
+        &perf_bench::layers::framed_myelon::frag::broadcast_shm::FramedShmBench,
+        &perf_bench::layers::framed_myelon::frag::broadcast_mmap::FramedMmapBench,
+        &perf_bench::layers::raw::disruptor_mp::wait_strategy_shm::WaitStrategyShmBench,
+        &perf_bench::layers::raw::disruptor_mp::wait_strategy_mmap::WaitStrategyMmapBench,
+        &perf_bench::layers::sweeps::myelon_layers::MyelonLayersBench,
+        &perf_bench::layers::sweeps::myelon_framed_sweep::MyelonFramedSweep,
+        &perf_bench::layers::sweeps::typed_zero_copy_sweep::TypedZeroCopySweep,
+        &perf_bench::layers::sweeps::nofrag_all::NofragAllBench,
+        &perf_bench::layers::sweeps::monster_sweep_shm::MonsterSweepShm,
+        &perf_bench::layers::sweeps::monster_sweep_mmap::MonsterSweepMmap,
     ];
 
-    let combined: Vec<ChildRole> = harnesses
+    let combined: Vec<perf_bench::infra::child_runner::ChildRole> = all_harnesses
         .iter()
         .flat_map(|h| h.child_roles().iter().copied())
         .collect();
 
-    if perf_bench::harness::dispatch_child_or_exit(args, &combined) {
+    if perf_bench::infra::dispatch_child_or_exit(args, &combined) {
         return Ok(());
     }
 
-    // args[1] was a role name but no harness recognized it
     let role = args.get(1).map(String::as_str).unwrap_or("unknown");
     Err(format!("unrecognized child role: {role}").into())
 }
@@ -284,7 +320,7 @@ fn build_sweep_args(args: &Args) -> Vec<String> {
 // ---------------------------------------------------------------------------
 
 fn run_raw_ring(args: &Args) -> Result<(), Box<dyn Error>> {
-    use perf_bench::harness::BenchHarness;
+    use perf_bench::infra::BenchHarness;
 
     if args.timeout != 300 {
         std::env::set_var("PERF_BENCH_TIMEOUT", args.timeout.to_string());
@@ -294,12 +330,12 @@ fn run_raw_ring(args: &Args) -> Result<(), Box<dyn Error>> {
 
     match args.backend.as_str() {
         "shm" => {
-            let bench = perf_bench::executor_v2::disruptor_mp::shm::raw_ring::RawRingShmBench;
+            let bench = perf_bench::layers::raw::disruptor_mp::broadcast_shm::RawRingShmBench;
             bench.run_orchestrator(&synthetic)?;
             Ok(())
         }
         "mmap" => {
-            let bench = perf_bench::executor_v2::disruptor_mp::mmap::raw_ring::RawRingMmapBench;
+            let bench = perf_bench::layers::raw::disruptor_mp::broadcast_mmap::RawRingMmapBench;
             bench.run_orchestrator(&synthetic)?;
             Ok(())
         }
@@ -308,7 +344,7 @@ fn run_raw_ring(args: &Args) -> Result<(), Box<dyn Error>> {
 }
 
 fn run_framed(args: &Args) -> Result<(), Box<dyn Error>> {
-    use perf_bench::harness::BenchHarness;
+    use perf_bench::infra::BenchHarness;
 
     if args.timeout != 300 {
         std::env::set_var("PERF_BENCH_TIMEOUT", args.timeout.to_string());
@@ -318,12 +354,14 @@ fn run_framed(args: &Args) -> Result<(), Box<dyn Error>> {
 
     match args.backend.as_str() {
         "shm" => {
-            let bench = perf_bench::executor_v2::myelon::framed::shm::FramedShmBench;
+            std::env::set_var("PERF_BENCH_BROADCAST_HARNESS", "framed_shm");
+            let bench = perf_bench::layers::framed_myelon::frag::broadcast_shm::FramedShmBench;
             bench.run_orchestrator(&synthetic)?;
             Ok(())
         }
         "mmap" => {
-            let bench = perf_bench::executor_v2::myelon::framed::mmap::FramedMmapBench;
+            std::env::set_var("PERF_BENCH_BROADCAST_HARNESS", "framed_mmap");
+            let bench = perf_bench::layers::framed_myelon::frag::broadcast_mmap::FramedMmapBench;
             bench.run_orchestrator(&synthetic)?;
             Ok(())
         }
@@ -332,7 +370,7 @@ fn run_framed(args: &Args) -> Result<(), Box<dyn Error>> {
 }
 
 fn run_codec(args: &Args) -> Result<(), Box<dyn Error>> {
-    use perf_bench::harness::BenchHarness;
+    use perf_bench::infra::BenchHarness;
 
     if args.timeout != 300 {
         std::env::set_var("PERF_BENCH_TIMEOUT", args.timeout.to_string());
@@ -342,12 +380,14 @@ fn run_codec(args: &Args) -> Result<(), Box<dyn Error>> {
 
     match args.backend.as_str() {
         "shm" => {
-            let bench = perf_bench::executor_v2::myelon::codec::shm::CodecE2eShmBench;
+            std::env::set_var("PERF_BENCH_BROADCAST_HARNESS", "codec_shm");
+            let bench = perf_bench::layers::framed_myelon::codec::shm::CodecE2eShmBench;
             bench.run_orchestrator(&synthetic)?;
             Ok(())
         }
         "mmap" => {
-            let bench = perf_bench::executor_v2::myelon::codec::mmap::CodecE2eMmapBench;
+            std::env::set_var("PERF_BENCH_BROADCAST_HARNESS", "codec_mmap");
+            let bench = perf_bench::layers::framed_myelon::codec::mmap::CodecE2eMmapBench;
             bench.run_orchestrator(&synthetic)?;
             Ok(())
         }
@@ -356,7 +396,7 @@ fn run_codec(args: &Args) -> Result<(), Box<dyn Error>> {
 }
 
 fn run_typed_zc(args: &Args) -> Result<(), Box<dyn Error>> {
-    use perf_bench::harness::BenchHarness;
+    use perf_bench::infra::BenchHarness;
 
     if args.timeout != 300 {
         std::env::set_var("PERF_BENCH_TIMEOUT", args.timeout.to_string());
@@ -366,12 +406,14 @@ fn run_typed_zc(args: &Args) -> Result<(), Box<dyn Error>> {
 
     match args.backend.as_str() {
         "shm" => {
-            let bench = perf_bench::executor_v2::myelon::codec::nofrag_shm::CodecNoFragShmBench;
+            std::env::set_var("PERF_BENCH_BROADCAST_HARNESS", "nofrag_shm");
+            let bench = perf_bench::layers::framed_myelon::codec::nofrag_shm::CodecNoFragShmBench;
             bench.run_orchestrator(&synthetic)?;
             Ok(())
         }
         "mmap" => {
-            let bench = perf_bench::executor_v2::myelon::codec::nofrag_mmap::CodecNoFragMmapBench;
+            std::env::set_var("PERF_BENCH_BROADCAST_HARNESS", "nofrag_mmap");
+            let bench = perf_bench::layers::framed_myelon::codec::nofrag_mmap::CodecNoFragMmapBench;
             bench.run_orchestrator(&synthetic)?;
             Ok(())
         }
@@ -380,7 +422,7 @@ fn run_typed_zc(args: &Args) -> Result<(), Box<dyn Error>> {
 }
 
 fn run_wait_strategy(args: &Args) -> Result<(), Box<dyn Error>> {
-    use perf_bench::harness::BenchHarness;
+    use perf_bench::infra::BenchHarness;
 
     if args.timeout != 300 {
         std::env::set_var("PERF_BENCH_TIMEOUT", args.timeout.to_string());
@@ -393,13 +435,13 @@ fn run_wait_strategy(args: &Args) -> Result<(), Box<dyn Error>> {
     match args.backend.as_str() {
         "shm" => {
             let bench =
-                perf_bench::executor_v2::disruptor_mp::shm::wait_strategy::WaitStrategyShmBench;
+                perf_bench::layers::raw::disruptor_mp::wait_strategy_shm::WaitStrategyShmBench;
             bench.run_orchestrator(&synthetic)?;
             Ok(())
         }
         "mmap" => {
             let bench =
-                perf_bench::executor_v2::disruptor_mp::mmap::wait_strategy::WaitStrategyMmapBench;
+                perf_bench::layers::raw::disruptor_mp::wait_strategy_mmap::WaitStrategyMmapBench;
             bench.run_orchestrator(&synthetic)?;
             Ok(())
         }
@@ -408,20 +450,20 @@ fn run_wait_strategy(args: &Args) -> Result<(), Box<dyn Error>> {
 }
 
 fn run_myelon_layers(args: &Args) -> Result<(), Box<dyn Error>> {
-    use perf_bench::harness::BenchHarness;
+    use perf_bench::infra::BenchHarness;
 
     if args.timeout != 300 {
         std::env::set_var("PERF_BENCH_TIMEOUT", args.timeout.to_string());
     }
 
     let synthetic = build_sweep_args(args);
-    let bench = perf_bench::executor_v2::sweeps::myelon_layers::MyelonLayersBench;
+    let bench = perf_bench::layers::sweeps::myelon_layers::MyelonLayersBench;
     bench.run_orchestrator(&synthetic)?;
     Ok(())
 }
 
 fn run_monster_sweep(args: &Args) -> Result<(), Box<dyn Error>> {
-    use perf_bench::harness::BenchHarness;
+    use perf_bench::infra::BenchHarness;
 
     if args.timeout != 300 {
         std::env::set_var("PERF_BENCH_TIMEOUT", args.timeout.to_string());
@@ -431,12 +473,12 @@ fn run_monster_sweep(args: &Args) -> Result<(), Box<dyn Error>> {
 
     match args.backend.as_str() {
         "shm" => {
-            let bench = perf_bench::executor_v2::sweeps::monster_sweep_shm::MonsterSweepShm;
+            let bench = perf_bench::layers::sweeps::monster_sweep_shm::MonsterSweepShm;
             bench.run_orchestrator(&synthetic)?;
             Ok(())
         }
         "mmap" => {
-            let bench = perf_bench::executor_v2::sweeps::monster_sweep_mmap::MonsterSweepMmap;
+            let bench = perf_bench::layers::sweeps::monster_sweep_mmap::MonsterSweepMmap;
             bench.run_orchestrator(&synthetic)?;
             Ok(())
         }
@@ -445,45 +487,45 @@ fn run_monster_sweep(args: &Args) -> Result<(), Box<dyn Error>> {
 }
 
 fn run_framed_sweep(args: &Args) -> Result<(), Box<dyn Error>> {
-    use perf_bench::harness::BenchHarness;
+    use perf_bench::infra::BenchHarness;
 
     if args.timeout != 300 {
         std::env::set_var("PERF_BENCH_TIMEOUT", args.timeout.to_string());
     }
 
     let synthetic = build_sweep_args(args);
-    let bench = perf_bench::executor_v2::sweeps::myelon_framed_sweep::MyelonFramedSweep;
+    let bench = perf_bench::layers::sweeps::myelon_framed_sweep::MyelonFramedSweep;
     bench.run_orchestrator(&synthetic)?;
     Ok(())
 }
 
 fn run_typed_zc_sweep(args: &Args) -> Result<(), Box<dyn Error>> {
-    use perf_bench::harness::BenchHarness;
+    use perf_bench::infra::BenchHarness;
 
     if args.timeout != 300 {
         std::env::set_var("PERF_BENCH_TIMEOUT", args.timeout.to_string());
     }
 
     let synthetic = build_sweep_args(args);
-    let bench = perf_bench::executor_v2::sweeps::typed_zero_copy_sweep::TypedZeroCopySweep;
+    let bench = perf_bench::layers::sweeps::typed_zero_copy_sweep::TypedZeroCopySweep;
     bench.run_orchestrator(&synthetic)?;
     Ok(())
 }
 
 fn run_nofrag(args: &Args) -> Result<(), Box<dyn Error>> {
-    use perf_bench::harness::BenchHarness;
+    use perf_bench::infra::BenchHarness;
 
     if args.timeout != 300 {
         std::env::set_var("PERF_BENCH_TIMEOUT", args.timeout.to_string());
     }
 
     let synthetic = build_sweep_args(args);
-    let bench = perf_bench::executor_v2::sweeps::nofrag_all::NofragAllBench;
+    let bench = perf_bench::layers::sweeps::nofrag_all::NofragAllBench;
     bench.run_orchestrator(&synthetic)?;
     Ok(())
 }
 
 fn run_layout(_args: &Args) -> Result<(), Box<dyn Error>> {
-    perf_bench::executor_v2::layout::validation::run_main();
+    perf_bench::layers::layout::run_main();
     Ok(())
 }

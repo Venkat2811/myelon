@@ -8,18 +8,14 @@ readme = "README.md"
 publish = false
 
 [dependencies]
-bytes = "1"
 chrono = { version = "0.4", default-features = true }
 clap = { version = "4", features = ["derive"] }
 crossbar = { path = "third_party/crossbar" }
 disruptor_mp = { package = "disruptor-mp", path = "../disruptor-mp" }
-futures-util = "0.3"
 hdrhistogram = "7"
-iggy = "0.10.0"
 libc = "0.2"
 myelon = { path = "../myelon", features = ["rkyv", "flatbuffers"] }
 perf-bench = { path = "../perf-bench" }
-rskafka = "0.6.0"
 rusteron-client = "0.1.162"
 rusteron-media-driver = "0.1.162"
 serde = { version = "1", features = ["derive"] }

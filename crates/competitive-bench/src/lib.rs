@@ -12,9 +12,6 @@
 //! - internal raw SHM + mmap baselines
 //! - external peer staging under `third_party/`
 
-pub mod adapter;
-pub mod orchestrator;
-pub mod parity;
-pub mod pingpong_support;
-
-pub mod result_json;
+pub mod adapters;
+pub mod infra;
+pub mod runner;

@@ -1,238 +1,265 @@
-# perf-bench Makefile — benchmark matrix runner
+# perf-bench Makefile — 5-tier benchmark runner
 #
-# Usage:
-#   make smoke          # Quick smoke test (~60s)
-#   make simple-smoke   # Ultra-quick exact-size raw+signal smoke
-#   make pingpong       # Ping-pong benches
-#   make myelon-sweep   # Framed + zero-copy myelon sweeps
-#   make all-multi      # Multi-consumer coverage matrix
-#   make sweep          # Monster sweep SHM + mmap (full)
-#   make sweep-quick    # Monster sweep quick mode
-#   make layers         # Myelon layer comparison (raw vs framed vs rkyv_nofrag)
-#   make nofrag         # No-frag zero-copy matrix (3 layers x 2 backends x 4 sizes)
-#   make wait           # Wait strategy SHM + mmap (quick)
-#   make wait-full      # Wait strategy full matrix (28 combos each)
-#   make all            # Everything
-#   make results        # Full matrix with JSON/CSV/MD output
+# Tiers (RFC 0026):
+#   make quick       # ~1-2 min: endpoints only (signal + raw_ring + raw_myelon + typed_zc)
+#   make smoke       # ~5-10 min: endpoints + 4 sizes
+#   make large-only  # ~15-30 min: large payloads (64KB-32MB) + all layers
+#   make extensive   # ~1-2 hrs: all layers, 8 sizes, multi-consumer
+#   make full-blown  # ~6-12 hrs: everything + repeatability
+#
+# Individual layers:
+#   make raw          make framed     make codec      make wait
+#   make layers       make nofrag     make sweep      make layout
 
-BENCH = cargo bench -p perf-bench
-OUT_DIR ?= /tmp/perf_bench_results
-PROFILE ?= bench
-SIMPLE_SMOKE_SIZES ?= 32 64 128 1024 2048 4096
-SIMPLE_SMOKE_MESSAGES ?= 1000
-SIMPLE_SMOKE_WARMUP ?= 100
-SIMPLE_SMOKE_RATE ?= 400000
-SIMPLE_SMOKE_SIGNAL_EVENTS ?= 1000000
+PP = cargo run -p perf-bench --profile competitive --bin perf-bench-pingpong --
+BC = cargo run -p perf-bench --profile competitive --bin perf-bench-broadcast --
+SG = cargo run -p perf-bench --profile competitive --bin perf-bench-signal --
 
-.PHONY: smoke simple-smoke pingpong myelon-sweep all-multi sweep sweep-quick layers nofrag wait wait-full codec codec-phase framed raw layout repeatability all results clean
+# Release profile variants (for dual-profile comparison in quick/smoke)
+PP_REL = cargo run -p perf-bench --release --bin perf-bench-pingpong --
+SG_REL = cargo run -p perf-bench --release --bin perf-bench-signal --
 
-simple-smoke:
-	@echo "=== Simple Smoke ==="
-	$(BENCH) --bench raw_ring_shm -- --timeout 30 --class signal --consumers 1 --events $(SIMPLE_SMOKE_SIGNAL_EVENTS)
-	$(BENCH) --bench raw_ring_mmap -- --timeout 30 --class signal --consumers 1 --events $(SIMPLE_SMOKE_SIGNAL_EVENTS)
-	@set -e; \
-	for sz in $(SIMPLE_SMOKE_SIZES); do \
-		$(BENCH) --bench pingpong_shm -- --timeout 30 --no-compare -s $$sz -n $(SIMPLE_SMOKE_MESSAGES) -w $(SIMPLE_SMOKE_WARMUP); \
-		$(BENCH) --bench pingpong_mmap -- --timeout 30 --no-compare -s $$sz -n $(SIMPLE_SMOKE_MESSAGES) -w $(SIMPLE_SMOKE_WARMUP); \
-		$(BENCH) --bench pingpong_raw_myelon_shm -- --timeout 30 --no-compare -s $$sz -n $(SIMPLE_SMOKE_MESSAGES) -w $(SIMPLE_SMOKE_WARMUP); \
-		$(BENCH) --bench pingpong_raw_myelon_mmap -- --timeout 30 --no-compare -s $$sz -n $(SIMPLE_SMOKE_MESSAGES) -w $(SIMPLE_SMOKE_WARMUP); \
-		$(BENCH) --bench pingpong_shm -- --timeout 30 --no-compare -s $$sz -n $(SIMPLE_SMOKE_MESSAGES) -w $(SIMPLE_SMOKE_WARMUP) --target-rate $(SIMPLE_SMOKE_RATE); \
-		$(BENCH) --bench pingpong_mmap -- --timeout 30 --no-compare -s $$sz -n $(SIMPLE_SMOKE_MESSAGES) -w $(SIMPLE_SMOKE_WARMUP) --target-rate $(SIMPLE_SMOKE_RATE); \
-		$(BENCH) --bench pingpong_raw_myelon_shm -- --timeout 30 --no-compare -s $$sz -n $(SIMPLE_SMOKE_MESSAGES) -w $(SIMPLE_SMOKE_WARMUP) --target-rate $(SIMPLE_SMOKE_RATE); \
-		$(BENCH) --bench pingpong_raw_myelon_mmap -- --timeout 30 --no-compare -s $$sz -n $(SIMPLE_SMOKE_MESSAGES) -w $(SIMPLE_SMOKE_WARMUP) --target-rate $(SIMPLE_SMOKE_RATE); \
+# Message counts per RFC 0026
+CORE_MSGS = 1000000
+CORE_WARMUP = 50000
+LARGE_MSGS = 500000
+LARGE_WARMUP = 25000
+HUGE_MSGS = 100000
+HUGE_WARMUP = 5000
+MASSIVE_MSGS = 50000
+MASSIVE_WARMUP = 2500
+GIANT_MSGS = 10000
+GIANT_WARMUP = 500
+
+CO_RATE = 400000
+
+.PHONY: quick smoke large-only extensive full-blown \
+	raw framed codec wait layers nofrag sweep layout \
+	clean
+
+# ============================================================
+# Tier 0: quick (~1-2 min)
+# Endpoints only: signal + raw_ring + raw_myelon + typed_zc
+# Sizes: 64B, 1KB | Consumers: 1 (pp), 4 (bc) | Wait: busyspin
+# ============================================================
+quick:
+	@echo "=== QUICK (endpoints, 64B+1KB, ~1-2 min) ==="
+	@# Signal
+	$(SG) --backend shm --consumers 1 --events 1000000 --tree
+	$(SG) --backend mmap --consumers 1 --events 1000000 --tree
+	@# Pingpong: raw_ring × {shm,mmap} × {64B,1KB} × {throughput,CO}
+	@for sz in 64 1024; do \
+		$(PP) --layer raw_ring --backend shm  --size $$sz -n $(CORE_MSGS) -w $(CORE_WARMUP) --tree; \
+		$(PP) --layer raw_ring --backend mmap --size $$sz -n $(CORE_MSGS) -w $(CORE_WARMUP) --tree; \
+		$(PP) --layer raw_ring --backend shm  --size $$sz -n $(CORE_MSGS) -w $(CORE_WARMUP) --mode co --target-rate $(CO_RATE) --tree; \
+		$(PP) --layer raw_ring --backend mmap --size $$sz -n $(CORE_MSGS) -w $(CORE_WARMUP) --mode co --target-rate $(CO_RATE) --tree; \
 	done
-	@echo "=== Simple Smoke PASSED ==="
+	@# Pingpong: raw_myelon × {shm,mmap} × {64B,1KB} × {throughput,CO}
+	@for sz in 64 1024; do \
+		$(PP) --layer raw_myelon --backend shm  --size $$sz -n $(CORE_MSGS) -w $(CORE_WARMUP) --tree; \
+		$(PP) --layer raw_myelon --backend mmap --size $$sz -n $(CORE_MSGS) -w $(CORE_WARMUP) --tree; \
+		$(PP) --layer raw_myelon --backend shm  --size $$sz -n $(CORE_MSGS) -w $(CORE_WARMUP) --mode co --target-rate $(CO_RATE) --tree; \
+		$(PP) --layer raw_myelon --backend mmap --size $$sz -n $(CORE_MSGS) -w $(CORE_WARMUP) --mode co --target-rate $(CO_RATE) --tree; \
+	done
+	@# Pingpong: typed_zc × {shm,mmap} × {rkyv,flatbuf} × {64B,1KB} × {throughput,CO}
+	@for sz in 64 1024; do for codec in rkyv flatbuf; do \
+		$(PP) --layer typed_zc --backend shm  --codec $$codec --size $$sz -n $(CORE_MSGS) -w $(CORE_WARMUP) --tree; \
+		$(PP) --layer typed_zc --backend mmap --codec $$codec --size $$sz -n $(CORE_MSGS) -w $(CORE_WARMUP) --tree; \
+		$(PP) --layer typed_zc --backend shm  --codec $$codec --size $$sz -n $(CORE_MSGS) -w $(CORE_WARMUP) --mode co --target-rate $(CO_RATE) --tree; \
+		$(PP) --layer typed_zc --backend mmap --codec $$codec --size $$sz -n $(CORE_MSGS) -w $(CORE_WARMUP) --mode co --target-rate $(CO_RATE) --tree; \
+	done; done
+	@# Broadcast: raw_ring × {shm,mmap} × 4c × {64B,1KB}
+	$(BC) --layer raw_ring --backend shm  --class message --consumers 4 --tree --timeout 300
+	$(BC) --layer raw_ring --backend mmap --class message --consumers 4 --tree --timeout 300
+	@echo ""
+	@echo "=== QUICK: release profile (baseline comparison) ==="
+	$(SG_REL) --backend shm --consumers 1 --events 1000000 --tree
+	@for sz in 64 1024; do 		$(PP_REL) --layer raw_ring --backend shm --size $$sz -n $(CORE_MSGS) -w $(CORE_WARMUP) --tree; 		$(PP_REL) --layer typed_zc --backend shm --codec rkyv --size $$sz -n $(CORE_MSGS) -w $(CORE_WARMUP) --tree; 	done
+	@echo "=== QUICK PASSED ==="
 
-# --- Smoke test: ~60 seconds, validates all binaries produce output ---
+# ============================================================
+# Tier 1: smoke (~5-10 min)
+# Same layers as quick but 4 sizes
+# Sizes: 32B, 64B, 1KB, 4KB | Wait: busyspin
+# ============================================================
 smoke:
-	@echo "=== Smoke Test ==="
-	$(BENCH) --bench raw_ring_shm -- --timeout 30 --class signal --consumers 1
-	$(BENCH) --bench raw_ring_mmap -- --timeout 30 --class signal --consumers 1
-	$(BENCH) --bench framed_shm -- --timeout 30 --payload 1K_1c
-	$(BENCH) --bench framed_mmap -- --timeout 30 --payload 1K_1c
-	$(BENCH) --bench pingpong_framed_shm -- --timeout 30 --payload 64B -n 1000 -w 100
-	$(BENCH) --bench pingpong_framed_mmap -- --timeout 30 --payload 64B -n 1000 -w 100
-	$(BENCH) --bench codec_e2e_shm -- --timeout 30 --codec bincode --batch 8 --consumers 1
-	$(BENCH) --bench codec_e2e_mmap -- --timeout 30 --codec bincode --batch 8 --consumers 1
-	$(BENCH) --bench pingpong_codec_shm -- --timeout 30 --codec bincode --batch 1 -n 1000 -w 100
-	$(BENCH) --bench pingpong_codec_mmap -- --timeout 30 --codec bincode --batch 1 -n 1000 -w 100
-	$(BENCH) --bench pingpong_typed_zero_copy_shm -- --timeout 30 --codec rkyv --batch 1 -n 1000 -w 100
-	$(BENCH) --bench pingpong_typed_zero_copy_mmap -- --timeout 30 --codec rkyv --batch 1 -n 1000 -w 100
-	$(BENCH) --bench codec_nofrag_shm -- --timeout 30 --codec rkyv --batch 8 --consumers 1
-	$(BENCH) --bench wait_strategy_shm -- --timeout 30 quick
-	$(BENCH) --bench wait_strategy_mmap -- --timeout 30 quick
-	$(BENCH) --bench myelon_layers -- --timeout 30 --size 1KB --consumers 2 --layer raw_ring
-	$(BENCH) --bench myelon_layers -- --timeout 30 --size 1KB --consumers 2 --layer raw_myelon
-	$(BENCH) --bench nofrag_all -- --timeout 30 --size 1KB --consumers 2 --layer raw_ring --backend shm
-	$(BENCH) --bench monster_sweep_shm -- --timeout 30 --quick --size 64B --mode throughput
-	$(BENCH) --bench monster_sweep_mmap -- --timeout 30 --quick --size 64B --mode throughput
-	$(BENCH) --bench pingpong_shm -- --timeout 30 -s 64 -n 1000 -w 100 --json --no-compare
-	$(BENCH) --bench pingpong_mmap -- --timeout 30 -s 64 -n 1000 -w 100 --json --no-compare
-	$(BENCH) --bench pingpong_raw_myelon_shm -- --timeout 30 -s 64 -n 1000 -w 100 --json --no-compare
-	$(BENCH) --bench pingpong_raw_myelon_mmap -- --timeout 30 -s 64 -n 1000 -w 100 --json --no-compare
-	$(BENCH) --bench layout_validation --no-run
-	@echo "=== Smoke Test PASSED ==="
+	@echo "=== SMOKE (endpoints, 32B-4KB, ~5-10 min) ==="
+	@# Signal
+	$(SG) --backend shm --consumers 1 --events 1000000 --tree
+	$(SG) --backend mmap --consumers 1 --events 1000000 --tree
+	@# Pingpong: raw_ring + raw_myelon + typed_zc × {shm,mmap} × 4 sizes × {throughput,CO}
+	@for sz in 32 64 1024 4096; do \
+		for layer in raw_ring raw_myelon; do \
+			$(PP) --layer $$layer --backend shm  --size $$sz -n $(CORE_MSGS) -w $(CORE_WARMUP) --tree; \
+			$(PP) --layer $$layer --backend mmap --size $$sz -n $(CORE_MSGS) -w $(CORE_WARMUP) --tree; \
+			$(PP) --layer $$layer --backend shm  --size $$sz -n $(CORE_MSGS) -w $(CORE_WARMUP) --mode co --target-rate $(CO_RATE) --tree; \
+			$(PP) --layer $$layer --backend mmap --size $$sz -n $(CORE_MSGS) -w $(CORE_WARMUP) --mode co --target-rate $(CO_RATE) --tree; \
+		done; \
+		for codec in rkyv flatbuf; do \
+			$(PP) --layer typed_zc --backend shm  --codec $$codec --size $$sz -n $(CORE_MSGS) -w $(CORE_WARMUP) --tree; \
+			$(PP) --layer typed_zc --backend mmap --codec $$codec --size $$sz -n $(CORE_MSGS) -w $(CORE_WARMUP) --tree; \
+		done; \
+	done
+	@# Broadcast
+	$(BC) --layer raw_ring --backend shm  --class message --consumers 4 --tree --timeout 300
+	$(BC) --layer raw_ring --backend mmap --class message --consumers 4 --tree --timeout 300
+	@echo ""
+	@echo "=== SMOKE: release profile (baseline comparison) ==="
+	$(SG_REL) --backend shm --consumers 1 --events 1000000 --tree
+	@for sz in 32 64 1024 4096; do 		$(PP_REL) --layer raw_ring --backend shm --size $$sz -n $(CORE_MSGS) -w $(CORE_WARMUP) --tree; 		$(PP_REL) --layer typed_zc --backend shm --codec rkyv --size $$sz -n $(CORE_MSGS) -w $(CORE_WARMUP) --tree; 	done
+	@echo "=== SMOKE PASSED ==="
 
-# --- Competitive ping-pong ---
-pingpong:
-	$(BENCH) --bench pingpong_shm -- --timeout 60 -s 64 -n 100000 -w 10000 --no-compare
-	$(BENCH) --bench pingpong_shm -- --timeout 60 -s 64 -n 100000 -w 10000 --target-rate 20000 --no-compare
-	$(BENCH) --bench pingpong_shm -- --timeout 60 -s 64 -n 100000 -w 10000 --batch-timing --no-compare
-	$(BENCH) --bench pingpong_mmap -- --timeout 60 -s 64 -n 100000 -w 10000 --no-compare
-	$(BENCH) --bench pingpong_mmap -- --timeout 60 -s 64 -n 100000 -w 10000 --target-rate 20000 --no-compare
-	$(BENCH) --bench pingpong_mmap -- --timeout 60 -s 64 -n 100000 -w 10000 --batch-timing --no-compare
-	$(BENCH) --bench pingpong_raw_myelon_shm -- --timeout 60 -s 64 -n 100000 -w 10000 --no-compare
-	$(BENCH) --bench pingpong_raw_myelon_shm -- --timeout 60 -s 64 -n 100000 -w 10000 --target-rate 20000 --no-compare
-	$(BENCH) --bench pingpong_raw_myelon_shm -- --timeout 60 -s 64 -n 100000 -w 10000 --batch-timing --no-compare
-	$(BENCH) --bench pingpong_raw_myelon_mmap -- --timeout 60 -s 64 -n 100000 -w 10000 --no-compare
-	$(BENCH) --bench pingpong_raw_myelon_mmap -- --timeout 60 -s 64 -n 100000 -w 10000 --target-rate 20000 --no-compare
-	$(BENCH) --bench pingpong_raw_myelon_mmap -- --timeout 60 -s 64 -n 100000 -w 10000 --batch-timing --no-compare
-	$(BENCH) --bench pingpong_framed_shm -- --timeout 60 --payload 64B -n 100000 -w 10000
-	$(BENCH) --bench pingpong_framed_shm -- --timeout 60 --payload 64B -n 100000 -w 10000 --mode co --target-rate 20000
-	$(BENCH) --bench pingpong_framed_mmap -- --timeout 60 --payload 64B -n 100000 -w 10000
-	$(BENCH) --bench pingpong_framed_mmap -- --timeout 60 --payload 64B -n 100000 -w 10000 --mode co --target-rate 20000
-	$(BENCH) --bench pingpong_codec_shm -- --timeout 60 --codec bincode --batch 1 -n 100000 -w 10000
-	$(BENCH) --bench pingpong_codec_shm -- --timeout 60 --codec bincode --batch 1 -n 100000 -w 10000 --mode co --target-rate 20000
-	$(BENCH) --bench pingpong_codec_mmap -- --timeout 60 --codec bincode --batch 1 -n 100000 -w 10000
-	$(BENCH) --bench pingpong_codec_mmap -- --timeout 60 --codec bincode --batch 1 -n 100000 -w 10000 --mode co --target-rate 20000
-	$(BENCH) --bench pingpong_typed_zero_copy_shm -- --timeout 60 --codec rkyv --batch 1 -n 100000 -w 10000
-	$(BENCH) --bench pingpong_typed_zero_copy_shm -- --timeout 60 --codec rkyv --batch 1 -n 100000 -w 10000 --mode co --target-rate 20000
-	$(BENCH) --bench pingpong_typed_zero_copy_mmap -- --timeout 60 --codec rkyv --batch 1 -n 100000 -w 10000
-	$(BENCH) --bench pingpong_typed_zero_copy_mmap -- --timeout 60 --codec rkyv --batch 1 -n 100000 -w 10000 --mode co --target-rate 20000
-	$(BENCH) --bench pingpong_typed_zero_copy_shm -- --timeout 60 --codec flatbuf --batch 1 -n 100000 -w 10000
-	$(BENCH) --bench pingpong_typed_zero_copy_shm -- --timeout 60 --codec flatbuf --batch 1 -n 100000 -w 10000 --mode co --target-rate 20000
-	$(BENCH) --bench pingpong_typed_zero_copy_mmap -- --timeout 60 --codec flatbuf --batch 1 -n 100000 -w 10000
-	$(BENCH) --bench pingpong_typed_zero_copy_mmap -- --timeout 60 --codec flatbuf --batch 1 -n 100000 -w 10000 --mode co --target-rate 20000
+# ============================================================
+# Tier 2: large-only (~15-30 min)
+# All layers, large payloads only
+# Sizes: 64KB, 1MB, 8MB, 32MB | Wait: all 4
+# ============================================================
+large-only:
+	@echo "=== LARGE-ONLY (64KB-32MB, all layers, ~15-30 min) ==="
+	@# Pingpong: all layers × {shm,mmap} × large sizes
+	@for sz in 65536 1048576 8388608 33554432; do \
+		msgs=$(LARGE_MSGS); warmup=$(LARGE_WARMUP); \
+		if [ $$sz -ge 8388608 ]; then msgs=$(HUGE_MSGS); warmup=$(HUGE_WARMUP); fi; \
+		if [ $$sz -ge 33554432 ]; then msgs=$(GIANT_MSGS); warmup=$(GIANT_WARMUP); fi; \
+		for layer in raw_ring raw_myelon framed; do \
+			$(PP) --layer $$layer --backend shm  --size $$sz -n $$msgs -w $$warmup --tree --timeout 120; \
+			$(PP) --layer $$layer --backend mmap --size $$sz -n $$msgs -w $$warmup --tree --timeout 120; \
+		done; \
+		for codec in bincode rkyv flatbuf; do \
+			$(PP) --layer codec --backend shm  --codec $$codec --size $$sz -n $$msgs -w $$warmup --tree --timeout 120; \
+			$(PP) --layer codec --backend mmap --codec $$codec --size $$sz -n $$msgs -w $$warmup --tree --timeout 120; \
+		done; \
+		for codec in rkyv flatbuf; do \
+			$(PP) --layer typed_zc --backend shm  --codec $$codec --size $$sz -n $$msgs -w $$warmup --tree --timeout 120; \
+			$(PP) --layer typed_zc --backend mmap --codec $$codec --size $$sz -n $$msgs -w $$warmup --tree --timeout 120; \
+		done; \
+	done
+	@# Wait strategy
+	$(BC) --layer wait_strategy --backend shm  --tree
+	$(BC) --layer wait_strategy --backend mmap --tree
+	@# Broadcast
+	$(BC) --layer raw_ring --backend shm  --class message --consumers 4 --tree
+	$(BC) --layer raw_ring --backend mmap --class message --consumers 4 --tree
+	@echo "=== LARGE-ONLY PASSED ==="
 
-# --- Myelon layer sweeps ---
-myelon-sweep:
-	$(BENCH) --bench myelon_framed_sweep -- --mode all
-	$(BENCH) --bench nofrag_all -- --mode all
+# ============================================================
+# Tier 3: extensive (~1-2 hrs)
+# All layers, 8 sizes, multi-consumer, 3 CO rates
+# ============================================================
+extensive:
+	@echo "=== EXTENSIVE (all layers, 8 sizes, multi-consumer, ~1-2 hrs) ==="
+	@# Full pingpong matrix
+	@for sz in 64 512 1024 16384 65536 524288 2097152 8388608; do \
+		msgs=$(CORE_MSGS); warmup=$(CORE_WARMUP); \
+		if [ $$sz -ge 524288 ]; then msgs=$(LARGE_MSGS); warmup=$(LARGE_WARMUP); fi; \
+		if [ $$sz -ge 8388608 ]; then msgs=$(HUGE_MSGS); warmup=$(HUGE_WARMUP); fi; \
+		for layer in raw_ring raw_myelon framed; do \
+			$(PP) --layer $$layer --backend shm  --size $$sz -n $$msgs -w $$warmup --tree --timeout 120; \
+			$(PP) --layer $$layer --backend mmap --size $$sz -n $$msgs -w $$warmup --tree --timeout 120; \
+		done; \
+		for codec in bincode rkyv flatbuf; do \
+			$(PP) --layer codec --backend shm  --codec $$codec --size $$sz -n $$msgs -w $$warmup --tree --timeout 120; \
+			$(PP) --layer codec --backend mmap --codec $$codec --size $$sz -n $$msgs -w $$warmup --tree --timeout 120; \
+		done; \
+		for codec in rkyv flatbuf; do \
+			$(PP) --layer typed_zc --backend shm  --codec $$codec --size $$sz -n $$msgs -w $$warmup --tree --timeout 120; \
+			$(PP) --layer typed_zc --backend mmap --codec $$codec --size $$sz -n $$msgs -w $$warmup --tree --timeout 120; \
+		done; \
+	done
+	@# CO-aware with 3 rates
+	@for rate in 200000 600000 1000000; do \
+		$(PP) --layer raw_ring --backend shm --size 64 -n $(CORE_MSGS) -w $(CORE_WARMUP) --mode co --target-rate $$rate --tree; \
+		$(PP) --layer typed_zc --backend shm --codec rkyv --size 64 -n $(CORE_MSGS) -w $(CORE_WARMUP) --mode co --target-rate $$rate --tree; \
+	done
+	@# Broadcast with multi-consumer
+	@for consumers in 4 8; do \
+		$(BC) --layer raw_ring --backend shm  --class message --consumers $$consumers --tree; \
+		$(BC) --layer raw_ring --backend mmap --class message --consumers $$consumers --tree; \
+	done
+	@# Signal multi-consumer
+	@for consumers in 1 4 8; do \
+		$(SG) --backend shm --consumers $$consumers --events 1000000 --tree; \
+	done
+	@# Wait strategy all 4
+	$(BC) --layer wait_strategy --backend shm  --tree
+	$(BC) --layer wait_strategy --backend mmap --tree
+	@# Sweeps
+	$(BC) --layer myelon_layers --tree
+	$(BC) --layer nofrag --tree
+	@# Layout
+	$(BC) --layer layout --tree
+	@echo "=== EXTENSIVE PASSED ==="
 
-# --- Full multi-consumer coverage set ---
-all-multi:
-	$(BENCH) --bench raw_ring_shm
-	$(BENCH) --bench raw_ring_mmap
-	$(BENCH) --bench framed_shm
-	$(BENCH) --bench framed_mmap
-	$(BENCH) --bench codec_e2e_shm
-	$(BENCH) --bench codec_e2e_mmap
-	$(BENCH) --bench codec_nofrag_shm
-	$(BENCH) --bench myelon_framed_sweep -- --mode all
-	$(BENCH) --bench myelon_layers
-	$(BENCH) --bench nofrag_all -- --mode all
+# ============================================================
+# Tier 4: full-blown (~6-12 hrs)
+# Everything + repeatability
+# ============================================================
+full-blown:
+	@echo "=== FULL-BLOWN (16 sizes, full consumer range, repeatability, ~6-12 hrs) ==="
+	@echo "Run extensive first, then add 16-size ladder and repeatability."
+	$(MAKE) extensive
+	@# Additional sizes not in extensive
+	@for sz in 128 2048 32768 131072 1048576 16777216 33554432 67108864; do \
+		msgs=$(CORE_MSGS); warmup=$(CORE_WARMUP); \
+		if [ $$sz -ge 524288 ]; then msgs=$(LARGE_MSGS); warmup=$(LARGE_WARMUP); fi; \
+		if [ $$sz -ge 8388608 ]; then msgs=$(HUGE_MSGS); warmup=$(HUGE_WARMUP); fi; \
+		if [ $$sz -ge 16777216 ]; then msgs=$(MASSIVE_MSGS); warmup=$(MASSIVE_WARMUP); fi; \
+		if [ $$sz -ge 33554432 ]; then msgs=$(GIANT_MSGS); warmup=$(GIANT_WARMUP); fi; \
+		for layer in raw_ring raw_myelon framed; do \
+			$(PP) --layer $$layer --backend shm  --size $$sz -n $$msgs -w $$warmup --tree --timeout 300; \
+			$(PP) --layer $$layer --backend mmap --size $$sz -n $$msgs -w $$warmup --tree --timeout 300; \
+		done; \
+		for codec in bincode rkyv flatbuf; do \
+			$(PP) --layer codec --backend shm  --codec $$codec --size $$sz -n $$msgs -w $$warmup --tree --timeout 300; \
+			$(PP) --layer codec --backend mmap --codec $$codec --size $$sz -n $$msgs -w $$warmup --tree --timeout 300; \
+		done; \
+		for codec in rkyv flatbuf; do \
+			$(PP) --layer typed_zc --backend shm  --codec $$codec --size $$sz -n $$msgs -w $$warmup --tree --timeout 300; \
+			$(PP) --layer typed_zc --backend mmap --codec $$codec --size $$sz -n $$msgs -w $$warmup --tree --timeout 300; \
+		done; \
+	done
+	@# CO 5-rate sweep
+	@for rate in 200000 400000 600000 800000 1000000; do \
+		$(PP) --layer raw_ring --backend shm --size 64 -n $(CORE_MSGS) -w $(CORE_WARMUP) --mode co --target-rate $$rate --tree; \
+		$(PP) --layer typed_zc --backend shm --codec rkyv --size 64 -n $(CORE_MSGS) -w $(CORE_WARMUP) --mode co --target-rate $$rate --tree; \
+	done
+	@# Full signal consumer range
+	@for consumers in 1 2 4 6 8 12; do \
+		$(SG) --backend shm --consumers $$consumers --events 1000000 --tree; \
+	done
+	@echo "=== FULL-BLOWN PASSED ==="
 
-# --- Monster sweep ---
-sweep:
-	@mkdir -p $(OUT_DIR)
-	$(BENCH) --bench monster_sweep_shm -- \
-		--md-out $(OUT_DIR)/sweep_shm.md --json-out $(OUT_DIR)/sweep_shm.json --csv-out $(OUT_DIR)/sweep_shm.csv
-	$(BENCH) --bench monster_sweep_mmap -- \
-		--md-out $(OUT_DIR)/sweep_mmap.md --json-out $(OUT_DIR)/sweep_mmap.json --csv-out $(OUT_DIR)/sweep_mmap.csv
-
-sweep-quick:
-	@mkdir -p $(OUT_DIR)
-	$(BENCH) --bench monster_sweep_shm -- --quick \
-		--md-out $(OUT_DIR)/sweep_shm_quick.md --json-out $(OUT_DIR)/sweep_shm_quick.json
-	$(BENCH) --bench monster_sweep_mmap -- --quick \
-		--md-out $(OUT_DIR)/sweep_mmap_quick.md --json-out $(OUT_DIR)/sweep_mmap_quick.json
-
-# --- Myelon layer comparison ---
-layers:
-	$(BENCH) --bench myelon_layers
-
-# --- No-frag zero-copy matrix ---
-nofrag:
-	$(BENCH) --bench nofrag_all
-
-# --- Wait strategy ---
-wait:
-	$(BENCH) --bench wait_strategy_shm
-	$(BENCH) --bench wait_strategy_mmap
-
-wait-full:
-	@mkdir -p $(OUT_DIR)
-	BENCH_MODE=full MYELON_BENCH_JSON_OUT=$(OUT_DIR)/wait_shm.json $(BENCH) --bench wait_strategy_shm
-	BENCH_MODE=full MYELON_BENCH_JSON_OUT=$(OUT_DIR)/wait_mmap.json $(BENCH) --bench wait_strategy_mmap
-
-# --- Codec ---
-codec:
-	$(BENCH) --bench codec_e2e_shm
-	$(BENCH) --bench codec_e2e_mmap
-	$(BENCH) --bench codec_nofrag_shm
-
-codec-phase:
-	$(BENCH) --bench codec_e2e_shm -- --mode phase_timing
-	$(BENCH) --bench codec_e2e_mmap -- --mode phase_timing
-
-# --- Framed ---
-framed:
-	$(BENCH) --bench framed_shm
-	$(BENCH) --bench framed_mmap
-
-# --- Raw ring ---
+# ============================================================
+# Individual layer targets (convenience)
+# ============================================================
 raw:
-	$(BENCH) --bench raw_ring_shm
-	$(BENCH) --bench raw_ring_mmap
+	$(BC) --layer raw_ring --backend shm  --tree
+	$(BC) --layer raw_ring --backend mmap --tree
 
-# --- Layout ---
+framed:
+	$(BC) --layer framed --backend shm  --tree
+	$(BC) --layer framed --backend mmap --tree
+
+codec:
+	$(BC) --layer codec --backend shm  --codec rkyv --tree
+	$(BC) --layer codec --backend mmap --codec rkyv --tree
+
+wait:
+	$(BC) --layer wait_strategy --backend shm  --tree
+	$(BC) --layer wait_strategy --backend mmap --tree
+
+layers:
+	$(BC) --layer myelon_layers --tree
+
+nofrag:
+	$(BC) --layer nofrag --tree
+
+sweep:
+	$(BC) --layer monster_sweep --backend shm  --tree
+	$(BC) --layer monster_sweep --backend mmap --tree
+
 layout:
-	$(BENCH) --bench layout_validation
+	$(BC) --layer layout --tree
 
-# --- Repeatability ---
-repeatability:
-	@mkdir -p $(OUT_DIR)
-	cargo run -p perf-bench --bin repeatability -- \
-		--repeat 3 --threshold-pct 10 \
-		--json-out $(OUT_DIR)/repeat_raw_ring_shm_signal_1p1c.json \
-		--md-out $(OUT_DIR)/repeat_raw_ring_shm_signal_1p1c.md \
-		-- cargo bench -p perf-bench --bench raw_ring_shm -- --timeout 120 --class signal --consumers 1 --events 50000000
-	cargo run -p perf-bench --bin repeatability -- \
-		--repeat 3 --threshold-pct 10 \
-		--json-env DISRUPTOR_MP_BENCHMARK_JSON_OUT \
-		--json-out $(OUT_DIR)/repeat_pingpong_shm_64b_1p1c_10m.json \
-		--md-out $(OUT_DIR)/repeat_pingpong_shm_64b_1p1c_10m.md \
-		-- cargo bench -p perf-bench --bench pingpong_shm -- --timeout 300 --no-compare -s 64 -n 10000000 -w 1000000 --consumers 1
-
-# --- All benchmarks (sequential) ---
-all: raw framed codec wait myelon-sweep pingpong sweep layout
-
-# --- Full matrix with all output formats ---
-results:
-	@mkdir -p $(OUT_DIR)
-	@echo "=== Full Benchmark Matrix ==="
-	@echo "Output: $(OUT_DIR)/"
-	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/raw_ring_shm.json $(BENCH) --bench raw_ring_shm -- --timeout 300
-	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/raw_ring_mmap.json $(BENCH) --bench raw_ring_mmap -- --timeout 300
-	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/framed_shm.json $(BENCH) --bench framed_shm
-	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/framed_mmap.json $(BENCH) --bench framed_mmap
-	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/pingpong_framed_shm.json $(BENCH) --bench pingpong_framed_shm -- --json --csv-out $(OUT_DIR)/pingpong_framed_shm.csv --md-out $(OUT_DIR)/pingpong_framed_shm.md
-	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/pingpong_framed_mmap.json $(BENCH) --bench pingpong_framed_mmap -- --json --csv-out $(OUT_DIR)/pingpong_framed_mmap.csv --md-out $(OUT_DIR)/pingpong_framed_mmap.md
-	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/codec_e2e_shm.json $(BENCH) --bench codec_e2e_shm
-	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/codec_e2e_mmap.json $(BENCH) --bench codec_e2e_mmap
-	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/pingpong_codec_shm.json $(BENCH) --bench pingpong_codec_shm -- --json --csv-out $(OUT_DIR)/pingpong_codec_shm.csv --md-out $(OUT_DIR)/pingpong_codec_shm.md
-	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/pingpong_codec_mmap.json $(BENCH) --bench pingpong_codec_mmap -- --json --csv-out $(OUT_DIR)/pingpong_codec_mmap.csv --md-out $(OUT_DIR)/pingpong_codec_mmap.md
-	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/pingpong_typed_zero_copy_shm.json $(BENCH) --bench pingpong_typed_zero_copy_shm -- --json --csv-out $(OUT_DIR)/pingpong_typed_zero_copy_shm.csv --md-out $(OUT_DIR)/pingpong_typed_zero_copy_shm.md
-	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/pingpong_typed_zero_copy_mmap.json $(BENCH) --bench pingpong_typed_zero_copy_mmap -- --json --csv-out $(OUT_DIR)/pingpong_typed_zero_copy_mmap.csv --md-out $(OUT_DIR)/pingpong_typed_zero_copy_mmap.md
-	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/codec_nofrag_shm.json $(BENCH) --bench codec_nofrag_shm
-	DISRUPTOR_MP_BENCHMARK_JSON_OUT=$(OUT_DIR)/pingpong_shm.json $(BENCH) --bench pingpong_shm -- --json-canonical --no-compare --csv-out $(OUT_DIR)/pingpong_shm.csv --md-out $(OUT_DIR)/pingpong_shm.md
-	DISRUPTOR_MP_BENCHMARK_JSON_OUT=$(OUT_DIR)/pingpong_mmap.json $(BENCH) --bench pingpong_mmap -- --json-canonical --no-compare --csv-out $(OUT_DIR)/pingpong_mmap.csv --md-out $(OUT_DIR)/pingpong_mmap.md
-	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/pingpong_raw_myelon_shm.json $(BENCH) --bench pingpong_raw_myelon_shm -- --json --csv-out $(OUT_DIR)/pingpong_raw_myelon_shm.csv --md-out $(OUT_DIR)/pingpong_raw_myelon_shm.md
-	MYELON_BENCH_JSON_OUT=$(OUT_DIR)/pingpong_raw_myelon_mmap.json $(BENCH) --bench pingpong_raw_myelon_mmap -- --json --csv-out $(OUT_DIR)/pingpong_raw_myelon_mmap.csv --md-out $(OUT_DIR)/pingpong_raw_myelon_mmap.md
-	$(BENCH) --bench layout_validation -- --json-out $(OUT_DIR)/layout_validation.json --csv-out $(OUT_DIR)/layout_validation.csv --md-out $(OUT_DIR)/layout_validation.md
-	BENCH_MODE=full MYELON_BENCH_JSON_OUT=$(OUT_DIR)/wait_shm.json $(BENCH) --bench wait_strategy_shm
-	BENCH_MODE=full MYELON_BENCH_JSON_OUT=$(OUT_DIR)/wait_mmap.json $(BENCH) --bench wait_strategy_mmap
-	$(BENCH) --bench myelon_framed_sweep -- --mode all --json-out $(OUT_DIR)/myelon_framed_sweep.json --csv-out $(OUT_DIR)/myelon_framed_sweep.csv --md-out $(OUT_DIR)/myelon_framed_sweep.md
-	$(BENCH) --bench myelon_layers -- --json-out $(OUT_DIR)/myelon_layers.json --csv-out $(OUT_DIR)/myelon_layers.csv --md-out $(OUT_DIR)/myelon_layers.md
-	$(BENCH) --bench nofrag_all -- --mode all --json-out $(OUT_DIR)/nofrag_all.json --csv-out $(OUT_DIR)/nofrag_all.csv --md-out $(OUT_DIR)/nofrag_all.md
-	$(BENCH) --bench monster_sweep_shm -- \
-		--md-out $(OUT_DIR)/sweep_shm.md --json-out $(OUT_DIR)/sweep_shm.json --csv-out $(OUT_DIR)/sweep_shm.csv
-	$(BENCH) --bench monster_sweep_mmap -- \
-		--md-out $(OUT_DIR)/sweep_mmap.md --json-out $(OUT_DIR)/sweep_mmap.json --csv-out $(OUT_DIR)/sweep_mmap.csv
-	@echo "=== Full Matrix Complete ==="
-	@echo "Results in $(OUT_DIR)/"
-
-# --- Clean ---
 clean:
-	@rm -rf $(OUT_DIR)
-	@echo "Cleaned $(OUT_DIR)"
+	rm -rf output/

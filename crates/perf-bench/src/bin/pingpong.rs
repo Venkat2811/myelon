@@ -78,6 +78,10 @@ struct Args {
     #[arg(long)]
     json_out: Option<String>,
 
+    /// Enable required-consumer liveness checking (on/off)
+    #[arg(long, value_parser = ["on", "off"], default_value = "off")]
+    liveness: String,
+
     // --- hidden flags for child process re-invocation ---
     /// Internal: child process flag for raw_ring / raw_myelon layers
     #[arg(long, hide = true)]
@@ -108,6 +112,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     // --- Orchestrator mode ---
     let args = Args::parse();
 
+    // Forward --liveness flag as env var for executor integration
+    if args.liveness == "on" {
+        std::env::set_var("PERF_BENCH_LIVENESS", "on");
+    }
+
     match args.layer.as_str() {
         "raw_ring" => run_raw_ring(&args),
         "raw_myelon" => run_raw_myelon(&args),
@@ -126,22 +135,22 @@ fn main() -> Result<(), Box<dyn Error>> {
 ///
 /// Collects all child roles from all harnesses into a single flat list,
 /// then dispatches once. This avoids the bug in `maybe_run_child` where
-/// a role name present in args[1] but not matching the current harness
+/// a role name present in args\[1\] but not matching the current harness
 /// returns `Some(Ok(()))` — silently succeeding with no work done.
 fn dispatch_bench_harness_child(args: &[String]) -> Result<(), Box<dyn Error>> {
-    use perf_bench::harness::runner::ChildRole;
-    use perf_bench::harness::BenchHarness;
+    use perf_bench::infra::child_runner::ChildRole;
+    use perf_bench::infra::BenchHarness;
 
     // Collect ALL child roles from all pingpong BenchHarness instances into one list.
     // This avoids the bug in maybe_run_child where a role name present in args[1]
     // but not matching the current harness returns Some(Ok(())) silently.
     let harnesses: [&dyn BenchHarness; 6] = [
-        &perf_bench::executor_v2::myelon::framed::pingpong_shm::PingPongFramedShmBench,
-        &perf_bench::executor_v2::myelon::framed::pingpong_mmap::PingPongFramedMmapBench,
-        &perf_bench::executor_v2::myelon::codec::pingpong_shm::PingPongCodecShmBench,
-        &perf_bench::executor_v2::myelon::codec::pingpong_mmap::PingPongCodecMmapBench,
-        &perf_bench::executor_v2::myelon::codec::pingpong_typed_zero_copy_shm::PingPongTypedZeroCopyShmBench,
-        &perf_bench::executor_v2::myelon::codec::pingpong_typed_zero_copy_mmap::PingPongTypedZeroCopyMmapBench,
+        &perf_bench::layers::framed_myelon::frag::pingpong_shm::PingPongFramedShmBench,
+        &perf_bench::layers::framed_myelon::frag::pingpong_mmap::PingPongFramedMmapBench,
+        &perf_bench::layers::framed_myelon::codec::pingpong_shm::PingPongCodecShmBench,
+        &perf_bench::layers::framed_myelon::codec::pingpong_mmap::PingPongCodecMmapBench,
+        &perf_bench::layers::framed_myelon::typed_zc::pingpong_shm::PingPongTypedZeroCopyShmBench,
+        &perf_bench::layers::framed_myelon::typed_zc::pingpong_mmap::PingPongTypedZeroCopyMmapBench,
     ];
 
     let combined: Vec<ChildRole> = harnesses
@@ -149,7 +158,7 @@ fn dispatch_bench_harness_child(args: &[String]) -> Result<(), Box<dyn Error>> {
         .flat_map(|h| h.child_roles().iter().copied())
         .collect();
 
-    if perf_bench::harness::dispatch_child_or_exit(args, &combined) {
+    if perf_bench::infra::dispatch_child_or_exit(args, &combined) {
         return Ok(());
     }
 
@@ -176,16 +185,16 @@ fn dispatch_raw_child() -> Result<(), Box<dyn Error>> {
 
     match dispatch.as_str() {
         "raw_ring_shm" => {
-            perf_bench::executor_v2::disruptor_mp::shm::pingpong::run_main_with_args(synthetic)
+            perf_bench::layers::raw::disruptor_mp::pingpong_shm::run_main_with_args(synthetic)
         }
         "raw_ring_mmap" => {
-            perf_bench::executor_v2::disruptor_mp::mmap::pingpong::run_main_with_args(synthetic)
+            perf_bench::layers::raw::disruptor_mp::pingpong_mmap::run_main_with_args(synthetic)
         }
         "raw_myelon_shm" => {
-            perf_bench::executor_v2::myelon::raw::pingpong_shm::run_main_with_args(synthetic)
+            perf_bench::layers::raw::myelon::pingpong_shm::run_main_with_args(synthetic)
         }
         "raw_myelon_mmap" => {
-            perf_bench::executor_v2::myelon::raw::pingpong_mmap::run_main_with_args(synthetic)
+            perf_bench::layers::raw::myelon::pingpong_mmap::run_main_with_args(synthetic)
         }
         _ => Err(format!("unknown PERF_BENCH_DISPATCH value: {dispatch}").into()),
     }
@@ -306,11 +315,9 @@ fn run_raw_ring(args: &Args) -> Result<(), Box<dyn Error>> {
     let synthetic = build_raw_args(args);
 
     match args.backend.as_str() {
-        "shm" => {
-            perf_bench::executor_v2::disruptor_mp::shm::pingpong::run_main_with_args(synthetic)
-        }
+        "shm" => perf_bench::layers::raw::disruptor_mp::pingpong_shm::run_main_with_args(synthetic),
         "mmap" => {
-            perf_bench::executor_v2::disruptor_mp::mmap::pingpong::run_main_with_args(synthetic)
+            perf_bench::layers::raw::disruptor_mp::pingpong_mmap::run_main_with_args(synthetic)
         }
         _ => Err(format!("unknown backend: {}", args.backend).into()),
     }
@@ -327,18 +334,14 @@ fn run_raw_myelon(args: &Args) -> Result<(), Box<dyn Error>> {
     let synthetic = build_raw_args(args);
 
     match args.backend.as_str() {
-        "shm" => {
-            perf_bench::executor_v2::myelon::raw::pingpong_shm::run_main_with_args(synthetic)
-        }
-        "mmap" => {
-            perf_bench::executor_v2::myelon::raw::pingpong_mmap::run_main_with_args(synthetic)
-        }
+        "shm" => perf_bench::layers::raw::myelon::pingpong_shm::run_main_with_args(synthetic),
+        "mmap" => perf_bench::layers::raw::myelon::pingpong_mmap::run_main_with_args(synthetic),
         _ => Err(format!("unknown backend: {}", args.backend).into()),
     }
 }
 
 fn run_framed(args: &Args) -> Result<(), Box<dyn Error>> {
-    use perf_bench::harness::BenchHarness;
+    use perf_bench::infra::BenchHarness;
 
     if args.timeout != 300 {
         std::env::set_var("PERF_BENCH_TIMEOUT", args.timeout.to_string());
@@ -349,13 +352,13 @@ fn run_framed(args: &Args) -> Result<(), Box<dyn Error>> {
     match args.backend.as_str() {
         "shm" => {
             let bench =
-                perf_bench::executor_v2::myelon::framed::pingpong_shm::PingPongFramedShmBench;
+                perf_bench::layers::framed_myelon::frag::pingpong_shm::PingPongFramedShmBench;
             bench.run_orchestrator(&synthetic)?;
             Ok(())
         }
         "mmap" => {
             let bench =
-                perf_bench::executor_v2::myelon::framed::pingpong_mmap::PingPongFramedMmapBench;
+                perf_bench::layers::framed_myelon::frag::pingpong_mmap::PingPongFramedMmapBench;
             bench.run_orchestrator(&synthetic)?;
             Ok(())
         }
@@ -364,7 +367,7 @@ fn run_framed(args: &Args) -> Result<(), Box<dyn Error>> {
 }
 
 fn run_codec(args: &Args) -> Result<(), Box<dyn Error>> {
-    use perf_bench::harness::BenchHarness;
+    use perf_bench::infra::BenchHarness;
 
     if args.timeout != 300 {
         std::env::set_var("PERF_BENCH_TIMEOUT", args.timeout.to_string());
@@ -375,13 +378,13 @@ fn run_codec(args: &Args) -> Result<(), Box<dyn Error>> {
     match args.backend.as_str() {
         "shm" => {
             let bench =
-                perf_bench::executor_v2::myelon::codec::pingpong_shm::PingPongCodecShmBench;
+                perf_bench::layers::framed_myelon::codec::pingpong_shm::PingPongCodecShmBench;
             bench.run_orchestrator(&synthetic)?;
             Ok(())
         }
         "mmap" => {
             let bench =
-                perf_bench::executor_v2::myelon::codec::pingpong_mmap::PingPongCodecMmapBench;
+                perf_bench::layers::framed_myelon::codec::pingpong_mmap::PingPongCodecMmapBench;
             bench.run_orchestrator(&synthetic)?;
             Ok(())
         }
@@ -390,7 +393,7 @@ fn run_codec(args: &Args) -> Result<(), Box<dyn Error>> {
 }
 
 fn run_typed_zc(args: &Args) -> Result<(), Box<dyn Error>> {
-    use perf_bench::harness::BenchHarness;
+    use perf_bench::infra::BenchHarness;
 
     if args.timeout != 300 {
         std::env::set_var("PERF_BENCH_TIMEOUT", args.timeout.to_string());
@@ -400,12 +403,12 @@ fn run_typed_zc(args: &Args) -> Result<(), Box<dyn Error>> {
 
     match args.backend.as_str() {
         "shm" => {
-            let bench = perf_bench::executor_v2::myelon::codec::pingpong_typed_zero_copy_shm::PingPongTypedZeroCopyShmBench;
+            let bench = perf_bench::layers::framed_myelon::typed_zc::pingpong_shm::PingPongTypedZeroCopyShmBench;
             bench.run_orchestrator(&synthetic)?;
             Ok(())
         }
         "mmap" => {
-            let bench = perf_bench::executor_v2::myelon::codec::pingpong_typed_zero_copy_mmap::PingPongTypedZeroCopyMmapBench;
+            let bench = perf_bench::layers::framed_myelon::typed_zc::pingpong_mmap::PingPongTypedZeroCopyMmapBench;
             bench.run_orchestrator(&synthetic)?;
             Ok(())
         }

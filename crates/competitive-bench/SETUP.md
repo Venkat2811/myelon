@@ -348,14 +348,9 @@ cd crates/competitive-bench
 make help
 make simple-smoke
 make build-all
-make cleanup-shm
-make ubermensh-smoke
-make run-all-quick
-make run-all-fixed-rate-quick
-make aggregate
-make graphs
+make simple-smoke
+make quick
 make headon-smoke
-make verify-align
 ```
 
 Extensive large-object flow:
@@ -363,33 +358,29 @@ Extensive large-object flow:
 ```bash
 cd crates/competitive-bench
 make build-all
-make cleanup-shm
-OUTDIR=output/results_extensive_full make run-all-extensive-quick
-OUTDIR=output/results_extensive_full make run-all-extensive-fixed-rate-quick
-OUTDIR=output/results_extensive_full make aggregate
-make headon-extensive HEADON_DIR=output/headon_extensive
-make verify-align-extensive
+make extensive
+make headon-extensive
+```
+
+For the rusteron alignment standalone check (RFC 0029 Test 6):
+
+```bash
+cargo run -p competitive-bench --profile competitive \
+    --bin rusteron_pingpong -- --verify-align --message-size 64
 ```
 
 ## Cleanup and process hygiene
 
-List leftover processes:
-
-```bash
-make external-status
-```
-
-Kill known benchmark peers:
+Kill leftover benchmark peer processes between runs:
 
 ```bash
 make kill-pingpong
 ```
 
-Remove competitive-bench-owned shared-memory artifacts:
-
-```bash
-make cleanup-shm
-```
+Shared-memory artifacts under `/dev/shm/` are cleaned up by the runner
+between runs; if a run is interrupted hard (SIGKILL), `make
+kill-pingpong` followed by another run is usually enough. For manual
+inspection, `ls /dev/shm/` shows what is left.
 
 ## Output contract
 

@@ -1,0 +1,72 @@
+# competitive-bench parity configuration
+# Single source of truth for size ladders, message counts, and rate profiles.
+# Loaded at runtime by the runner binary and at compile-time for tests.
+
+[sizes]
+core = [64, 512, 1024, 2048]
+large = [2_097_152]
+broker = [64, 1024]
+simple_smoke = [32, 64, 128, 1024, 2048, 4096]
+extensive = [16384, 32768, 65536, 131072, 524288, 1048576, 8388608, 16777216, 33554432, 67108864]
+
+[tuning.default]
+num_messages = 100_000
+warmup = 10_000
+rates = [200_000, 400_000, 600_000, 800_000, 1_000_000]
+headon_rate_smoke = 400_000
+stack_kb = 16384
+
+[tuning.large]
+threshold = 524_288
+num_messages = 1_000
+warmup = 100
+rates = [200]
+headon_rate_smoke = 200
+stack_kb = 65536
+
+[tuning.huge]
+threshold = 8_388_608
+num_messages = 200
+warmup = 20
+rates = [20]
+headon_rate_smoke = 20
+stack_kb = 131072
+
+[tuning.massive]
+threshold = 16_777_216
+num_messages = 100
+warmup = 10
+rates = [10]
+headon_rate_smoke = 10
+stack_kb = 262144
+
+[tuning.giant]
+threshold = 33_554_432
+num_messages = 50
+warmup = 5
+rates = [5]
+headon_rate_smoke = 5
+stack_kb = 524288
+
+[co]
+warmup = 500
+num_messages = 5_000
+
+[broadcast]
+consumers = [4, 8]
+
+[broker]
+rates = [1000, 3000, 5000]
+
+[simple_smoke]
+num_messages = 1_000
+warmup = 100
+rates = [400_000]
+broker_rates = [1_000]
+signal_events = 1_000_000
+
+[timeouts]
+zmq_sec = 120
+
+[rusteron]
+max_message_size = 16_777_216
