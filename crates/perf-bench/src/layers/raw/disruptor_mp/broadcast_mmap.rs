@@ -22,26 +22,10 @@ use std::time::{Duration, Instant};
 const SIGNAL_MULTI_EVENTS: u64 = 1_000_000;
 
 // ============================================================
-// Event types (identical to raw_ring_shm)
+// Event types
 // ============================================================
 
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct MessageEvent {
-    id: u64,
-    timestamp: u64,
-    payload: [u8; 128],
-}
-
-impl Default for MessageEvent {
-    fn default() -> Self {
-        Self {
-            id: 0,
-            timestamp: 0,
-            payload: [0u8; 128],
-        }
-    }
-}
+use crate::infra::events::BenchEvent;
 
 #[repr(C, align(64))]
 #[derive(Clone, Copy, Default)]
@@ -81,31 +65,29 @@ fn spawn_mmap_child_with_env(
 // Message-class producer (full 128B fill + timestamp — matches SHM message class)
 // ============================================================
 
-fn message_producer() -> Result<(), Box<dyn std::error::Error>> {
+fn message_producer_sized<const SIZE: usize>() -> Result<(), Box<dyn std::error::Error>> {
     let layout = child_layout();
     let buffer_size: usize = env::var("MMAP_BUFFER_SIZE")?.parse()?;
     let num_events: u64 = env::var("MMAP_EVENTS")?.parse()?;
     let target_rate = infra::read_env_u64("MMAP_TARGET_RATE", 0);
-    const WARMUP: u64 = 1_000;
+    let warmup: u64 = infra::read_env_u64("MMAP_WARMUP", 1_000);
 
     layout.ensure_directories()?;
     let mut producer =
-        MmapProducer::<MessageEvent>::create(layout, buffer_size, MessageEvent::default)?;
+        MmapProducer::<BenchEvent<SIZE>>::create(layout, buffer_size, BenchEvent::<SIZE>::default)?;
 
     if !producer.wait_for_consumers_ready(1, Duration::from_secs(30)) {
         return Err("Timeout waiting for consumer".into());
     }
 
-    // Warmup — full payload fill
-    for i in 0..WARMUP {
+    for i in 0..warmup {
         producer.publish(|e| {
-            e.id = i;
-            e.timestamp = 0;
-            e.payload = [(i % 256) as u8; 128];
+            e.sequence = i;
+            e.timestamp_ns = 0;
+            e.payload = [(i % 256) as u8; SIZE];
         });
     }
 
-    // Measured — identical work to SHM message class, absolute timestamps
     let start = Instant::now();
     if target_rate > 0 {
         let interval_ns = 1_000_000_000u64 / target_rate;
@@ -116,17 +98,17 @@ fn message_producer() -> Result<(), Box<dyn std::error::Error>> {
                 std::hint::spin_loop();
             }
             producer.publish(|e| {
-                e.id = WARMUP + i;
-                e.timestamp = intended_ns;
-                e.payload = [((WARMUP + i) % 256) as u8; 128];
+                e.sequence = warmup + i;
+                e.timestamp_ns = intended_ns;
+                e.payload = [((warmup + i) % 256) as u8; SIZE];
             });
         }
     } else {
         for i in 0..num_events {
             producer.publish(|e| {
-                e.id = WARMUP + i;
-                e.timestamp = nanos_now();
-                e.payload = [((WARMUP + i) % 256) as u8; 128];
+                e.sequence = warmup + i;
+                e.timestamp_ns = nanos_now();
+                e.payload = [((warmup + i) % 256) as u8; SIZE];
             });
         }
     }
@@ -135,11 +117,11 @@ fn message_producer() -> Result<(), Box<dyn std::error::Error>> {
     let output = infra::ProducerOutput::from_elapsed(
         num_events,
         elapsed,
-        std::mem::size_of::<MessageEvent>(),
+        std::mem::size_of::<BenchEvent<SIZE>>(),
     );
     println!("{}", serde_json::to_string(&output)?);
 
-    let last_seq = (WARMUP + num_events - 1) as i64;
+    let last_seq = (warmup + num_events - 1) as i64;
     producer.wait_until_consumed_with_strategy(
         last_seq,
         Duration::from_secs(30),
@@ -148,17 +130,25 @@ fn message_producer() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn message_consumer() -> Result<(), Box<dyn std::error::Error>> {
+fn message_producer() -> Result<(), Box<dyn std::error::Error>> {
+    let event_bytes = infra::read_env_usize("MMAP_EVENT_SIZE", 144);
+    crate::dispatch_bench_event!(event_bytes, |<SIZE>| {
+        message_producer_sized::<SIZE>()
+    })
+}
+
+fn message_consumer_sized<const SIZE: usize>() -> Result<(), Box<dyn std::error::Error>> {
     let layout = child_layout();
     let buffer_size: usize = env::var("MMAP_BUFFER_SIZE")?.parse()?;
     let num_events: u64 = env::var("MMAP_EVENTS")?.parse()?;
     let consumer_id = infra::read_env_usize("MMAP_CONSUMER_ID", 0);
     let consumer_name = format!("c{}", consumer_id);
-    const WARMUP: u64 = 1_000;
+    let warmup_target: u64 = infra::read_env_u64("MMAP_WARMUP", 1_000);
 
     let deadline = Instant::now() + Duration::from_secs(15);
     let mut consumer = loop {
-        match MmapConsumer::<MessageEvent>::attach(layout.clone(), buffer_size, &consumer_name) {
+        match MmapConsumer::<BenchEvent<SIZE>>::attach(layout.clone(), buffer_size, &consumer_name)
+        {
             Ok(c) => break c,
             Err(_) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(25)),
             Err(e) => return Err(format!("attach failed: {e}").into()),
@@ -168,7 +158,7 @@ fn message_consumer() -> Result<(), Box<dyn std::error::Error>> {
     // Warmup
     let warmup_deadline = infra::spin_deadline();
     let mut warmup = 0u64;
-    while warmup < WARMUP {
+    while warmup < warmup_target {
         if consumer.try_consume_next().is_some() {
             warmup += 1;
         } else {
@@ -177,7 +167,7 @@ fn message_consumer() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Measured — with real per-event HDR latency
+    // Measured
     let measure_deadline = infra::spin_deadline();
     let mut latency = LatencyRecorder::default_range();
     let start = Instant::now();
@@ -186,9 +176,9 @@ fn message_consumer() -> Result<(), Box<dyn std::error::Error>> {
     while consumed < num_events {
         if let Some((_seq, event)) = consumer.try_consume_next() {
             consumed += 1;
-            checksum = checksum.wrapping_add(event.id);
-            if event.timestamp > 0 {
-                latency.record_delta(event.timestamp, nanos_now());
+            checksum = checksum.wrapping_add(event.sequence);
+            if event.timestamp_ns > 0 {
+                latency.record_delta(event.timestamp_ns, nanos_now());
             }
         } else {
             infra::check_deadline(measure_deadline, "raw_ring_mmap message_consumer measured");
@@ -202,7 +192,7 @@ fn message_consumer() -> Result<(), Box<dyn std::error::Error>> {
             consumer_id,
             consumed,
             elapsed,
-            std::mem::size_of::<MessageEvent>(),
+            std::mem::size_of::<BenchEvent<SIZE>>(),
             checksum,
         )
         .with_latency(stats)
@@ -211,12 +201,19 @@ fn message_consumer() -> Result<(), Box<dyn std::error::Error>> {
             consumer_id,
             consumed,
             elapsed,
-            std::mem::size_of::<MessageEvent>(),
+            std::mem::size_of::<BenchEvent<SIZE>>(),
             checksum,
         )
     };
     println!("{}", serde_json::to_string(&output)?);
     Ok(())
+}
+
+fn message_consumer() -> Result<(), Box<dyn std::error::Error>> {
+    let event_bytes = infra::read_env_usize("MMAP_EVENT_SIZE", 144);
+    crate::dispatch_bench_event!(event_bytes, |<SIZE>| {
+        message_consumer_sized::<SIZE>()
+    })
 }
 
 // ============================================================
@@ -432,27 +429,27 @@ fn multi_signal_consumer() -> Result<(), Box<dyn std::error::Error>> {
 // Multi-consumer message class (1p3c, 1p8c, 1p12c)
 // ============================================================
 
-fn multi_message_producer() -> Result<(), Box<dyn std::error::Error>> {
+fn multi_message_producer_sized<const SIZE: usize>() -> Result<(), Box<dyn std::error::Error>> {
     let layout = child_layout();
     let buffer_size: usize = env::var("MMAP_BUFFER_SIZE")?.parse()?;
     let num_events: u64 = env::var("MMAP_EVENTS")?.parse()?;
     let num_consumers = infra::read_env_usize("MMAP_NUM_CONSUMERS", 3);
     let target_rate = infra::read_env_u64("MMAP_TARGET_RATE", 0);
-    const WARMUP: u64 = 1_000;
+    let warmup: u64 = infra::read_env_u64("MMAP_WARMUP", 1_000);
 
     layout.ensure_directories()?;
     let mut producer =
-        MmapProducer::<MessageEvent>::create(layout, buffer_size, MessageEvent::default)?;
+        MmapProducer::<BenchEvent<SIZE>>::create(layout, buffer_size, BenchEvent::<SIZE>::default)?;
 
     if !producer.wait_for_consumers_ready(num_consumers as i64, Duration::from_secs(60)) {
         return Err(format!("Timeout waiting for {num_consumers} consumers").into());
     }
 
-    for i in 0..WARMUP {
+    for i in 0..warmup {
         producer.publish(|e| {
-            e.id = i;
-            e.timestamp = 0;
-            e.payload = [(i % 256) as u8; 128];
+            e.sequence = i;
+            e.timestamp_ns = 0;
+            e.payload = [(i % 256) as u8; SIZE];
         });
     }
 
@@ -466,17 +463,17 @@ fn multi_message_producer() -> Result<(), Box<dyn std::error::Error>> {
                 std::hint::spin_loop();
             }
             producer.publish(|e| {
-                e.id = WARMUP + i;
-                e.timestamp = intended_ns;
-                e.payload = [((WARMUP + i) % 256) as u8; 128];
+                e.sequence = warmup + i;
+                e.timestamp_ns = intended_ns;
+                e.payload = [((warmup + i) % 256) as u8; SIZE];
             });
         }
     } else {
         for i in 0..num_events {
             producer.publish(|e| {
-                e.id = WARMUP + i;
-                e.timestamp = nanos_now();
-                e.payload = [((WARMUP + i) % 256) as u8; 128];
+                e.sequence = warmup + i;
+                e.timestamp_ns = nanos_now();
+                e.payload = [((warmup + i) % 256) as u8; SIZE];
             });
         }
     }
@@ -485,11 +482,11 @@ fn multi_message_producer() -> Result<(), Box<dyn std::error::Error>> {
     let output = infra::ProducerOutput::from_elapsed(
         num_events,
         elapsed,
-        std::mem::size_of::<MessageEvent>(),
+        std::mem::size_of::<BenchEvent<SIZE>>(),
     );
     println!("{}", serde_json::to_string(&output)?);
 
-    let last_seq = (WARMUP + num_events - 1) as i64;
+    let last_seq = (warmup + num_events - 1) as i64;
     producer.wait_until_consumed_with_strategy(
         last_seq,
         Duration::from_secs(90),
@@ -498,18 +495,26 @@ fn multi_message_producer() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn multi_message_consumer() -> Result<(), Box<dyn std::error::Error>> {
+fn multi_message_producer() -> Result<(), Box<dyn std::error::Error>> {
+    let event_bytes = infra::read_env_usize("MMAP_EVENT_SIZE", 144);
+    crate::dispatch_bench_event!(event_bytes, |<SIZE>| {
+        multi_message_producer_sized::<SIZE>()
+    })
+}
+
+fn multi_message_consumer_sized<const SIZE: usize>() -> Result<(), Box<dyn std::error::Error>> {
     let layout = child_layout();
     let buffer_size: usize = env::var("MMAP_BUFFER_SIZE")?.parse()?;
     let num_events: u64 = env::var("MMAP_EVENTS")?.parse()?;
     let record_latency = infra::read_env_usize("MMAP_RECORD_LATENCY", 0) == 1;
     let consumer_id = infra::read_env_usize("MMAP_CONSUMER_ID", 0);
     let consumer_name = format!("c{}", consumer_id);
-    const WARMUP: u64 = 1_000;
+    let warmup_target: u64 = infra::read_env_u64("MMAP_WARMUP", 1_000);
 
     let deadline = Instant::now() + Duration::from_secs(15);
     let mut consumer = loop {
-        match MmapConsumer::<MessageEvent>::attach(layout.clone(), buffer_size, &consumer_name) {
+        match MmapConsumer::<BenchEvent<SIZE>>::attach(layout.clone(), buffer_size, &consumer_name)
+        {
             Ok(c) => break c,
             Err(_) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(25)),
             Err(e) => return Err(format!("attach failed: {e}").into()),
@@ -518,7 +523,7 @@ fn multi_message_consumer() -> Result<(), Box<dyn std::error::Error>> {
 
     let warmup_deadline = infra::spin_deadline();
     let mut warmup_count = 0u64;
-    while warmup_count < WARMUP {
+    while warmup_count < warmup_target {
         if consumer.try_consume_next().is_some() {
             warmup_count += 1;
         } else {
@@ -542,10 +547,10 @@ fn multi_message_consumer() -> Result<(), Box<dyn std::error::Error>> {
     while consumed < num_events {
         if let Some((_seq, event)) = consumer.try_consume_next() {
             consumed += 1;
-            checksum = checksum.wrapping_add(event.id);
+            checksum = checksum.wrapping_add(event.sequence);
             if let Some(ref mut lat) = latency {
-                if event.timestamp > 0 {
-                    lat.record_delta(event.timestamp, nanos_now());
+                if event.timestamp_ns > 0 {
+                    lat.record_delta(event.timestamp_ns, nanos_now());
                 }
             }
         } else {
@@ -564,7 +569,7 @@ fn multi_message_consumer() -> Result<(), Box<dyn std::error::Error>> {
             consumer_id,
             consumed,
             elapsed,
-            std::mem::size_of::<MessageEvent>(),
+            std::mem::size_of::<BenchEvent<SIZE>>(),
             checksum,
         )
         .with_latency(stats)
@@ -573,7 +578,7 @@ fn multi_message_consumer() -> Result<(), Box<dyn std::error::Error>> {
             consumer_id,
             consumed,
             elapsed,
-            std::mem::size_of::<MessageEvent>(),
+            std::mem::size_of::<BenchEvent<SIZE>>(),
             checksum,
         )
     };
@@ -581,13 +586,20 @@ fn multi_message_consumer() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn multi_message_consumer() -> Result<(), Box<dyn std::error::Error>> {
+    let event_bytes = infra::read_env_usize("MMAP_EVENT_SIZE", 144);
+    crate::dispatch_bench_event!(event_bytes, |<SIZE>| {
+        multi_message_consumer_sized::<SIZE>()
+    })
+}
+
 // ============================================================
 // Orchestrator
 // ============================================================
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct Scenario {
-    label: &'static str,
+    label: String,
     producer_role: &'static str,
     consumer_role: &'static str,
     event_bytes: usize,
@@ -670,16 +682,20 @@ impl IpcBenchmark for Scenario {
         let root = if self.consumers > 1 {
             infra::unique_mmap_root(&format!("multi{}c", self.consumers))
         } else {
-            infra::unique_mmap_root(self.label)
+            infra::unique_mmap_root(&self.label)
         };
         let segment = if self.consumers > 1 {
             infra::unique_mmap_segment(&format!("multi{}c", self.consumers))
         } else {
-            infra::unique_mmap_segment(self.label)
+            infra::unique_mmap_segment(&self.label)
         };
         let root_str = root.display().to_string();
         let extra_env: Vec<(&str, String)> = {
-            let mut envs = vec![("MMAP_NUM_CONSUMERS", self.consumers.to_string())];
+            let mut envs = vec![
+                ("MMAP_NUM_CONSUMERS", self.consumers.to_string()),
+                ("MMAP_EVENT_SIZE", self.event_bytes.to_string()),
+                ("MMAP_WARMUP", self.warmup.to_string()),
+            ];
             if self.target_rate > 0 {
                 envs.push(("MMAP_TARGET_RATE", self.target_rate.to_string()));
             }
@@ -773,9 +789,10 @@ impl infra::BenchHarness for RawRingMmapBench {
                 }
             }
             if selection.run_message() {
+                let eb = selection.event_bytes();
                 println!(
-                    "Message class: {}B event, full 128B payload fill + timestamp",
-                    std::mem::size_of::<MessageEvent>()
+                    "Message class: {eb}B event, full {}B payload fill + timestamp",
+                    eb.saturating_sub(16),
                 );
             }
             if selection.run_signal() {
@@ -809,7 +826,7 @@ impl infra::BenchHarness for RawRingMmapBench {
 impl Scenario {
     fn from_spec(spec: &RawRingScenarioSpec) -> Self {
         Self {
-            label: spec.label,
+            label: spec.label.clone(),
             producer_role: spec.producer_role,
             consumer_role: spec.consumer_role,
             event_bytes: spec.event_bytes,

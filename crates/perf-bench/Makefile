@@ -61,20 +61,24 @@ quick:
 		$(PP) --layer raw_myelon --backend shm  --size $$sz -n $(CORE_MSGS) -w $(CORE_WARMUP) --mode co --target-rate $(CO_RATE) --tree; \
 		$(PP) --layer raw_myelon --backend mmap --size $$sz -n $(CORE_MSGS) -w $(CORE_WARMUP) --mode co --target-rate $(CO_RATE) --tree; \
 	done
-	@# Pingpong: typed_zc × {shm,mmap} × {rkyv,flatbuf} × {64B,1KB} × {throughput,CO}
-	@for sz in 64 1024; do for codec in rkyv flatbuf; do \
-		$(PP) --layer typed_zc --backend shm  --codec $$codec --size $$sz -n $(CORE_MSGS) -w $(CORE_WARMUP) --tree; \
-		$(PP) --layer typed_zc --backend mmap --codec $$codec --size $$sz -n $(CORE_MSGS) -w $(CORE_WARMUP) --tree; \
-		$(PP) --layer typed_zc --backend shm  --codec $$codec --size $$sz -n $(CORE_MSGS) -w $(CORE_WARMUP) --mode co --target-rate $(CO_RATE) --tree; \
-		$(PP) --layer typed_zc --backend mmap --codec $$codec --size $$sz -n $(CORE_MSGS) -w $(CORE_WARMUP) --mode co --target-rate $(CO_RATE) --tree; \
-	done; done
+	@# Pingpong: typed_zc × {shm,mmap} × {rkyv,flatbuf} × {throughput,CO}
+	@# NOTE: typed_zc uses preset codec batch specs (b1/b8/b64/b256), --size is ignored
+	@for codec in rkyv flatbuf; do \
+		$(PP) --layer typed_zc --backend shm  --codec $$codec -n $(CORE_MSGS) -w $(CORE_WARMUP) --tree; \
+		$(PP) --layer typed_zc --backend mmap --codec $$codec -n $(CORE_MSGS) -w $(CORE_WARMUP) --tree; \
+		$(PP) --layer typed_zc --backend shm  --codec $$codec -n $(CORE_MSGS) -w $(CORE_WARMUP) --mode co --target-rate $(CO_RATE) --tree; \
+		$(PP) --layer typed_zc --backend mmap --codec $$codec -n $(CORE_MSGS) -w $(CORE_WARMUP) --mode co --target-rate $(CO_RATE) --tree; \
+	done
 	@# Broadcast: raw_ring × {shm,mmap} × 4c × {64B,1KB}
 	$(BC) --layer raw_ring --backend shm  --class message --consumers 4 --tree --timeout 300
 	$(BC) --layer raw_ring --backend mmap --class message --consumers 4 --tree --timeout 300
 	@echo ""
 	@echo "=== QUICK: release profile (baseline comparison) ==="
 	$(SG_REL) --backend shm --consumers 1 --events 1000000 --tree
-	@for sz in 64 1024; do 		$(PP_REL) --layer raw_ring --backend shm --size $$sz -n $(CORE_MSGS) -w $(CORE_WARMUP) --tree; 		$(PP_REL) --layer typed_zc --backend shm --codec rkyv --size $$sz -n $(CORE_MSGS) -w $(CORE_WARMUP) --tree; 	done
+	@for sz in 64 1024; do \
+		$(PP_REL) --layer raw_ring --backend shm --size $$sz -n $(CORE_MSGS) -w $(CORE_WARMUP) --tree; \
+	done
+	$(PP_REL) --layer typed_zc --backend shm --codec rkyv -n $(CORE_MSGS) -w $(CORE_WARMUP) --tree
 	@echo "=== QUICK PASSED ==="
 
 # ============================================================
@@ -87,7 +91,7 @@ smoke:
 	@# Signal
 	$(SG) --backend shm --consumers 1 --events 1000000 --tree
 	$(SG) --backend mmap --consumers 1 --events 1000000 --tree
-	@# Pingpong: raw_ring + raw_myelon + typed_zc × {shm,mmap} × 4 sizes × {throughput,CO}
+	@# Pingpong: raw_ring + raw_myelon × {shm,mmap} × 4 sizes × {throughput,CO}
 	@for sz in 32 64 1024 4096; do \
 		for layer in raw_ring raw_myelon; do \
 			$(PP) --layer $$layer --backend shm  --size $$sz -n $(CORE_MSGS) -w $(CORE_WARMUP) --tree; \
@@ -95,10 +99,11 @@ smoke:
 			$(PP) --layer $$layer --backend shm  --size $$sz -n $(CORE_MSGS) -w $(CORE_WARMUP) --mode co --target-rate $(CO_RATE) --tree; \
 			$(PP) --layer $$layer --backend mmap --size $$sz -n $(CORE_MSGS) -w $(CORE_WARMUP) --mode co --target-rate $(CO_RATE) --tree; \
 		done; \
-		for codec in rkyv flatbuf; do \
-			$(PP) --layer typed_zc --backend shm  --codec $$codec --size $$sz -n $(CORE_MSGS) -w $(CORE_WARMUP) --tree; \
-			$(PP) --layer typed_zc --backend mmap --codec $$codec --size $$sz -n $(CORE_MSGS) -w $(CORE_WARMUP) --tree; \
-		done; \
+	done
+	@# Pingpong: typed_zc × {shm,mmap} × {rkyv,flatbuf} (preset codec batch specs, --size ignored)
+	@for codec in rkyv flatbuf; do \
+		$(PP) --layer typed_zc --backend shm  --codec $$codec -n $(CORE_MSGS) -w $(CORE_WARMUP) --tree; \
+		$(PP) --layer typed_zc --backend mmap --codec $$codec -n $(CORE_MSGS) -w $(CORE_WARMUP) --tree; \
 	done
 	@# Broadcast
 	$(BC) --layer raw_ring --backend shm  --class message --consumers 4 --tree --timeout 300
@@ -106,7 +111,10 @@ smoke:
 	@echo ""
 	@echo "=== SMOKE: release profile (baseline comparison) ==="
 	$(SG_REL) --backend shm --consumers 1 --events 1000000 --tree
-	@for sz in 32 64 1024 4096; do 		$(PP_REL) --layer raw_ring --backend shm --size $$sz -n $(CORE_MSGS) -w $(CORE_WARMUP) --tree; 		$(PP_REL) --layer typed_zc --backend shm --codec rkyv --size $$sz -n $(CORE_MSGS) -w $(CORE_WARMUP) --tree; 	done
+	@for sz in 32 64 1024 4096; do \
+		$(PP_REL) --layer raw_ring --backend shm --size $$sz -n $(CORE_MSGS) -w $(CORE_WARMUP) --tree; \
+	done
+	$(PP_REL) --layer typed_zc --backend shm --codec rkyv -n $(CORE_MSGS) -w $(CORE_WARMUP) --tree
 	@echo "=== SMOKE PASSED ==="
 
 # ============================================================

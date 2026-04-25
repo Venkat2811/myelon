@@ -25,7 +25,9 @@ struct Args {
     #[arg(long, value_parser = ["shm", "mmap"], default_value = "shm")]
     backend: String,
 
-    /// Message size in bytes
+    /// Message size in bytes (total event size including 16B header).
+    /// For raw_ring: overrides the default 144B message events (e.g. --size 2048).
+    /// For sweep layers: selects the event size to benchmark.
     #[arg(long, short = 's')]
     size: Option<usize>,
 
@@ -257,6 +259,21 @@ fn build_raw_ring_args(args: &Args) -> Vec<String> {
     if let Some(events) = args.events {
         v.push("--events".to_string());
         v.push(events.to_string());
+    }
+
+    if let Some(size) = args.size {
+        v.push("--size".to_string());
+        v.push(size.to_string());
+    }
+
+    if args.num_messages != 100000 {
+        v.push("--num-messages".to_string());
+        v.push(args.num_messages.to_string());
+    }
+
+    if args.warmup != 10000 {
+        v.push("--warmup".to_string());
+        v.push(args.warmup.to_string());
     }
 
     append_output_args(&mut v, args);

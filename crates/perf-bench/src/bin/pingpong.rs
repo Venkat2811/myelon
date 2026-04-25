@@ -22,7 +22,7 @@ struct Args {
     #[arg(long, value_parser = ["shm", "mmap"], default_value = "shm")]
     backend: String,
 
-    /// Message size in bytes (for raw_ring and raw_myelon layers)
+    /// Message size in bytes (raw_ring/raw_myelon only; framed/codec/typed_zc use preset payload specs)
     #[arg(long, short = 's', default_value_t = 64)]
     size: usize,
 

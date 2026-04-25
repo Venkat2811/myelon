@@ -1,6 +1,8 @@
 use crate::infra::output::report::BackendKind;
 use crate::infra::output::reporting::ReportOutputArgs;
 
+use super::pingpong;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RawRingClass {
     All,
@@ -22,7 +24,7 @@ pub enum RawRingScenarioKind {
 
 #[derive(Debug, Clone)]
 pub struct RawRingScenarioSpec {
-    pub label: &'static str,
+    pub label: String,
     pub backend: BackendKind,
     pub kind: RawRingScenarioKind,
     pub events: u64,
@@ -43,6 +45,9 @@ pub struct RawRingSelection {
     consumer_filter: Option<usize>,
     target_rate: Option<u64>,
     signal_events_override: Option<u64>,
+    num_messages_override: Option<u64>,
+    warmup_override: Option<u64>,
+    size_override: Option<usize>,
     pub output_args: ReportOutputArgs,
 }
 
@@ -84,6 +89,27 @@ impl RawRingSelection {
                     .map_err(|error| format!("invalid --events value {value}: {error}"))
             })
             .transpose()?;
+        let num_messages_override = find_arg_value(args, "--num-messages")
+            .map(|value| {
+                value
+                    .parse::<u64>()
+                    .map_err(|error| format!("invalid --num-messages value {value}: {error}"))
+            })
+            .transpose()?;
+        let warmup_override = find_arg_value(args, "--warmup")
+            .map(|value| {
+                value
+                    .parse::<u64>()
+                    .map_err(|error| format!("invalid --warmup value {value}: {error}"))
+            })
+            .transpose()?;
+        let size_override = find_arg_value(args, "--size")
+            .map(|value| {
+                value
+                    .parse::<usize>()
+                    .map_err(|error| format!("invalid --size value {value}: {error}"))
+            })
+            .transpose()?;
 
         if mode == RawRingMode::Co && target_rate.is_none() {
             return Err("--mode co requires --target-rate".into());
@@ -101,6 +127,9 @@ impl RawRingSelection {
             consumer_filter,
             target_rate,
             signal_events_override,
+            num_messages_override,
+            warmup_override,
+            size_override,
             output_args: ReportOutputArgs::from_args(args),
         })
     }
@@ -120,6 +149,10 @@ impl RawRingSelection {
 
     pub fn signal_events(&self, default_events: u64) -> u64 {
         self.signal_events_override.unwrap_or(default_events)
+    }
+
+    pub fn event_bytes(&self) -> usize {
+        self.size_override.unwrap_or(144)
     }
 
     pub fn scenario_specs(
@@ -155,6 +188,21 @@ impl RawRingSelection {
 
     fn apply_overrides(&self, scenario: &mut RawRingScenarioSpec) {
         if scenario.kind == RawRingScenarioKind::Message {
+            if let Some(size) = self.size_override {
+                scenario.event_bytes = size;
+                scenario.buffer = pingpong::default_buffer_size(size);
+                scenario.label = format!(
+                    "message_1p{}c_{}",
+                    scenario.consumers,
+                    pingpong::human_size(size),
+                );
+            }
+            if let Some(n) = self.num_messages_override {
+                scenario.events = n;
+            }
+            if let Some(w) = self.warmup_override {
+                scenario.warmup = w;
+            }
             return;
         }
         if let Some(signal_events) = self.signal_events_override {
@@ -291,7 +339,7 @@ fn base_specs(backend: BackendKind, signal_multi_events: u64) -> Vec<RawRingScen
 
 fn message_spec(
     backend: BackendKind,
-    label: &'static str,
+    label: &str,
     events: u64,
     buffer: usize,
     warmup: u64,
@@ -307,7 +355,7 @@ fn message_spec(
     };
 
     RawRingScenarioSpec {
-        label,
+        label: label.to_string(),
         backend,
         kind: RawRingScenarioKind::Message,
         events,
@@ -324,7 +372,7 @@ fn message_spec(
 
 fn signal_spec(
     backend: BackendKind,
-    label: &'static str,
+    label: &str,
     events: u64,
     buffer: usize,
     warmup: u64,
@@ -339,7 +387,7 @@ fn signal_spec(
     };
 
     RawRingScenarioSpec {
-        label,
+        label: label.to_string(),
         backend,
         kind: RawRingScenarioKind::Signal,
         events,
@@ -352,6 +400,129 @@ fn signal_spec(
         event_bytes: 64,
         target_rate: 0,
     }
+}
+
+/// Supported total event sizes for BenchEvent dispatching.
+///
+/// Each value is the total size in bytes. The const generic payload = total - 16
+/// (BenchEvent header: 8B sequence + 8B timestamp_ns).
+pub const SUPPORTED_EVENT_SIZES: &[usize] = &[
+    32, 64, 128, 144, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 524288,
+    1048576, 2097152, 8388608, 16777216, 33554432, 67108864,
+];
+
+/// Returns true if `event_bytes` is a supported total event size for dispatch.
+pub fn is_supported_event_size(event_bytes: usize) -> bool {
+    SUPPORTED_EVENT_SIZES.contains(&event_bytes)
+}
+
+/// Dispatches to a generic function based on the BenchEvent payload size (event_bytes - 16).
+///
+/// Usage:
+/// ```ignore
+/// dispatch_bench_event!(event_bytes, |<SIZE>| {
+///     some_generic_function::<SIZE>(args)
+/// })
+/// ```
+#[macro_export]
+macro_rules! dispatch_bench_event {
+    ($event_bytes:expr, |<$N:ident>| $body:expr) => {
+        match $event_bytes {
+            32 => {
+                const $N: usize = 16;
+                $body
+            }
+            64 => {
+                const $N: usize = 48;
+                $body
+            }
+            128 => {
+                const $N: usize = 112;
+                $body
+            }
+            144 => {
+                const $N: usize = 128;
+                $body
+            }
+            256 => {
+                const $N: usize = 240;
+                $body
+            }
+            512 => {
+                const $N: usize = 496;
+                $body
+            }
+            1024 => {
+                const $N: usize = 1008;
+                $body
+            }
+            2048 => {
+                const $N: usize = 2032;
+                $body
+            }
+            4096 => {
+                const $N: usize = 4080;
+                $body
+            }
+            8192 => {
+                const $N: usize = 8176;
+                $body
+            }
+            16384 => {
+                const $N: usize = 16368;
+                $body
+            }
+            32768 => {
+                const $N: usize = 32752;
+                $body
+            }
+            65536 => {
+                const $N: usize = 65520;
+                $body
+            }
+            131072 => {
+                const $N: usize = 131056;
+                $body
+            }
+            524288 => {
+                const $N: usize = 524272;
+                $body
+            }
+            1048576 => {
+                const $N: usize = 1048560;
+                $body
+            }
+            2097152 => {
+                const $N: usize = 2097136;
+                $body
+            }
+            8388608 => {
+                const $N: usize = 8388592;
+                $body
+            }
+            16777216 => {
+                const $N: usize = 16777200;
+                $body
+            }
+            33554432 => {
+                const $N: usize = 33554416;
+                $body
+            }
+            67108864 => {
+                const $N: usize = 67108848;
+                $body
+            }
+            other => Err(format!(
+                "unsupported event size: {other}B (supported: {})",
+                $crate::cli::raw_ring::SUPPORTED_EVENT_SIZES
+                    .iter()
+                    .map(|s| format!("{s}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+            .into()),
+        }
+    };
 }
 
 fn find_arg_value(args: &[String], flag: &str) -> Option<String> {
@@ -407,5 +578,49 @@ mod tests {
         assert_eq!(scenario.events, 50_000_000);
         assert_eq!(scenario.warmup, 500_000);
         assert_eq!(scenario.producer_role, "mmap_sig_producer");
+    }
+
+    #[test]
+    fn size_override_updates_message_scenarios() {
+        let args = vec![
+            "bench".to_string(),
+            "--class".to_string(),
+            "message".to_string(),
+            "--size".to_string(),
+            "2048".to_string(),
+            "--consumers".to_string(),
+            "4".to_string(),
+        ];
+        let selection = RawRingSelection::parse(&args).expect("parse selection");
+        assert_eq!(selection.event_bytes(), 2048);
+
+        let scenarios = selection.scenario_specs(BackendKind::Shm, 10_000_000);
+        // Should have 1p1c + 1p4c (consumer_filter=4 passes 1c and 4c)
+        assert_eq!(scenarios.len(), 2);
+        for scenario in &scenarios {
+            assert_eq!(scenario.event_bytes, 2048);
+            assert_eq!(
+                scenario.label,
+                format!("message_1p{}c_2KB", scenario.consumers)
+            );
+        }
+        // 2048B => default_buffer_size(2048) = 2048
+        assert_eq!(scenarios[0].buffer, pingpong::default_buffer_size(2048));
+    }
+
+    #[test]
+    fn size_override_does_not_affect_signal_scenarios() {
+        let args = vec![
+            "bench".to_string(),
+            "--size".to_string(),
+            "4096".to_string(),
+        ];
+        let selection = RawRingSelection::parse(&args).expect("parse selection");
+        let scenarios = selection.scenario_specs(BackendKind::Shm, 10_000_000);
+        let signal = scenarios
+            .iter()
+            .find(|s| s.label == "signal_1p1c_64B")
+            .expect("signal scenario");
+        assert_eq!(signal.event_bytes, 64);
     }
 }

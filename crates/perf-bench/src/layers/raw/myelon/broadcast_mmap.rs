@@ -591,9 +591,9 @@ fn multi_message_consumer() -> Result<(), Box<dyn std::error::Error>> {
 // Orchestrator
 // ============================================================
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct Scenario {
-    label: &'static str,
+    label: String,
     producer_role: &'static str,
     consumer_role: &'static str,
     event_bytes: usize,
@@ -676,12 +676,12 @@ impl IpcBenchmark for Scenario {
         let root = if self.consumers > 1 {
             infra::unique_mmap_root(&format!("myelon_multi{}c", self.consumers))
         } else {
-            infra::unique_mmap_root(self.label)
+            infra::unique_mmap_root(&self.label)
         };
         let segment = if self.consumers > 1 {
             infra::unique_mmap_segment(&format!("myelon_multi{}c", self.consumers))
         } else {
-            infra::unique_mmap_segment(self.label)
+            infra::unique_mmap_segment(&self.label)
         };
         let root_str = root.display().to_string();
         let extra_env: Vec<(&str, String)> = {
@@ -815,7 +815,7 @@ impl infra::BenchHarness for RawMyelonMmapBench {
 impl Scenario {
     fn from_spec(spec: &RawRingScenarioSpec) -> Self {
         Self {
-            label: spec.label,
+            label: spec.label.clone(),
             producer_role: spec.producer_role,
             consumer_role: spec.consumer_role,
             event_bytes: spec.event_bytes,

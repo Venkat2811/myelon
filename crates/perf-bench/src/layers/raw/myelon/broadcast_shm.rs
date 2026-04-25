@@ -676,9 +676,9 @@ fn multi_message_consumer() -> Result<(), Box<dyn std::error::Error>> {
 // Orchestrator
 // ============================================================
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct Scenario {
-    label: &'static str,
+    label: String,
     producer_role: &'static str,
     consumer_role: &'static str,
     event_bytes: usize,
@@ -885,7 +885,7 @@ impl infra::BenchHarness for RawMyelonShmBench {
 impl Scenario {
     fn from_spec(spec: &RawRingScenarioSpec) -> Self {
         Self {
-            label: spec.label,
+            label: spec.label.clone(),
             producer_role: spec.producer_role,
             consumer_role: spec.consumer_role,
             event_bytes: spec.event_bytes,
