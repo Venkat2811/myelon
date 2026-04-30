@@ -13,8 +13,18 @@ keywords      = ["disruptor", "ringbuffer", "message", "mpmc"]
 name = "disruptor_mp"
 
 [features]
-default = []
+default = ["metrics"]
 dst = ["dep:dst-fixtures"]
+
+# RFC 0040 — observability
+# Counters layer is always present (~2 ns/op relaxed atomic). The
+# optional features below add the aggregator thread + metrics-rs
+# facade and exporter glue. Compiling with `--no-default-features`
+# removes the metrics-rs facade entirely (`benchmark-pure` profile in
+# the RFC).
+metrics             = ["dep:metrics"]
+metrics-prometheus  = ["metrics", "dep:metrics-exporter-prometheus"]
+metrics-otel        = ["metrics", "dep:opentelemetry", "dep:opentelemetry-otlp", "dep:opentelemetry_sdk"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -34,6 +44,13 @@ shared_memory = { version = "0.12.4" }
 memmap2       = { version = "0.9.5" }
 libc          = { version = "0.2.173" }
 dst-fixtures  = { path = "../dst-fixtures", optional = true }
+
+# RFC 0040 — observability (all gated behind features above).
+metrics                       = { version = "0.24",  optional = true }
+metrics-exporter-prometheus   = { version = "0.16",  optional = true }
+opentelemetry                 = { version = "0.27",  optional = true }
+opentelemetry_sdk             = { version = "0.27",  optional = true, features = ["rt-tokio"] }
+opentelemetry-otlp            = { version = "0.27",  optional = true, features = ["metrics"] }
 
 # ============================================================================
 # PLATFORM-SPECIFIC DEPENDENCIES
@@ -74,6 +91,9 @@ dst-fixtures = { path = "../dst-fixtures" }
 clap = { version = "4.0", features = ["derive"] }
 chrono = "0.4"
 ctrlc = "3.4"
+
+# RFC 0040 — for verifying the aggregator emits via the metrics-rs facade.
+metrics-util = "0.19"
 
 # ============================================================================
 # PROFILES

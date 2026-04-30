@@ -21,6 +21,7 @@ mod mmap_producer;
 mod mmap_ringbuffer;
 #[path = "backend/mmap/transport.rs"]
 mod mmap_transport;
+pub mod observability;
 mod required_consumer;
 mod segment_name;
 mod shared_memory_layout;

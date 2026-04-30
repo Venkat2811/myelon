@@ -25,6 +25,7 @@ See `the workspace book` for shared-memory layout versioning rules.
 See `the workspace book` for Linux CPU affinity controls and benchmark usage.
 See `docs/MAKE_TARGETS.md` for the included Makefile fragment layout and runtime tiers.
 See `the workspace book` for current Linux core-to-core optimization measurements.
+See `the workspace book` for the Aeron-style hot-path counters and optional `metrics`-rs / Prometheus / OpenTelemetry export.
 
 ## Dependency Model
 

@@ -22,6 +22,22 @@ pub struct SharedConsumer<E> {
     last_processed_sequence: Sequence,
     /// Consumer readiness counter for internal coordination (optional)
     consumers_ready: Option<SharedCursor>,
+    /// Aeron-style hot-path counters (RFC 0040). All-`None` while no
+    /// counters file is attached; `attach_counters` populates them.
+    counters: ConsumerCounters,
+}
+
+/// Consumer-side observability handles. Each field is a relaxed-atomic
+/// counter sitting in a shared `CountersFile`. RFC 0040 §Counters defines
+/// the canonical IDs.
+#[derive(Default, Debug)]
+pub struct ConsumerCounters {
+    /// `events_consumed` — successful `try_consume_next` (and friends).
+    pub events_consumed: Option<crate::observability::CounterHandle>,
+    /// `consumer_empty_spins` — `try_consume_next` saw ring empty.
+    pub consumer_empty_spins: Option<crate::observability::CounterHandle>,
+    /// `consumer_lag_max` — high-water mark of `producer_seq − consumer_seq`.
+    pub consumer_lag_max: Option<crate::observability::CounterHandle>,
 }
 
 pub struct SharedConsumerLease<'a, E>
@@ -61,6 +77,9 @@ where
 {
     fn drop(&mut self) {
         self.consumer.publish_consumed_sequence(self.sequence);
+        if let Some(h) = &self.consumer.counters.events_consumed {
+            h.inc();
+        }
     }
 }
 
@@ -91,6 +110,7 @@ where
             consumer_id,
             last_processed_sequence: -1,
             consumers_ready,
+            counters: ConsumerCounters::default(),
         };
 
         consumer.last_processed_sequence = consumer.consumer_sequence.load(Ordering::Acquire);
@@ -133,17 +153,77 @@ where
         self.consumers_ready.is_some()
     }
 
+    /// Register consumer counters in the supplied counters file and
+    /// store handles on this consumer. After this call, hot-path
+    /// `try_consume_next` operations record into the file with one
+    /// relaxed atomic increment per event. RFC 0040 §Counters.
+    pub fn attach_counters(&mut self, file: &crate::observability::CountersFile) {
+        use crate::observability::{ids, COUNTER_FLAG_CONSUMER};
+        self.counters.events_consumed = file.register(
+            ids::EVENTS_CONSUMED,
+            COUNTER_FLAG_CONSUMER,
+            "events_consumed",
+        );
+        self.counters.consumer_empty_spins = file.register(
+            ids::CONSUMER_EMPTY_SPINS,
+            COUNTER_FLAG_CONSUMER,
+            "consumer_empty_spins",
+        );
+        self.counters.consumer_lag_max = file.register(
+            ids::CONSUMER_LAG_MAX,
+            COUNTER_FLAG_CONSUMER,
+            "consumer_lag_max",
+        );
+    }
+
+    /// Read-only access to the consumer's attached counters.
+    pub fn counters(&self) -> &ConsumerCounters {
+        &self.counters
+    }
+
+    /// Record a consume-side latency sample (nanoseconds) through the
+    /// `metrics`-rs facade under the histogram name
+    /// `disruptor_mp_consume_latency_ns`. The downstream recorder
+    /// (Prometheus / OTLP / Debugging) decides how to aggregate the
+    /// distribution.
+    ///
+    /// Cost: one `metrics::histogram!` call (per-process recorder
+    /// dispatch). When no recorder is installed the call is a no-op.
+    /// When the `metrics` feature is off this method compiles to a
+    /// no-op; it stays in the API so call-sites don't need to be
+    /// `cfg`-gated.
+    #[inline]
+    pub fn record_consume_latency_ns(&self, ns: u64) {
+        #[cfg(feature = "metrics")]
+        metrics::histogram!("disruptor_mp_consume_latency_ns").record(ns as f64);
+        #[cfg(not(feature = "metrics"))]
+        let _ = ns;
+    }
+
     /// Try to consume the next available event for this consumer
     /// Returns None if no new events are available
     pub fn try_consume_next(&mut self) -> Option<(Sequence, E)> {
         // Acquire load enforces visibility for producer progress before deciding
         // whether the next slot is safe to consume.
-        let (next_sequence, _) = self.available_batch_bounds()?;
+        let Some((next_sequence, upper)) = self.available_batch_bounds() else {
+            if let Some(h) = &self.counters.consumer_empty_spins {
+                h.inc();
+            }
+            return None;
+        };
 
         let event_ptr = self.ring_buffer.get(next_sequence);
         let event = unsafe { *event_ptr }; // Copy the event
 
         self.publish_consumed_sequence(next_sequence);
+        if let Some(h) = &self.counters.events_consumed {
+            h.inc();
+        }
+        if let Some(h) = &self.counters.consumer_lag_max {
+            // upper - next_sequence is current lag from this consumer's view.
+            let lag = (upper - next_sequence).max(0) as u64;
+            h.record_max(lag);
+        }
         Some((next_sequence, event))
     }
 
@@ -152,8 +232,20 @@ where
     /// The returned lease publishes consumer progress only when dropped, which keeps
     /// the backing slot valid for the lease lifetime.
     pub fn try_consume_next_leased(&mut self) -> Option<SharedConsumerLease<'_, E>> {
-        let (next_sequence, _) = self.available_batch_bounds()?;
+        let Some((next_sequence, upper)) = self.available_batch_bounds() else {
+            if let Some(h) = &self.counters.consumer_empty_spins {
+                h.inc();
+            }
+            return None;
+        };
+        if let Some(h) = &self.counters.consumer_lag_max {
+            let lag = (upper - next_sequence).max(0) as u64;
+            h.record_max(lag);
+        }
         let event_ptr = self.ring_buffer.get(next_sequence) as *const E;
+        // events_consumed is incremented when the lease drops (since the
+        // consume isn't durable until publish_consumed_sequence runs in
+        // SharedConsumerLease::Drop). Track via the drop side below.
         Some(SharedConsumerLease {
             consumer: self,
             sequence: next_sequence,

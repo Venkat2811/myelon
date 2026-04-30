@@ -72,6 +72,22 @@ pub struct SharedProducer<E> {
     pub(crate) coordination_completed: bool,
     /// Optional producer-side liveness policy for a required consumer set.
     required_consumer_liveness: Option<RequiredConsumerLivenessState>,
+    /// Aeron-style hot-path counters (RFC 0040). All-`None` while no
+    /// counters file is attached; `attach_counters` populates them.
+    counters: ProducerCounters,
+}
+
+/// Producer-side observability handles. Each field is a relaxed-atomic
+/// counter sitting in a shared `CountersFile`. Hot-path increments
+/// branch on `Option::Some` once per `publish`/`try_publish`; the branch
+/// is amortised to ~1 ns under prediction. RFC 0040 §Counters defines
+/// the canonical IDs.
+#[derive(Default, Debug)]
+pub struct ProducerCounters {
+    /// `events_published` — successful publishes.
+    pub events_published: Option<crate::observability::CounterHandle>,
+    /// `producer_full_events` — `try_publish` saw ring full.
+    pub producer_full_events: Option<crate::observability::CounterHandle>,
 }
 
 impl<E> SharedProducer<E>
@@ -124,7 +140,51 @@ where
             sequence_clear_of_consumers,
             coordination_completed: false,
             required_consumer_liveness: None,
+            counters: ProducerCounters::default(),
         }
+    }
+
+    /// Register producer counters in the supplied counters file and
+    /// store handles on this producer. After this call, hot-path
+    /// `publish` / `try_publish` operations record into the file with
+    /// one relaxed atomic increment per event. RFC 0040 §Counters.
+    pub fn attach_counters(&mut self, file: &crate::observability::CountersFile) {
+        use crate::observability::{ids, COUNTER_FLAG_PRODUCER};
+        self.counters.events_published = file.register(
+            ids::EVENTS_PUBLISHED,
+            COUNTER_FLAG_PRODUCER,
+            "events_published",
+        );
+        self.counters.producer_full_events = file.register(
+            ids::PRODUCER_FULL_EVENTS,
+            COUNTER_FLAG_PRODUCER,
+            "producer_full_events",
+        );
+    }
+
+    /// Read-only access to the producer's attached counters. Useful for
+    /// tests and aggregator threads.
+    pub fn counters(&self) -> &ProducerCounters {
+        &self.counters
+    }
+
+    /// Record a publish-side latency sample (nanoseconds) through the
+    /// `metrics`-rs facade under the histogram name
+    /// `disruptor_mp_publish_latency_ns`. The downstream recorder
+    /// (Prometheus / OTLP / Debugging) decides how to aggregate the
+    /// distribution.
+    ///
+    /// Cost: one `metrics::histogram!` call (per-process recorder
+    /// dispatch). When no recorder is installed the call is a no-op.
+    /// When the `metrics` feature is off this method compiles to a
+    /// no-op; it stays in the API so call-sites don't need to be
+    /// `cfg`-gated.
+    #[inline]
+    pub fn record_publish_latency_ns(&self, ns: u64) {
+        #[cfg(feature = "metrics")]
+        metrics::histogram!("disruptor_mp_publish_latency_ns").record(ns as f64);
+        #[cfg(not(feature = "metrics"))]
+        let _ = ns;
     }
 
     /// Check if we have enough free slots for publishing n events
@@ -264,8 +324,17 @@ where
     where
         F: FnOnce(&mut E),
     {
-        self.next_sequences(1).map_err(|_| RingBufferFull)?;
+        if self.next_sequences(1).is_err() {
+            // Record backpressure before bubbling the error out.
+            if let Some(h) = &self.counters.producer_full_events {
+                h.inc();
+            }
+            return Err(RingBufferFull);
+        }
         let sequence = self.apply_update(update);
+        if let Some(h) = &self.counters.events_published {
+            h.inc();
+        }
         Ok(sequence)
     }
 
@@ -274,7 +343,14 @@ where
     where
         F: FnOnce(&mut E),
     {
+        let mut spun = false;
         while self.next_sequences(1).is_err() {
+            if !spun {
+                if let Some(h) = &self.counters.producer_full_events {
+                    h.inc();
+                }
+                spun = true;
+            }
             std::hint::spin_loop();
         }
         #[cfg(feature = "dst")]
@@ -282,6 +358,9 @@ where
             std::thread::yield_now();
         }
         self.apply_update(update);
+        if let Some(h) = &self.counters.events_published {
+            h.inc();
+        }
     }
 
     /// Attempt to publish a batch of events using an indexed closure.
