@@ -5,11 +5,7 @@
 
 ## Purpose
 
-`dst-runner` is a multiprocess deterministic-simulation harness. A
-test launches a parent process that spawns producer and consumer
-children with a controlled config, fault-injection profile, and
-oracle. The runner collects per-child reports, runs the assertion
-oracle, and verifies the DST contract.
+`dst-runner` is a multiprocess deterministic-simulation harness. A test launches a parent process that spawns producer and consumer children with a controlled config, fault-injection profile, and oracle. The runner collects per-child reports, runs the assertion oracle, and verifies the DST contract.
 
 ## Modules
 
@@ -31,10 +27,7 @@ oracle, and verifies the DST contract.
 
 ## Usage
 
-`dst-runner` is consumed via `path = "../dst-runner"` from
-`myelon`'s `dev-dependencies`. Tests construct a
-`DstRunner`, register harnesses, and assert on the resulting
-`DstRunReport`.
+`dst-runner` is consumed via `path = "../dst-runner"` from `myelon`'s `dev-dependencies`. Tests construct a `DstRunner`, register harnesses, and assert on the resulting `DstRunReport`.
 
 ## License
 

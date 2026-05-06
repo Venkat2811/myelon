@@ -6,7 +6,7 @@
 
 /// Competitor P50 latency reference data (microseconds) by message size.
 ///
-/// Source: disruptor-mp/benches/ipc/competitive/table.rs
+/// Source: perf-bench/src/bench_support/table.rs
 /// Commit: original disruptor-mp bench tree
 /// Hardware: varies (see source for details)
 pub struct CompetitorData {

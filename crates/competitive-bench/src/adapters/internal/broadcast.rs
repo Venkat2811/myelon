@@ -1,8 +1,3 @@
-#[allow(dead_code)]
-#[allow(clippy::duplicate_mod)]
-#[path = "../../../../disruptor-mp/benches/ipc/competitive/common.rs"]
-mod common;
-
 use crate::infra::result_json::{BenchmarkConfigOut, BenchmarkResultsOut, LatencyStatsOut};
 use clap::Parser;
 use common::{nanos_now, BenchmarkEvent};
@@ -15,6 +10,7 @@ use myelon::{
     attach_shared_consumer as myelon_attach_shared_consumer,
     build_shared_single_producer as myelon_build_shared_single_producer,
 };
+use perf_bench::bench_support::common;
 use perf_bench::cli::pingpong::{
     apply_wait_strategy, default_buffer_size, run_with_large_stack_if_needed,
 };

@@ -6,6 +6,7 @@ members = [
   "crates/perf-bench",
   "crates/competitive-bench",
   "crates/dst-fixtures",
+  "examples",
 ]
 resolver = "2"
 
@@ -64,10 +65,11 @@ doc_link_with_quotes          = "warn"
 doc_overindented_list_items   = "warn"
 tabs_in_doc_comments          = "warn"
 too_long_first_doc_paragraph  = "warn"
-# `doc_markdown` is high-signal but produces false positives on names
-# like `Competitor`, `MMAP`, etc. Enabled at warn so they surface; suppress
-# locally with `#[allow(clippy::doc_markdown)]` on the offending item
-# when the false-positive is unavoidable.
+# `doc_markdown` is high-signal but produces false positives on
+# acronyms and proper nouns (e.g. `MMAP`, `RFC`, `IPC`). Enabled at
+# warn so they surface; suppress locally with
+# `#[allow(clippy::doc_markdown)]` on the offending item when the
+# false-positive is unavoidable.
 doc_markdown                  = "warn"
 
 [profile.competitive]

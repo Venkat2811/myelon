@@ -19,7 +19,11 @@
 //!   reporting.
 //! - [`layers`] — per-layer benchmark code (raw, framed, codec, typed
 //!   zero-copy).
+//! - [`bench_support`] — shared event types, competitor reference data,
+//!   and helper functions consumed via `#[path]` by per-layer modules
+//!   and by `competitive-bench`'s adapter binaries.
 
+pub mod bench_support;
 pub mod cli;
 pub mod infra;
 pub mod layers;

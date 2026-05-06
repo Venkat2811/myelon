@@ -1,15 +1,11 @@
 # dst-fixtures
 
 > **Internal**. Not published to crates.io. Shared across `disruptor-mp`
-> and `myelon` integration tests so the two crates can
-> validate identical deterministic-simulation contracts.
+> and `myelon` integration tests so the two crates can validate identical deterministic-simulation contracts.
 
 ## Purpose
 
-`dst-fixtures` carries the deterministic-simulation (DST) test support
-types that integration tests in both `disruptor-mp` and
-`myelon` rely on. Centralising them here means a single
-source-of-truth for:
+`dst-fixtures` carries the deterministic-simulation (DST) test support types that integration tests in both `disruptor-mp` and `myelon` rely on. Centralising them here means a single source-of-truth for:
 
 - assertion kinds and assertion logs
 - buggify-style fault injection profiles
@@ -29,9 +25,7 @@ source-of-truth for:
 
 ## Usage
 
-`dst-fixtures` is consumed via `path = "../dst-fixtures"` from
-`disruptor-mp` and `myelon`'s `dev-dependencies`. It is
-gated behind those crates' `dst` feature.
+`dst-fixtures` is consumed via `path = "../dst-fixtures"` from `disruptor-mp` and `myelon`'s `dev-dependencies`. It is gated behind those crates' `dst` feature.
 
 ## License
 

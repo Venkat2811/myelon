@@ -28,7 +28,7 @@
 //!
 //! ## Automatic Coordination Pattern (Recommended)
 //!
-//! The optimized pattern for production systems like Competitor with automatic
+//! The recommended pattern for production systems with automatic
 //! event handling and built-in coordination:
 //!
 //! ```rust,no_run
@@ -137,8 +137,8 @@
 //! ### Platform Constraints
 //! See `the workspace book` for detailed naming constraints and recommendations.
 //!
-//! This eliminates platform-specific naming constraints and matches the
-//! Python multiprocessing pattern used by Competitor.
+//! This eliminates platform-specific naming constraints and is what
+//! `portable_shm_segment_name` produces by default.
 //!
 //! ## Resource Management
 //!

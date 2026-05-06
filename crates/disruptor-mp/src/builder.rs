@@ -285,9 +285,10 @@ impl AutoConsumer {
 
 /// Automatic resource management for [`AutoConsumer`].
 ///
-/// Ensures proper cleanup when the consumer goes out of scope,
-/// which matters for embedded-Python integrations (e.g. Competitor) where
-/// the host's garbage collector expects automatic resource management.
+/// Ensures proper cleanup when the consumer goes out of scope, which
+/// matters for embedded host runtimes (e.g. an FFI consumer wrapped by
+/// a garbage-collected language) that expect automatic resource
+/// management.
 impl Drop for AutoConsumer {
     fn drop(&mut self) {
         // Signal shutdown and wait for thread to finish
@@ -321,12 +322,12 @@ impl Drop for AutoConsumer {
 /// strategies. It supports both producer and consumer creation with automatic
 /// shared memory management.
 ///
-/// ## Key Features for Competitor Integration
+/// ## Key features
 ///
-/// - **Automatic Event Delivery**: `handle_events_with()` creates background processing
-/// - **Automatic Resource Management**: Proper cleanup via `Drop` implementations
-/// - **Configurable Timeouts**: Customizable coordination and discovery timeouts
-/// - **Error Handling**: Clear error messages and robust failure handling
+/// - **Automatic event delivery**: `handle_events_with()` creates background processing
+/// - **Automatic resource management**: proper cleanup via `Drop` implementations
+/// - **Configurable timeouts**: customizable coordination and discovery timeouts
+/// - **Error handling**: clear error messages and robust failure handling
 ///
 /// ## Usage Patterns
 ///

@@ -73,7 +73,7 @@ const _: [(); 9 * CACHE_LINE] = [(); std::mem::size_of::<CoordinationData>()];
 ///
 /// Uses the `shared_memory` crate directly for a single contiguous segment
 /// instead of 5+ separate SharedCursor segments. This matches the pattern
-/// from `disruptor-mp/benches/ipc/competitive/coordination.rs`.
+/// from `perf-bench/src/bench_support/coordination.rs (deleted; logic now in `infra::coordination::native`)`.
 pub struct UnifiedCoordination {
     _shmem: shared_memory::Shmem,
     data: *mut CoordinationData,

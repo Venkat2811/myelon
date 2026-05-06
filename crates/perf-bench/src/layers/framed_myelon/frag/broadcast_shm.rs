@@ -21,7 +21,8 @@ use myelon::transport::{
 };
 use std::time::{Duration, Instant};
 
-// 64KB frame (matching competitor-rs RPC frame size)
+// 64 KB-1 frame: chosen so a frame fits exactly in a 64 KB ring slot
+// after subtracting the 12-byte FixedFrame header.
 const FRAME_DATA_BYTES: usize = 64 * 1024 - 12;
 type Frame = FixedFrame<FRAME_DATA_BYTES>;
 

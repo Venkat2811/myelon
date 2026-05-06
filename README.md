@@ -1,19 +1,10 @@
 # myelon (workspace)
 
-Repo for the [`myelon`](https://crates.io/crates/myelon) and
-[`disruptor-mp`](https://crates.io/crates/disruptor-mp) crates, plus
-their internal bench and test-runner support crates. The repo name
-predates the crate rename — `myelon` is the GitHub repo;
-the publishable crate is `myelon`.
+Repo for the [`myelon`](https://crates.io/crates/myelon) and [`disruptor-mp`](https://crates.io/crates/disruptor-mp) crates, plus their internal bench and test-runner support crates. The repo name predates the crate rename — `myelon` is the GitHub repo; the publishable crate is `myelon`.
 
-`myelon` is multiprocess shared-memory transport for inference and
-other low-latency pipelines, built as concentric layers on top of
-`disruptor-mp`.
+`myelon` is multiprocess shared-memory transport for inference and other low-latency pipelines, built as concentric layers on top of `disruptor-mp`.
 
-> **Publishable crates.** `disruptor-mp` (Layer 0) and `myelon`
-> (Layers 1–3 + orthogonal concerns). The other four crates in this
-> repo are internal benches and test infrastructure
-> (`publish = false`).
+> **Publishable crates.** `disruptor-mp` (Layer 0) and `myelon` (Layers 1–3 + orthogonal concerns). The other four crates in this repo are internal benches and test infrastructure (`publish = false`).
 
 ## The onion
 
@@ -34,9 +25,7 @@ other low-latency pipelines, built as concentric layers on top of
 └──────────────────────────────────────────────────────────┘
 ```
 
-You depend on the **outermost** layer that satisfies your needs and
-the inner ones come along for the ride. Most users only need
-`myelon`.
+You depend on the **outermost** layer that satisfies your needs and the inner ones come along for the ride. Most users only need `myelon`.
 
 ## Where to go for what
 
@@ -59,6 +48,19 @@ crates/
 ├── dst-runner/          # Internal. Multiprocess DST harness.
 ├── perf-bench/          # Internal. Performance benchmark consolidation.
 └── competitive-bench/   # Internal. Apples-to-apples external transport comparison.
+
+examples/                # Workspace-level runnable examples (one place for them all).
+                         #   shm_disruptor.rs            — Layer 0, SHM, multiprocess quick start
+                         #   mmap_disruptor.rs           — Layer 0, mmap, multiprocess quick start
+                         #   pingpong.rs                 — multiprocess RTT request/response
+                         #   counters.rs                 — RFC-0040 observability end-to-end
+                         #   fixed_inference_topology.rs — myelon::FixedTopology demo
+```
+
+Run any example with:
+
+```bash
+cargo run --release -p examples --example <name>
 ```
 
 ## Cargo features (high-impact)
@@ -83,38 +85,23 @@ crates/
 
 ## Bench harnesses
 
-- `crates/perf-bench` — broad internal sweep universe across all
-  layers (raw, framed, codec, typed_zc), both backends (`shm`,
-  `mmap`), and three modes (throughput, fixed-rate
-  coordinated-omission-aware, batch-timing). Runs against
-  `disruptor-mp` and `myelon` natively.
-- `crates/competitive-bench` — narrow apples-to-apples transport
-  comparison harness against `crossbar`, `shmipc`, `rusteron`,
-  `iceoryx2`, `zmq`, `iggy`, `redpanda`. Uses
-  `disruptor-mp` + `myelon` raw layers as internal
-  baselines.
+- `crates/perf-bench` — broad internal sweep universe across all layers (raw, framed, codec, typed_zc), both backends (`shm`, `mmap`), and three modes (throughput, fixed-rate coordinated-omission-aware, batch-timing). Runs against `disruptor-mp` and `myelon` natively.
+- `crates/competitive-bench` — narrow apples-to-apples transport comparison harness against `crossbar`, `shmipc`, `rusteron`, `iceoryx2`, `zmq`, `iggy`, `redpanda`. Uses `disruptor-mp` + `myelon` raw layers as internal baselines.
 
 ## One-command workflows
 
-- Competitive exact-size smoke:
-  - `make -C crates/competitive-bench simple-smoke`
-- Internal exact-size smoke:
-  - `make -C crates/perf-bench simple-smoke`
-- Fast benchmark smoke (~60s):
-  - `make smoke`
-- Workspace wiring + crate boundary checks:
-  - `make workspace-smoke`
-- Rust-tier orchestration (format/lint/tests/bench+example compile checks):
-  - `make orchestrate-rust`
-- Full monorepo orchestration:
-  - `make orchestrate-all`
+- Competitive exact-size smoke: `make -C crates/competitive-bench simple-smoke`
+- Internal exact-size smoke: `make -C crates/perf-bench simple-smoke`
+- Fast benchmark smoke (~60s): `make smoke`
+- Workspace wiring + crate boundary checks: `make workspace-smoke`
+- Rust-tier orchestration (format/lint/tests/bench+example compile checks): `make orchestrate-rust`
+- Full monorepo orchestration: `make orchestrate-all`
 
-## Platform policy
+## Platform support
 
-- **Linux** — officially supported.
-- **macOS** — exercised and expected to work for primary multiprocess
-  paths, but not an officially supported target.
-- **Windows** — unsupported.
+- **Linux** — supported.
+- **macOS** — supported.
+- **Windows** — experimental.
 
 ## License
 

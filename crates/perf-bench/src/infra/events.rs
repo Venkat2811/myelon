@@ -76,7 +76,7 @@ impl<const SIZE: usize> Default for PingPongEvent<SIZE> {
     }
 }
 
-/// Standard ping-pong event sizes (matching disruptor-mp/benches/ipc/pingpong/)
+/// Standard ping-pong event sizes (matching perf-bench/src/layers/raw/)
 pub type PingPong64 = PingPongEvent<0>; // 64-byte header only, no payload
 pub type PingPong512 = PingPongEvent<448>; // 64 + 448 = 512
 pub type PingPong1K = PingPongEvent<960>; // 64 + 960 = 1024

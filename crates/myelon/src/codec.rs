@@ -190,7 +190,7 @@ pub mod flatbuf_support {
 
     pub use flatbuffers;
 
-    /// Verify and access a FlatBuffer root from raw bytes.
+    /// Verify and access a `flatbuffers` root from raw bytes.
     pub fn root<'a, T: flatbuffers::Follow<'a> + flatbuffers::Verifiable + 'a>(
         bytes: &'a [u8],
     ) -> Result<T::Inner, super::CodecError> {

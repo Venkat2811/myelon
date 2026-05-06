@@ -1,0 +1,41 @@
+[package]
+name        = "examples"
+version     = "0.1.0"
+description = "Workspace-level runnable examples for `disruptor-mp` and `myelon`."
+publish     = false
+edition.workspace      = true
+license.workspace      = true
+authors.workspace      = true
+repository.workspace   = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+# Empty lib so this crate compiles cleanly even when no example is built.
+path = "src/lib.rs"
+
+[dependencies]
+disruptor-mp = { path = "../crates/disruptor-mp" }
+myelon       = { path = "../crates/myelon" }
+
+[[example]]
+name = "shm_disruptor"
+path = "shm_disruptor.rs"
+
+[[example]]
+name = "mmap_disruptor"
+path = "mmap_disruptor.rs"
+
+[[example]]
+name = "pingpong"
+path = "pingpong.rs"
+
+[[example]]
+name = "counters"
+path = "counters.rs"
+
+[[example]]
+name = "fixed_inference_topology"
+path = "fixed_inference_topology.rs"

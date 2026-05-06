@@ -8,7 +8,11 @@ use myelon::codec::{Codec, CodecError, ZeroCopyCodec};
 use std::hint::black_box;
 use std::time::Instant;
 
-/// Common benchmark payload — mimics a Competitor Sequence with token_ids and block_table.
+/// Common benchmark payload — a representative inference-style record
+/// with a small numeric id, two variable-length integer arrays, a
+/// scalar, and a short label. Realistic enough that codec costs are
+/// dominated by the same operations a typical inference engine pays
+/// (vector encode, string encode, struct framing).
 #[derive(
     Clone,
     Debug,

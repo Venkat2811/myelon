@@ -1,9 +1,6 @@
 # myelon
 
-Multiprocess shared-memory transport for inference and other low-latency
-pipelines. Built as concentric layers on top of
-[`disruptor-mp`](../disruptor-mp/) — pick the outermost layer you need
-and the inner ones come along for the ride.
+Multiprocess shared-memory transport for inference and other low-latency pipelines. Built as concentric layers on top of [`disruptor-mp`](../disruptor-mp/) — pick the outermost layer you need and the inner ones come along for the ride.
 
 ## The onion
 
@@ -35,10 +32,7 @@ and the inner ones come along for the ride.
             └─────────────────────────────────────────┘
 ```
 
-Each layer **wraps** the layer below: a `TypedProducer` wraps a
-`FramedTransportProducer` wraps a `SharedProducer`. You only pay for
-the layers you use. Pick the outermost layer that satisfies your
-needs.
+Each layer **wraps** the layer below: a `TypedProducer` wraps a `FramedTransportProducer` wraps a `SharedProducer`. You only pay for the layers you use. Pick the outermost layer that satisfies your needs.
 
 ## When to use which layer
 
@@ -49,9 +43,7 @@ needs.
 | Typed message with serialisation (bincode / rkyv / flatbuffers). Owned decode on the consumer side. | 2 — codec | `TypedProducer<F>` / `TypedConsumer<F>` + a `Codec` impl |
 | Same as Layer 2 but consumer reads serialised data in-place — no `deserialize` allocation. | 3 — typed zero-copy | `TypedProducer<F>` / `TypedConsumer<F>` + a `ZeroCopyCodec` impl |
 
-If you're not sure: start at the highest layer that matches your
-data, profile, and only step down if you see allocator or codec cost
-in the profile.
+If you're not sure: start at the highest layer that matches your data, profile, and only step down if you see allocator or codec cost in the profile.
 
 ## What each layer adds, and what it costs
 
@@ -66,8 +58,7 @@ Numbers are illustrative; measure on your hardware via `perf-bench`.
 
 ## Choosing a frame size (Layer 1 and up)
 
-The framed transport's frame type is a **const generic** — you pick
-the per-frame payload size at compile time:
+The framed transport's frame type is a **const generic** — you pick the per-frame payload size at compile time:
 
 ```rust
 use myelon::transport::{FixedFrame, AlignedFixedFrame};
@@ -92,9 +83,7 @@ Header size is fixed:
 | `FixedFrame<N>` | 12 | `N` |
 | `AlignedFixedFrame<N>` | 16 (padded so payload is 16-byte aligned) | `N` |
 
-There is **nothing special about 64 KB** — that's just the convention
-[`perf-bench`](../perf-bench/) uses for its "fragmentation" mode. You
-own the choice. The trade-off is straightforward:
+There is **nothing special about 64 KB** — that's just the convention [`perf-bench`](../perf-bench/) uses for its "fragmentation" mode. You own the choice. The trade-off is straightforward:
 
 | Frame size | Effect |
 |---|---|
@@ -104,53 +93,32 @@ own the choice. The trade-off is straightforward:
 
 Two modes you can copy from `perf-bench`:
 
-- **Fragmentation mode (`frag`)** — fixed slot size (e.g. 64 KB),
-  rely on the framing layer's start/last flags + `msg_id` to
-  reassemble payloads larger than one slot.
-- **No-fragmentation mode (`nofrag`)** — pick a frame size that
-  matches your dominant payload, accept that the rare oversized
-  message will fragment.
+- **Fragmentation mode (`frag`)** — fixed slot size (e.g. 64 KB), rely on the framing layer's start/last flags + `msg_id` to reassemble payloads larger than one slot.
+- **No-fragmentation mode (`nofrag`)** — pick a frame size that matches your dominant payload, accept that the rare oversized message will fragment.
 
-The slot size must be a compile-time constant because the ring
-buffer's memory layout depends on it. To support a runtime-chosen
-size, instantiate one transport per size class (the `nofrag`
-benchmark in `perf-bench` does this with a generic `pingpong<const
-N: usize>` worker).
+The slot size must be a compile-time constant because the ring buffer's memory layout depends on it. To support a runtime-chosen size, instantiate one transport per size class (the `nofrag` benchmark in `perf-bench` does this with a generic `pingpong<const N: usize>` worker).
 
 ## Zero-copy at every layer — what it actually means
 
-Two different things in this codebase get called "zero-copy", and
-they're not the same:
+Two different things in this codebase get called "zero-copy", and they're not the same:
 
 | Sense | Where it happens | How |
 |---|---|---|
 | **Memory-level zero-copy** | Layer 0 already provides this. | `try_consume_next_leased()` and `consume_next_leased()` return `&E` *straight into the ring slot*. No allocation, no copy. Use this for fixed-size `Copy + repr(C)` events. |
 | **Typed-format zero-copy** | Layer 3. | The bytes on the wire are already a serialised graph (`rkyv`'s `Archived<T>` / a flatbuffers root table); the consumer reads fields in-place via [`codec::ZeroCopyCodec::access`]. |
 
-There is no separate "raw + typed zero-copy" layer because it would
-be a degenerate combination:
+There is no separate "raw + typed zero-copy" layer because it would be a degenerate combination:
 
-- If your event is fixed-size and `Copy + repr(C)`, **just put the
-  struct in the slot** — Layer 0 is already memory-zero-copy and is
-  faster than archiving via `rkyv`.
-- If you want serialisation flexibility (variable size, schema
-  evolution, polymorphism), you also want framing (`msg_id`, start/end
-  flags, multi-frame fragmentation). Skipping the frame header to
-  save 12 bytes loses every protocol feature framing provides.
+- If your event is fixed-size and `Copy + repr(C)`, **just put the struct in the slot** — Layer 0 is already memory-zero-copy and is faster than archiving via `rkyv`.
+- If you want serialisation flexibility (variable size, schema evolution, polymorphism), you also want framing (`msg_id`, start/end flags, multi-frame fragmentation). Skipping the frame header to save 12 bytes loses every protocol feature framing provides.
 
 So the four-layer picture covers both senses without overlap.
 
 ## Required-consumer liveness (RFC 0017.5)
 
-`disruptor-mp` enforces strict broadcast — the slowest consumer gates
-capacity. Out of the box, that means a stalled or crashed consumer
-backpressures the producer indefinitely. The optional liveness layer
-turns that silent stall into a producer-observable, time-bounded
-event.
+`disruptor-mp` enforces strict broadcast — the slowest consumer gates capacity. Out of the box, that means a stalled or crashed consumer backpressures the producer indefinitely. The optional liveness layer turns that silent stall into a producer-observable, time-bounded event.
 
-It's **opt-in** via a parallel `*_managed` publish surface. Existing
-unmanaged calls (`publish`, `try_publish`, `publish_batch`) keep their
-current semantics; nothing changes for callers that don't opt in.
+It's **opt-in** via a parallel `*_managed` publish surface. Existing unmanaged calls (`publish`, `try_publish`, `publish_batch`) keep their current semantics; nothing changes for callers that don't opt in.
 
 ### When to enable it
 
@@ -207,11 +175,7 @@ producer.publish_managed(|slot| { /* ... */ })?;
 
 ### Cost
 
-The check is **cold-path only** — it runs only while the producer
-is blocked on a gating consumer. Steady-state publish cost is
-unchanged (validated under perf-bench in RFC 0017.5 §9). There is no
-consumer-side heartbeat — progress is observed from the cursor data
-the producer already needs for gating.
+The check is **cold-path only** — it runs only while the producer is blocked on a gating consumer. Steady-state publish cost is unchanged (validated under perf-bench in RFC 0017.5 §9). There is no consumer-side heartbeat — progress is observed from the cursor data the producer already needs for gating.
 
 ### Not provided by this layer
 
@@ -222,13 +186,11 @@ By design, the liveness layer does **not** add:
 - consumer-side autonomous failure policy
 - "healthy consumers continue without the dead one"
 
-The system stays strict-broadcast. If the dead consumer was required,
-the topology fails gracefully — that's the contract.
+The system stays strict-broadcast. If the dead consumer was required, the topology fails gracefully — that's the contract.
 
 ## Orthogonal concerns
 
-These wrap **across** layers — pick them by what your *system* needs,
-not by what your *wire format* needs.
+These wrap **across** layers — pick them by what your *system* needs, not by what your *wire format* needs.
 
 | Concern | Type | What it does |
 |---|---|---|
@@ -314,17 +276,11 @@ let _ = (kind, payload);
 # Ok(()) }
 ```
 
-Layer 2/3 wraps Layer 1: construct a `TypedProducer<F>` / `TypedConsumer<F>` and
-implement `Codec` (or `ZeroCopyCodec`) for your message type.
+Layer 2/3 wraps Layer 1: construct a `TypedProducer<F>` / `TypedConsumer<F>` and implement `Codec` (or `ZeroCopyCodec`) for your message type.
 
 ## Relationship to `disruptor-mp`
 
-`disruptor-mp` provides Layer 0 (the raw shared-memory ring buffer
-with cross-process producer/consumer coordination). `myelon`
-re-exports every relevant `disruptor-mp` type and stacks Layers 1, 2,
-and 3 on top, plus the orthogonal concerns above. Downstream code
-should depend on `myelon` only — there's no scenario where
-both crates make sense as direct dependencies.
+`disruptor-mp` provides Layer 0 (the raw shared-memory ring buffer with cross-process producer/consumer coordination). `myelon` re-exports every relevant `disruptor-mp` type and stacks Layers 1, 2, and 3 on top, plus the orthogonal concerns above. Downstream code should depend on `myelon` only — there's no scenario where both crates make sense as direct dependencies.
 
 ## License
 

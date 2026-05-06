@@ -4,14 +4,7 @@
 //! supports maximum-throughput, coordinated-omission-aware fixed-rate, and
 //! low-overhead batch-timing modes.
 
-#[allow(dead_code)]
-#[allow(clippy::duplicate_mod)]
-#[path = "../../../../../disruptor-mp/benches/ipc/competitive/common.rs"]
-mod common;
-#[allow(clippy::duplicate_mod)]
-#[path = "../../../../../disruptor-mp/benches/ipc/competitive/table.rs"]
-mod table;
-
+use crate::bench_support::{common, table};
 use crate::cli::pingpong::{self, PingPongArgs as Args};
 use crate::infra;
 use crate::infra::coordination::UnifiedCoordination;

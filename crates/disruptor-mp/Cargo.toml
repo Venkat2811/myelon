@@ -101,74 +101,7 @@ ctrlc = "3.4"
 # RFC 0040 — for verifying the aggregator emits via the metrics-rs facade.
 metrics-util = "0.19"
 
-# ============================================================================
-# PROFILES
-# ============================================================================
-
-# ============================================================================
-# BENCHMARKS
-# ============================================================================
-
-[[bench]]
-name = "ipc_shm"
-path = "benches/ipc/ipc_shm.rs"
-harness = false
-
-[[bench]]
-name = "ipc_shm_high_load"
-path = "benches/ipc/ipc_shm_high_load.rs"
-harness = false
-
-[[bench]]
-name = "competitor_vs_rust_benchmark"
-path = "benches/competitor/competitor_vs_rust_benchmark.rs"
-harness = false
-
-[[bench]]
-name = "benchmark_all_wait_strategies_auto_rust"
-path = "benches/ipc/benchmark_all_wait_strategies_auto.rs"
-harness = false
-
-[[bench]]
-name = "layout_validation"
-path = "benches/layout_validation.rs"
-harness = false
-
-# Competitive benchmarks for industry comparison
-[[bench]]
-name = "competitive_pingpong"
-path = "benches/ipc/competitive/benchmark_pingpong.rs"
-harness = false
-
-# ============================================================================
-# EXAMPLES
-# ============================================================================
-
-[[example]]
-name = "counters"
-path = "examples/counters.rs"
-
-[[example]]
-name = "shared_disruptor"
-path = "examples/shared_disruptor.rs"
-
-
-[[example]]
-name = "counters_auto"
-path = "examples/counters_auto.rs"
-
-[[example]]
-name = "performance_runner"
-path = "examples/performance_runner.rs"
-
-# ============================================================================
-# MEASUREMENT BINARIES
-# ============================================================================
-
-# [[bin]]
-# name = "baseline_measurement_framework"
-# path = "bindings/python/benchmarks/baseline_measurement_framework.rs"
-
-# [[bin]]
-# name = "test_rust_baseline"
-# path = "bindings/python/benchmarks/test_rust_baseline.rs"
+# Per-layer benchmarks live in `crates/perf-bench` (broad sweep) and
+# `crates/competitive-bench` (apples-to-apples external comparison).
+# Workspace-level examples that run against this crate (and `myelon`)
+# live in the top-level `examples/` crate.

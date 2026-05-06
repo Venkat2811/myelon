@@ -37,3 +37,6 @@ bincode = "1"
 
 [lib]
 name = "myelon"
+
+# Workspace-level runnable examples live in the top-level `examples/`
+# crate so they can demonstrate `disruptor-mp` and `myelon` together.

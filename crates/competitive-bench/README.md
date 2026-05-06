@@ -1,8 +1,8 @@
 # competitive-bench
 
-`competitive-bench` is the narrow external-comparison harness for `myelon`.
-It owns the apples-to-apples transport comparison surface. It does not own the broad
-internal sweep universe in `crates/perf-bench`.
+> **Internal.** Not published to crates.io. Owns the narrow apples-to-apples external transport comparison surface for [`disruptor-mp`](../disruptor-mp/) and [`myelon`](../myelon/). The broad internal sweep universe lives in [`crates/perf-bench`](../perf-bench/).
+
+The contract: every adapter runs the same `1p1c` ping-pong (and `1p4c` / `1p8c` broadcast) on the same payload ladder, in the same modes, emits the same JSON schema, so the resulting numbers are comparable across transports without methodology footnotes.
 
 ## Scope
 
@@ -48,8 +48,7 @@ Size ladders:
 - extensive ladder:
   - `16KB`, `32KB`, `64KB`, `128KB`, `512KB`, `1MB`, `8MB`, `16MB`, `32MB`, `64MB`
 
-The default run stays narrow and fast enough for regular parity work. The extensive ladder is
-opt-in and targets large-object analysis.
+The default run stays narrow and fast enough for regular parity work. The extensive ladder is opt-in and targets large-object analysis.
 
 ## What This Crate Does Not Do
 
@@ -105,8 +104,17 @@ crates/competitive-bench/
     └── ompi_pingpong/       # C with OpenMPI
 ```
 
-Result aggregation / pareto plotting is not in-tree -- the runner emits
-JSON per run and the JSON is the source of truth.
+### Why this layout
+
+- **`adapters/<peer>/`** is the boundary. Every external transport has its own subdir under `adapters/` and exposes the same pingpong / broadcast contract. A new transport is one new directory plus a `[[bin]]` entry — nothing else changes.
+- **`bin/` files are 3-line wrappers** that hand off to the matching `adapters::*` module. Keeping the dispatch in `lib.rs` means the adapters are testable without going through `cargo run`.
+- **`infra/` holds cross-adapter library code** so the JSON schema, size ladder, pacing helpers, and the `AdapterId` registry have exactly one source of truth. Adapters call into `infra`, never the other way around.
+- **`runner/` is the single dispatch point.** `competitive-bench-runner` reads tier configs from `config/parity.mk`, resolves adapter→strategy via `dispatch.rs`, and uses `executor.rs` to spawn / monitor / collect / cleanup. Adapters don't know about tiers — only about their own scenario.
+- **`third_party/` is for source-pinned peers only**, not for Cargo-managed peers. See [Why `third_party/` Only Has Three Peers](#why-third_party-only-has-three-peers) below.
+
+Shared event types and competitor reference data come from [`perf_bench::bench_support`](../perf-bench/src/bench_support/) so internal `disruptor-mp` / `myelon` baselines and external adapters all see the same `BenchmarkEvent<SIZE>` on the wire.
+
+Result aggregation / pareto plotting is not in-tree -- the runner emits JSON per run and the JSON is the source of truth.
 
 ## Why `third_party/` Only Has Three Peers
 
@@ -175,24 +183,18 @@ cargo run -p competitive-bench --profile competitive \
     --bin competitive_bench_runner -- --help
 ```
 
-The runner is the single source of dispatch logic; the Makefile is a
-thin convenience layer that knows about build prerequisites and tier
-shorthands.
+The runner is the single source of dispatch logic; the Makefile is a thin convenience layer that knows about build prerequisites and tier shorthands.
 
 ## Result Layout
 
-Per-run JSON files are written under `--outdir` (default `output/results/`,
-or `output/headon/` for headon tiers). One JSON file per (adapter, size,
-mode) tuple. Each file carries:
+Per-run JSON files are written under `--outdir` (default `output/results/`, or `output/headon/` for headon tiers). One JSON file per (adapter, size, mode) tuple. Each file carries:
 
 - `adapter`, `family` (`pingpong` / `broadcast`)
 - `config` (size, message count, warmup, wait strategy, consumers)
 - `throughput`, `messages_processed`, `duration_secs`
-- `latency_stats` -- 12 percentiles (P1, P10, P25, P50, P75, P90, P95,
-  P99, P99.9, P99.99, P99.999, P99.9999)
+- `latency_stats` -- 12 percentiles (P1, P10, P25, P50, P75, P90, P95, P99, P99.9, P99.99, P99.999, P99.9999)
 - `measurement_mode` (`max_throughput` | `fixed_rate`)
-- `target_rate` and `coordinated_omission_stats` when the run used
-  fixed-rate CO mode
+- `target_rate` and `coordinated_omission_stats` when the run used fixed-rate CO mode
 - `consumer_count` for broadcast runs
 
 Outputs are local-only -- the `output/` directory is gitignored.
