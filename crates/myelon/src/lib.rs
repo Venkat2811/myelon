@@ -1,36 +1,44 @@
 #![warn(missing_docs)]
 
 //! Multiprocess shared-memory transport for inference and other
-//! low-latency pipelines, organised as concentric layers on top of
-//! [`disruptor_mp`].
+//! low-latency pipelines.
 //!
-//! `myelon` (which is planned to publish on crates.io as
-//! `myelon`) keeps a constrained public surface so downstream users
-//! integrate against this façade rather than reaching into
-//! `disruptor-mp` internals. Pick the outermost layer that matches
-//! your data, and the inner ones come along for the ride.
+//! `myelon` is the **single, simplified façade** for the
+//! [`disruptor_mp`] substrate. It re-exports every relevant type
+//! from `disruptor-mp` (Layer 0 — the raw cross-process ring buffer
+//! plus its coordination, discovery, liveness, and observability
+//! primitives) and adds three more layers on top: framing, codec,
+//! and typed zero-copy. One dependency, one stable API surface, the
+//! whole stack.
+//!
+//! Pick the outermost layer that matches your data; the inner ones
+//! (including Layer 0) are reachable through `myelon` without
+//! adding `disruptor-mp` as a separate dependency.
 //!
 //! # The onion
 //!
 //! ```text
-//! ┌───────────────────────────────────────────────────────┐
-//! │  Layer 3 — Typed zero-copy                            │
-//! │  TypedProducer<F>/TypedConsumer<F> + ZeroCopyCodec    │
-//! │  ┌─────────────────────────────────────────────────┐  │
-//! │  │  Layer 2 — Codec                                │  │
-//! │  │  TypedProducer<F>/TypedConsumer<F> + Codec      │  │
-//! │  │  ┌───────────────────────────────────────────┐  │  │
-//! │  │  │  Layer 1 — Framed transport               │  │  │
-//! │  │  │  FramedTransport{Producer,Consumer}       │  │  │
-//! │  │  │  ┌─────────────────────────────────────┐  │  │  │
-//! │  │  │  │  Layer 0 — Raw ring buffer          │  │  │  │
-//! │  │  │  │  Shared{Producer,Consumer}<E>       │  │  │  │
-//! │  │  │  │  Mmap{Producer,Consumer}<E>         │  │  │  │
-//! │  │  │  │  (re-exported from disruptor-mp)    │  │  │  │
-//! │  │  │  └─────────────────────────────────────┘  │  │  │
-//! │  │  └───────────────────────────────────────────┘  │  │
-//! │  └─────────────────────────────────────────────────┘  │
-//! └───────────────────────────────────────────────────────┘
+//! ┌───────────────────────────────────────────────────────────┐
+//! │ myelon                  ← single dep for most users       │
+//! │                                                           │
+//! │   Layer 3 — typed zero-copy (ZeroCopyCodec)               │
+//! │   Layer 2 — codec (bincode / rkyv / flatbuffers)          │
+//! │   Layer 1 — framed transport (multi-frame, msg_id, flags) │
+//! │                                                           │
+//! │   ┌───────────────────────────────────────────────────┐   │
+//! │   │ Layer 0  — re-exported from disruptor-mp:         │   │
+//! │   │   Shared{Producer,Consumer}<E>            (SHM)   │   │
+//! │   │   Mmap{Producer,Consumer}<E>              (mmap)  │   │
+//! │   │   build_shared_single_producer / attach_…         │   │
+//! │   │   CoordinationMode, discovery,                    │   │
+//! │   │   RequiredConsumerLivenessConfig (RFC 0017.5),    │   │
+//! │   │   observability::* (RFC 0040)                     │   │
+//! │   └───────────────────────────────────────────────────┘   │
+//! │                                                           │
+//! │   + FixedTopology / WorkerCount   (topology shape)        │
+//! │   + MyelonTransportLayout         (macOS-safe SHM names)  │
+//! │   + observability::*              (RFC-0040 re-export)    │
+//! └───────────────────────────────────────────────────────────┘
 //! ```
 //!
 //! # When to use which layer
@@ -192,11 +200,12 @@ pub use rkyv;
 pub use flatbuffers;
 
 pub use disruptor_mp::{
-    attach_shared_consumer, build_shared_single_producer, AutoConsumer, AutoWaitStrategy,
-    MmapConsumer, MmapProducer, MmapTransportLayout, MultiProcessError, MultiProcessResult,
-    RequiredConsumerAlert, RequiredConsumerAlertHook, RequiredConsumerError,
-    RequiredConsumerFailureAction, RequiredConsumerLivenessConfig, RingBufferFull, Sequence,
-    SharedConsumer, SharedDisruptorBuilder, SharedProducer, DEFAULT_MAX_CONSUMERS,
+    attach_shared_consumer, build_shared_single_producer, portable_shm_segment_name, AutoConsumer,
+    AutoWaitStrategy, CoordinationMode, MmapConsumer, MmapProducer, MmapTransportLayout,
+    MultiProcessError, MultiProcessResult, RequiredConsumerAlert, RequiredConsumerAlertHook,
+    RequiredConsumerError, RequiredConsumerFailureAction, RequiredConsumerLivenessConfig,
+    RingBufferFull, Sequence, SharedConsumer, SharedDisruptorBuilder, SharedProducer,
+    DEFAULT_MAX_CONSUMERS,
 };
 pub use inference::{FixedTopology, InferenceTopologyError, InferenceTopologyResult, WorkerCount};
 pub use transport::{

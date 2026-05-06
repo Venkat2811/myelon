@@ -35,11 +35,11 @@
 //! passed verbatim to the child through the segment env so both
 //! sides agree on the exact strings.
 
-use disruptor_mp::{build_shared_single_producer, portable_shm_segment_name, CoordinationMode};
 use examples::{
     attach_shared_consumer_with_retry, child_role, child_segment, spawn_self,
     warm_shared_producer_discovery, ChildProcessGuard, DISCOVERY_SCAN_ROUNDS_1P1C,
 };
+use myelon::{build_shared_single_producer, portable_shm_segment_name, CoordinationMode};
 use std::time::{Duration, Instant};
 
 const N_ROUND_TRIPS: u64 = 10_000;

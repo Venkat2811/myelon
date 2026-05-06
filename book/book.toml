@@ -1,0 +1,33 @@
+[book]
+title       = "myelon"
+description = "Multiprocess shared-memory transport for inference and other low-latency pipelines, built as concentric layers on top of disruptor-mp."
+authors     = ["Venkat Raman <vraman2811@gmail.com>"]
+language    = "en"
+src         = "src"
+
+[build]
+build-dir          = "build"
+create-missing     = false
+use-default-preprocessors = true
+
+[output.html]
+default-theme   = "navy"
+preferred-dark-theme = "navy"
+git-repository-url = "https://github.com/Venkat2811/myelon"
+edit-url-template  = "https://github.com/Venkat2811/myelon/edit/main/book/{path}"
+no-section-label   = false
+mathjax-support    = false
+
+[output.html.search]
+enable        = true
+limit-results = 30
+use-boolean-and = true
+boost-title    = 2
+boost-hierarchy = 1
+boost-paragraph = 1
+expand          = true
+heading-split-level = 3
+
+[output.html.fold]
+enable = true
+level  = 1

@@ -17,6 +17,23 @@ workspace = true
 path = "src/lib.rs"
 
 [dependencies]
+# Two dependency profiles deliberately demonstrated side-by-side:
+#
+#   `myelon`       — simplified façade. Single dep gives the full
+#                    Layer 0 + Layers 1–3 + topology + observability
+#                    surface via re-exports. Used by shm_disruptor,
+#                    mmap_disruptor, pingpong, counters,
+#                    fixed_inference_topology.
+#
+#   `disruptor-mp` — substrate-only. Reach for this directly when you
+#                    want the raw cross-process ring buffer with no
+#                    framing / codec / topology surface compiled in.
+#                    Used by disruptor_mp_shm and disruptor_mp_mmap.
+#
+# The examples helper crate (`src/lib.rs`) imports through `myelon::*`,
+# but the helper types it uses (`SharedConsumer`, `attach_shared_consumer`)
+# are the *same* types in either crate — myelon re-exports them — so the
+# substrate-only examples can use the helpers without conversion.
 disruptor-mp = { path = "../crates/disruptor-mp" }
 myelon       = { path = "../crates/myelon" }
 
@@ -27,6 +44,14 @@ path = "shm_disruptor.rs"
 [[example]]
 name = "mmap_disruptor"
 path = "mmap_disruptor.rs"
+
+[[example]]
+name = "disruptor_mp_shm"
+path = "disruptor_mp_shm.rs"
+
+[[example]]
+name = "disruptor_mp_mmap"
+path = "disruptor_mp_mmap.rs"
 
 [[example]]
 name = "pingpong"

@@ -1,24 +1,35 @@
 # examples
 
-Workspace-level runnable examples for [`disruptor-mp`](../crates/disruptor-mp/) (Layer 0 substrate) and [`myelon`](../crates/myelon/) (Layers 1–3 + topology + observability).
+Workspace-level runnable examples for [`myelon`](../crates/myelon/) — the simplified façade for [`disruptor-mp`](../crates/disruptor-mp/)'s core capabilities (Layer 0) plus framing, codecs, typed zero-copy, and topology on top.
+
+Two dependency profiles are demonstrated side-by-side:
+
+- **Via `myelon` (default for most users)** — single dep, full Layer 0 + Layers 1–3 + topology + observability surface reachable through `myelon::*`. `shm_disruptor`, `mmap_disruptor`, `pingpong`, `counters`, and `fixed_inference_topology` use this profile.
+- **Direct on `disruptor-mp` (substrate-only)** — depend on `disruptor-mp` alone when you don't want the framing / codec / typed-zero-copy / topology surface compiled into your binary. `disruptor_mp_shm` and `disruptor_mp_mmap` are templates for that profile.
+
+Same multiprocess pattern, same correctness primitives, same runtime behaviour — only the import paths and the `Cargo.toml` dependency choice differ.
 
 > **Everything here is multiprocess.** The crate name is `disruptor-mp` and the **mp** is not a suggestion. Every example spawns its peer(s) as real OS child processes via `current_exe()` plus an env-var role dispatch (see `src/lib.rs`); none of them simulate multiprocess behavior with threads.
 
 ## What's here
 
-| Example | What it shows | Crates exercised |
+| Example | What it shows | Imports through |
 |---|---|---|
-| [`shm_disruptor.rs`](shm_disruptor.rs) | Layer 0 quick start over a POSIX shared-memory segment. 1 producer + 1 consumer in two real OS processes. | `disruptor-mp` |
-| [`mmap_disruptor.rs`](mmap_disruptor.rs) | Same shape as `shm_disruptor`, backed by a memory-mapped file. Region survives reboots, no macOS `PSHMNAMLEN` (31-byte) ceiling. | `disruptor-mp` |
-| [`pingpong.rs`](pingpong.rs) | Multiprocess request/response RTT. Two SHM rings, parent measures end-to-end round-trip latency. | `disruptor-mp` |
-| [`counters.rs`](counters.rs) | RFC-0040 hot-path observability end-to-end through the `myelon` re-export of `disruptor_mp::observability`. | `disruptor-mp`, `myelon` |
-| [`fixed_inference_topology.rs`](fixed_inference_topology.rs) | One scheduler / N workers (2..=8) topology with discovery and rendezvous baked in via `myelon::FixedTopology`. | `myelon` |
+| [`shm_disruptor.rs`](shm_disruptor.rs) | Layer 0 quick start over a POSIX shared-memory segment. 1 producer + 1 consumer in two real OS processes. | `myelon::*` |
+| [`mmap_disruptor.rs`](mmap_disruptor.rs) | Same shape as `shm_disruptor`, backed by a memory-mapped file. Region survives reboots, no macOS `PSHMNAMLEN` (31-byte) ceiling. | `myelon::*` |
+| [`disruptor_mp_shm.rs`](disruptor_mp_shm.rs) | Same shape as `shm_disruptor`, but with `disruptor-mp` as a direct dependency (substrate-only profile). | `disruptor_mp::*` |
+| [`disruptor_mp_mmap.rs`](disruptor_mp_mmap.rs) | Same shape as `mmap_disruptor`, but with `disruptor-mp` as a direct dependency. | `disruptor_mp::*` |
+| [`pingpong.rs`](pingpong.rs) | Multiprocess request/response RTT. Two SHM rings, parent measures end-to-end round-trip latency. | `myelon::*` |
+| [`counters.rs`](counters.rs) | RFC-0040 hot-path observability end-to-end through the `myelon` re-export of `disruptor_mp::observability`. | `myelon::*` |
+| [`fixed_inference_topology.rs`](fixed_inference_topology.rs) | One scheduler / N workers (2..=8) topology with discovery and rendezvous baked in via `myelon::FixedTopology`. | `myelon::*` |
 
 ## Run them
 
 ```bash
 cargo run --release -p examples --example shm_disruptor
 cargo run --release -p examples --example mmap_disruptor
+cargo run --release -p examples --example disruptor_mp_shm
+cargo run --release -p examples --example disruptor_mp_mmap
 cargo run --release -p examples --example pingpong
 cargo run --release -p examples --example counters
 cargo run --release -p examples --example fixed_inference_topology

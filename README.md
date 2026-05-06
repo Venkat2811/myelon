@@ -2,41 +2,57 @@
 
 Repo for the [`myelon`](https://crates.io/crates/myelon) and [`disruptor-mp`](https://crates.io/crates/disruptor-mp) crates, plus their internal bench and test-runner support crates. The repo name predates the crate rename — `myelon` is the GitHub repo; the publishable crate is `myelon`.
 
-`myelon` is multiprocess shared-memory transport for inference and other low-latency pipelines, built as concentric layers on top of `disruptor-mp`.
+`myelon` is multiprocess shared-memory transport for inference and other low-latency pipelines. It offers **simplified access to `disruptor-mp`'s core capabilities** plus framing, codecs, typed zero-copy, and topology layered on top — all behind one stable public surface.
 
-> **Publishable crates.** `disruptor-mp` (Layer 0) and `myelon` (Layers 1–3 + orthogonal concerns). The other four crates in this repo are internal benches and test infrastructure (`publish = false`).
+> **Publishable crates.** `disruptor-mp` (the Layer 0 substrate) and `myelon` (a single façade over `disruptor-mp` + Layers 1–3 + orthogonal concerns). The other four crates in this repo are internal benches and test infrastructure (`publish = false`).
 
 ## The onion
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│  myelon                                                  │
-│  Layer 1 — framed transport                              │
-│  Layer 2 — codec (bincode / rkyv / flatbuffers)          │
-│  Layer 3 — typed zero-copy                               │
-│  + topology, layout, observability re-exports            │
-├──────────────────────────────────────────────────────────┤
-│  disruptor-mp                                            │
-│  Layer 0 — raw cross-process ring buffer                 │
-│  + coordination, discovery, liveness, observability      │
-├──────────────────────────────────────────────────────────┤
-│  disruptor (crates.io, upstream)                         │
-│  single-process / threaded primitives                    │
-└──────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│ myelon                       ← single dep for most users     │
+│                                                              │
+│   Layer 3 — typed zero-copy                                  │
+│   Layer 2 — codec (bincode / rkyv / flatbuffers)             │
+│   Layer 1 — framed transport                                 │
+│                                                              │
+│   ┌──────────────────────────────────────────────────────┐   │
+│   │ Layer 0  (re-exported from disruptor-mp)             │   │
+│   │   SharedProducer<E> / SharedConsumer<E>      (SHM)   │   │
+│   │   MmapProducer<E>   / MmapConsumer<E>        (mmap)  │   │
+│   │   builders, coordination, discovery, liveness,       │   │
+│   │   observability counters                             │   │
+│   └──────────────────────────────────────────────────────┘   │
+│                                                              │
+│   + FixedTopology / WorkerCount   (topology shape)           │
+│   + MyelonTransportLayout         (macOS-safe SHM names)     │
+│   + observability::*              (RFC-0040 re-export)       │
+└────────────────────────────────┬─────────────────────────────┘
+                                 │ depends on
+                                 ▼
+                          disruptor-mp
+                          (also publishable on its own for users
+                          who want only the Layer 0 substrate)
+                                 │ depends on
+                                 ▼
+                          disruptor (crates.io, upstream)
+                          single-process / threaded primitives
 ```
 
-You depend on the **outermost** layer that satisfies your needs and the inner ones come along for the ride. Most users only need `myelon`.
+**You almost certainly only need `myelon`.** It re-exports every relevant `disruptor-mp` type, so a single `myelon = "..."` dependency gives you the full Layer 0 substrate plus Layers 1–3 and the orthogonal concerns. Reach for `disruptor-mp` directly only when you want the substrate alone with no framing / codec / topology surface compiled in.
 
 ## Where to go for what
 
-| You want to … | Crate | Notes |
-|---|---|---|
-| Cross-process publish/consume of a fixed-size `Copy` event over a ring buffer | [`disruptor-mp`](crates/disruptor-mp/) (Layer 0) | Or `myelon`, which re-exports the same types. |
-| Variable-length byte messages with start/end flags + multi-frame fragmentation | [`myelon`](crates/myelon/) (Layer 1) | `FramedTransportProducer<F>` / `FramedTransportConsumer<F>`. |
-| Typed messages with serialisation (bincode / rkyv / flatbuffers) | [`myelon`](crates/myelon/) (Layer 2) | `TypedProducer<F>` / `TypedConsumer<F>` + `Codec` impl. |
-| Zero-copy in-place reads of serialised data | [`myelon`](crates/myelon/) (Layer 3) | `ZeroCopyCodec` + the typed transport above. |
-| Fixed scheduler / N-worker topology with discovery + rendezvous | [`myelon`](crates/myelon/) | `FixedTopology`, `WorkerCount` (2..=8). |
-| Per-process hot-path counters (events_published, consumer_lag_max, …) | [`disruptor-mp::observability`](crates/disruptor-mp/the workspace book) | Re-exported from `myelon::observability`. |
+The default crate to depend on is [`myelon`](crates/myelon/) — every row below is reachable from it. The right-most column flags the few cases where depending on [`disruptor-mp`](crates/disruptor-mp/) directly is also reasonable.
+
+| You want to … | Layer | Type | Direct on `disruptor-mp`? |
+|---|---|---|---|
+| Cross-process publish/consume of a fixed-size `Copy` event over a ring buffer | 0 — raw | `SharedProducer<E>` / `SharedConsumer<E>` (SHM); `MmapProducer<E>` / `MmapConsumer<E>` (mmap). All re-exported by `myelon`. | Yes — substrate alone. |
+| Variable-length byte messages with start/end flags + multi-frame fragmentation | 1 — framed | `FramedTransportProducer<F>` / `FramedTransportConsumer<F>` | No — only on `myelon`. |
+| Typed messages with serialisation (bincode / rkyv / flatbuffers) | 2 — codec | `TypedProducer<F>` / `TypedConsumer<F>` + `Codec` impl | No. |
+| Zero-copy in-place reads of serialised data | 3 — typed zero-copy | `ZeroCopyCodec` + the typed transport above | No. |
+| Fixed scheduler / N-worker topology with discovery + rendezvous | orthogonal | `FixedTopology`, `WorkerCount` (2..=8) | No. |
+| Per-process hot-path counters (events_published, consumer_lag_max, …) | orthogonal | `observability::*` | Yes — same surface lives on both crates. |
 
 ## Layout
 
@@ -55,6 +71,9 @@ examples/                # Workspace-level runnable examples (one place for them
                          #   pingpong.rs                 — multiprocess RTT request/response
                          #   counters.rs                 — RFC-0040 observability end-to-end
                          #   fixed_inference_topology.rs — myelon::FixedTopology demo
+
+book/                    # mdBook source for the user-facing docs site.
+                         # Build: `mdbook build` (output at book/build, gitignored).
 ```
 
 Run any example with:

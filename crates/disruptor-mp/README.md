@@ -6,25 +6,26 @@ Multiprocess shared-memory ring buffers for Disruptor-style publication.
 
 ## Where this crate sits
 
-This is the substrate. Higher-level transports (framing, codecs, typed zero-copy, topology) live in [`myelon`](../myelon/) and stack on top of the types here. If you want a typed transport with serialisation and fragmentation, depend on `myelon` instead — it re-exports everything from this crate.
+This is the substrate — Layer 0 of the project's layered model. Higher-level transports (framing, codecs, typed zero-copy, topology) live in [`myelon`](../myelon/), and `myelon` is **also a simplified façade for everything in this crate**: it re-exports every relevant type here, so most users only need to depend on `myelon`. Reach for `disruptor-mp` directly only when you want the raw ring buffer with no framing / codec / topology surface compiled in.
 
 ```
-                  ┌────────────────────────────────┐
-                  │  myelon                        │
-                  │  framing, codecs, typed        │ ← optional, sits on top
-                  │  zero-copy, topology           │
-                  └───────────────┬────────────────┘
-                                  │ wraps
-                  ┌───────────────▼────────────────┐
-                  │  disruptor-mp  (this crate)    │
-                  │  Layer 0: raw ring buffer      │ ← what you get here
-                  │  + coordination + observability│
-                  └───────────────┬────────────────┘
-                                  │ depends on
-                  ┌───────────────▼────────────────┐
-                  │  disruptor  (crates.io)        │
-                  │  single-process / threaded     │
-                  └────────────────────────────────┘
+                  ┌──────────────────────────────────────┐
+                  │  myelon                              │
+                  │  Layers 1, 2, 3 + topology           │ ← simplified façade for
+                  │  + re-exports of everything below    │   most users
+                  └──────────────────┬───────────────────┘
+                                     │ depends on
+                  ┌──────────────────▼───────────────────┐
+                  │  disruptor-mp  (this crate)          │
+                  │  Layer 0: raw ring buffer            │ ← what you get here
+                  │  + coordination, discovery,          │
+                  │    liveness, observability counters  │
+                  └──────────────────┬───────────────────┘
+                                     │ depends on
+                  ┌──────────────────▼───────────────────┐
+                  │  disruptor  (crates.io)              │
+                  │  single-process / threaded           │
+                  └──────────────────────────────────────┘
 ```
 
 ## What this crate provides
@@ -39,7 +40,7 @@ This is the substrate. Higher-level transports (framing, codecs, typed zero-copy
 | Naming | `portable_shm_segment_name(name)` | Derive a macOS-safe SHM segment name from an arbitrary label. |
 | Observability | `disruptor_mp::observability::*` (RFC 0040) | Hot-path counters file (`events_published`, `events_consumed`, `producer_full_events`, `consumer_empty_spins`, `consumer_lag_max`) plus optional `metrics`-rs / Prometheus / OTLP exporters. See `the workspace book`. |
 
-`E` is your event type — anything `Copy + Default + 'static` with a stable layout. The crate stays out of the wire-format business; pick the layer above (`myelon`) when you need framing or serialisation.
+`E` is your event type — anything `Copy + Default + 'static` with a stable layout. The crate stays out of the wire-format business; reach for [`myelon`](../myelon/) when you need framing or serialisation, since `myelon` re-exports everything in this table and adds those layers on top.
 
 ## Boundary with upstream `disruptor`
 

@@ -24,11 +24,11 @@
 //! cargo run --release -p myelon --example counters
 //! ```
 
-use disruptor_mp::portable_shm_segment_name;
 use myelon::observability::{
     ids, AttachError, CountersFile, COUNTERS_FILE_RESERVED_BYTES, COUNTER_FLAG_CONSUMER,
     COUNTER_FLAG_PRODUCER,
 };
+use myelon::portable_shm_segment_name;
 use myelon::producer::CoordinationMode;
 use myelon::{attach_shared_consumer, build_shared_single_producer};
 use std::ptr::NonNull;

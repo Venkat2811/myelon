@@ -32,7 +32,7 @@
 //!   attaches, the producer's discovery barrier is given a few scan
 //!   ticks before publishing so it actually finds the new consumer.
 
-use disruptor_mp::{attach_shared_consumer, SharedConsumer};
+use myelon::{attach_shared_consumer, SharedConsumer};
 use std::env;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};

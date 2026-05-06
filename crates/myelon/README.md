@@ -1,38 +1,36 @@
 # myelon
 
-Multiprocess shared-memory transport for inference and other low-latency pipelines. Built as concentric layers on top of [`disruptor-mp`](../disruptor-mp/) — pick the outermost layer you need and the inner ones come along for the ride.
+Multiprocess shared-memory transport for inference and other low-latency pipelines.
+
+`myelon` is the **single, simplified façade** for the `disruptor-mp` substrate. It re-exports every relevant type from [`disruptor-mp`](../disruptor-mp/) (Layer 0 — the raw cross-process ring buffer plus its coordination, discovery, liveness, and observability primitives) and adds three more layers on top: framing, codec, and typed zero-copy. One dependency, one stable API surface, the whole stack.
 
 ## The onion
 
 ```
-┌───────────────────────────────────────────────────────┐
-│  Layer 3 — Typed zero-copy                            │
-│  TypedProducer<F> / TypedConsumer<F> + ZeroCopyCodec  │
-│  ┌─────────────────────────────────────────────────┐  │
-│  │  Layer 2 — Codec                                │  │
-│  │  TypedProducer<F> / TypedConsumer<F> + Codec    │  │
-│  │  ┌───────────────────────────────────────────┐  │  │
-│  │  │  Layer 1 — Framed transport               │  │  │
-│  │  │  FramedTransport{Producer,Consumer}       │  │  │
-│  │  │  ┌─────────────────────────────────────┐  │  │  │
-│  │  │  │  Layer 0 — Raw ring buffer          │  │  │  │
-│  │  │  │  Shared{Producer,Consumer}<E>       │  │  │  │
-│  │  │  │  Mmap{Producer,Consumer}<E>         │  │  │  │
-│  │  │  │  (re-exported from disruptor-mp)    │  │  │  │
-│  │  │  └─────────────────────────────────────┘  │  │  │
-│  │  └───────────────────────────────────────────┘  │  │
-│  └─────────────────────────────────────────────────┘  │
-└───────────────────────────────────────────────────────┘
-            ▲ orthogonal concerns ────────────────────┐
-            │ FixedTopology   • producer/N-consumer   │
-            │ MyelonTransportLayout • SHM names       │
-            │ observability::* • RFC-0040 counters    │
-            │ RequiredConsumerLivenessConfig          │
-            │ CoordinationMode                        │
-            └─────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────┐
+│ myelon                  ← single dep for most users       │
+│                                                           │
+│   Layer 3 — typed zero-copy (ZeroCopyCodec)               │
+│   Layer 2 — codec (bincode / rkyv / flatbuffers)          │
+│   Layer 1 — framed transport (multi-frame, msg_id, flags) │
+│                                                           │
+│   ┌───────────────────────────────────────────────────┐   │
+│   │ Layer 0  — re-exported from disruptor-mp:         │   │
+│   │   Shared{Producer,Consumer}<E>            (SHM)   │   │
+│   │   Mmap{Producer,Consumer}<E>              (mmap)  │   │
+│   │   build_shared_single_producer / attach_…         │   │
+│   │   CoordinationMode, discovery,                    │   │
+│   │   RequiredConsumerLivenessConfig (RFC 0017.5),    │   │
+│   │   observability::* (RFC 0040)                     │   │
+│   └───────────────────────────────────────────────────┘   │
+│                                                           │
+│   + FixedTopology / WorkerCount    (topology shape)       │
+│   + MyelonTransportLayout          (macOS-safe SHM names) │
+│   + observability::*               (RFC-0040 re-export)   │
+└───────────────────────────────────────────────────────────┘
 ```
 
-Each layer **wraps** the layer below: a `TypedProducer` wraps a `FramedTransportProducer` wraps a `SharedProducer`. You only pay for the layers you use. Pick the outermost layer that satisfies your needs.
+Each layer **wraps** the layer below: a `TypedProducer` wraps a `FramedTransportProducer` wraps a `SharedProducer`. You only pay for the layers you use. Pick the outermost layer that satisfies your needs — the inner ones (and Layer 0) are reachable through `myelon` without adding `disruptor-mp` as a separate dependency.
 
 ## When to use which layer
 

@@ -49,3 +49,6 @@ Thumbs.db
 artifacts/*_rerun.json
 artifacts/*_rerun/
 output/
+
+# mdBook build output
+book/build/
