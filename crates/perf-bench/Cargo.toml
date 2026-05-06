@@ -1,10 +1,17 @@
 [package]
-name = "perf-bench"
-version = "0.1.0"
-edition = "2021"
-description = "Performance benchmark suite for the Myelon transport stack (disruptor-mp + myelon)"
-license = "MIT"
-publish = false
+name        = "perf-bench"
+version     = "0.1.0"
+description = "Internal performance benchmark suite for the disruptor-mp and myelon transport stack. Consolidates pingpong, broadcast, and signal scenarios across raw-ring, framed, codec, and typed-zero-copy layers, with both SHM and mmap backends."
+readme      = "README.md"
+publish     = false
+edition.workspace      = true
+license.workspace      = true
+authors.workspace      = true
+repository.workspace   = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
 
 [dependencies]
 # Transport layers

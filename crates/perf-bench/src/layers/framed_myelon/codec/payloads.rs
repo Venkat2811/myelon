@@ -250,7 +250,7 @@ impl Codec for FlatbufBatch {
 
     fn decode(bytes: &[u8]) -> Result<Self, CodecError> {
         let root =
-            flatbuffers::root::<flatbench::PayloadBatch>(bytes).map_err(CodecError::decode)?;
+            flatbuffers::root::<flatbench::PayloadBatch<'_>>(bytes).map_err(CodecError::decode)?;
         let entries = root
             .entries()
             .ok_or_else(|| CodecError::decode("missing entries vector"))?;

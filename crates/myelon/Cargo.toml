@@ -1,0 +1,39 @@
+[package]
+name        = "myelon"
+version     = "0.1.0"
+description = "Inference-fabric crate providing typed transport, framing, and codec layers over multiprocess shared-memory ring buffers (disruptor-mp)."
+readme      = "README.md"
+categories  = ["data-structures", "concurrency", "encoding"]
+keywords    = ["ipc", "shared-memory", "transport", "framing", "inference"]
+edition.workspace      = true
+license.workspace      = true
+authors.workspace      = true
+repository.workspace   = true
+homepage.workspace     = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+disruptor_mp = { package = "disruptor-mp", path = "../disruptor-mp" }
+serde = { version = "1", features = ["derive"] }
+rkyv = { version = "0.8", features = ["bytecheck"], optional = true }
+flatbuffers = { version = "24.12", optional = true }
+dst-fixtures = { path = "../dst-fixtures", optional = true }
+
+[features]
+default = []
+rkyv = ["dep:rkyv"]
+flatbuffers = ["dep:flatbuffers"]
+dst = ["disruptor_mp/dst", "dep:dst-fixtures"]
+
+[dev-dependencies]
+trybuild = "1.0"
+dst-fixtures = { path = "../dst-fixtures" }
+dst-runner = { path = "../dst-runner" }
+serde_json = "1"
+bincode = "1"
+
+[lib]
+name = "myelon"

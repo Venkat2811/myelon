@@ -1,52 +1,100 @@
-# myelon
+# myelon (workspace)
 
-`myelon` is an extreme low-latency, high-throughput, high-performance inference fabric.
+Repo for the [`myelon`](https://crates.io/crates/myelon) and
+[`disruptor-mp`](https://crates.io/crates/disruptor-mp) crates, plus
+their internal bench and test-runner support crates. The repo name
+predates the crate rename — `myelon` is the GitHub repo;
+the publishable crate is `myelon`.
 
-This monorepo is the Linux-first workspace for the `myelon` Rust façade, Python bindings,
-and the lower-level multiprocess transport it builds on.
+`myelon` is multiprocess shared-memory transport for inference and
+other low-latency pipelines, built as concentric layers on top of
+`disruptor-mp`.
+
+> **Publishable crates.** `disruptor-mp` (Layer 0) and `myelon`
+> (Layers 1–3 + orthogonal concerns). The other four crates in this
+> repo are internal benches and test infrastructure
+> (`publish = false`).
+
+## The onion
+
+```
+┌──────────────────────────────────────────────────────────┐
+│  myelon                                                  │
+│  Layer 1 — framed transport                              │
+│  Layer 2 — codec (bincode / rkyv / flatbuffers)          │
+│  Layer 3 — typed zero-copy                               │
+│  + topology, layout, observability re-exports            │
+├──────────────────────────────────────────────────────────┤
+│  disruptor-mp                                            │
+│  Layer 0 — raw cross-process ring buffer                 │
+│  + coordination, discovery, liveness, observability      │
+├──────────────────────────────────────────────────────────┤
+│  disruptor (crates.io, upstream)                         │
+│  single-process / threaded primitives                    │
+└──────────────────────────────────────────────────────────┘
+```
+
+You depend on the **outermost** layer that satisfies your needs and
+the inner ones come along for the ride. Most users only need
+`myelon`.
+
+## Where to go for what
+
+| You want to … | Crate | Notes |
+|---|---|---|
+| Cross-process publish/consume of a fixed-size `Copy` event over a ring buffer | [`disruptor-mp`](crates/disruptor-mp/) (Layer 0) | Or `myelon`, which re-exports the same types. |
+| Variable-length byte messages with start/end flags + multi-frame fragmentation | [`myelon`](crates/myelon/) (Layer 1) | `FramedTransportProducer<F>` / `FramedTransportConsumer<F>`. |
+| Typed messages with serialisation (bincode / rkyv / flatbuffers) | [`myelon`](crates/myelon/) (Layer 2) | `TypedProducer<F>` / `TypedConsumer<F>` + `Codec` impl. |
+| Zero-copy in-place reads of serialised data | [`myelon`](crates/myelon/) (Layer 3) | `ZeroCopyCodec` + the typed transport above. |
+| Fixed scheduler / N-worker topology with discovery + rendezvous | [`myelon`](crates/myelon/) | `FixedTopology`, `WorkerCount` (2..=8). |
+| Per-process hot-path counters (events_published, consumer_lag_max, …) | [`disruptor-mp::observability`](crates/disruptor-mp/the workspace book) | Re-exported from `myelon::observability`. |
 
 ## Layout
 
-- `crates/disruptor-mp`: low-level multiprocess shared-memory disruptor core.
-- `crates/legacy-wip`: `myelon` Rust inference-fabric façade.
-- `python-surface-archive`: Python bindings and integrations for `myelon`.
+```
+crates/
+├── disruptor-mp/        # Publishable. Layer 0: raw cross-process ring buffer.
+├── myelon/              # Publishable. Layers 1, 2, 3 + topology + observability.
+├── dst-fixtures/        # Internal. Deterministic-simulation test fixtures.
+├── dst-runner/          # Internal. Multiprocess DST harness.
+├── perf-bench/          # Internal. Performance benchmark consolidation.
+└── competitive-bench/   # Internal. Apples-to-apples external transport comparison.
+```
 
-## Architecture Boundaries
+## Cargo features (high-impact)
 
-| Layer | Owner | Purpose |
-|:------|:------|:--------|
-| `crates/disruptor-mp` | low-level data plane | shared-memory layout, lock-free coordination, producer/consumer primitives |
-| `crates/legacy-wip` | `myelon` Rust layer | inference-fabric API, stable Rust-facing surface, and future topology/domain policy |
-| `python-surface-archive/src` + `python/disruptor_rs/multiprocess.py` | Python data plane | PyO3 bridge and raw producer/consumer operations |
-| `python-surface-archive/python/disruptor_rs/__init__.py`, `compat.py`, `legacy.py`, `external_integrations/` | Python control plane | stable imports, compatibility shims, and framework adapters |
+`disruptor-mp`:
 
-Boundary rules and enforced checks live in the workspace book.
+| Feature | Adds |
+|---|---|
+| `metrics` (default) | Wire `observability` counters into the `metrics`-rs façade. |
+| `metrics-prometheus` | `metrics-exporter-prometheus`. |
+| `metrics-otel` | `opentelemetry-otlp` for OTLP export. |
+| `dst` | DST hooks against `dst-fixtures`. |
 
-## Status
+`myelon`:
 
-- Linux: priority target
-- macOS: works for core paths, currently unsupported for official release guarantees
-- Windows: unsupported
+| Feature | Adds |
+|---|---|
+| (default) | Layers 0, 1; Layer 2 with `bincode` only. |
+| `rkyv` | Layer 2/3 with `rkyv`. |
+| `flatbuffers` | Layer 2/3 with `flatbuffers`. |
+| `dst` | Forwards to `disruptor_mp/dst`. |
 
-## Competitive Bench
+## Bench harnesses
 
-`crates/competitive-bench` is the narrow apples-to-apples transport comparison harness.
-It owns the competitive ping-pong surface and durable result bundles for:
+- `crates/perf-bench` — broad internal sweep universe across all
+  layers (raw, framed, codec, typed_zc), both backends (`shm`,
+  `mmap`), and three modes (throughput, fixed-rate
+  coordinated-omission-aware, batch-timing). Runs against
+  `disruptor-mp` and `myelon` natively.
+- `crates/competitive-bench` — narrow apples-to-apples transport
+  comparison harness against `crossbar`, `shmipc`, `rusteron`,
+  `iceoryx2`, `zmq`, `iggy`, `redpanda`. Uses
+  `disruptor-mp` + `myelon` raw layers as internal
+  baselines.
 
-- raw internal baselines over `shm` and `mmap`
-- external peers such as `crossbar`, `shmipc-rs`, `iceoryx2`, `boost`, `ompi`, `rusteron`, and `zeromq`
-- Docker-managed broker peers for quick TCP comparison:
-  - `iggy-tcp`
-  - `redpanda-kafka`
-- protocol-separated aggregate tables and SVG frontier plots
-
-Start there when you want local IPC or transport-comparison numbers without triggering the full
-internal `perf-bench` matrix. See:
-
-- `crates/competitive-bench/README.md`
-- `crates/competitive-bench/SETUP.md`
-
-## One-Command Workflows
+## One-command workflows
 
 - Competitive exact-size smoke:
   - `make -C crates/competitive-bench simple-smoke`
@@ -58,45 +106,16 @@ internal `perf-bench` matrix. See:
   - `make workspace-smoke`
 - Rust-tier orchestration (format/lint/tests/bench+example compile checks):
   - `make orchestrate-rust`
-- Python-tier orchestration:
-  - `make orchestrate-python`
 - Full monorepo orchestration:
   - `make orchestrate-all`
 
-## Rust Fixed Topology
+## Platform policy
 
-`crates/legacy-wip` now exposes a first domain-layer topology API for
-fixed scheduler-to-worker pools:
+- **Linux** — officially supported.
+- **macOS** — exercised and expected to work for primary multiprocess
+  paths, but not an officially supported target.
+- **Windows** — unsupported.
 
-```rust
-use myelon::inference::{FixedTopology, WorkerCount};
-use std::time::Duration;
+## License
 
-#[derive(Copy, Clone, Default)]
-struct InferenceEvent {
-    token_id: u32,
-    worker_id: u16,
-    end_of_batch: bool,
-}
-
-let topology = FixedTopology::new("infer_demo", 1024, WorkerCount::Three)
-    .with_coordination_timeout(Duration::from_secs(5));
-
-let _scheduler_builder = topology.scheduler_builder::<InferenceEvent>();
-for worker_index in topology.worker_indices() {
-    let _worker_builder = topology.worker_builder::<InferenceEvent>(worker_index)?;
-}
-```
-
-This keeps the domain crate thin:
-
-- worker counts are typed (`WorkerCount::Two` through `WorkerCount::Eight`)
-- coordination timeout stays explicit
-- worker ids are generated and validated by the topology wrapper
-- underlying producer/consumer handles still come from the canonical `disruptor-mp` API
-
-## Platform Policy
-
-- Linux is the only officially supported platform for this monorepo.
-- macOS is exercised and expected to work for primary multiprocess paths, but is not an officially supported target.
-- Windows is explicitly not supported.
+MIT.

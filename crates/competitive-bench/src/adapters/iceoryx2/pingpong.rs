@@ -1,11 +1,11 @@
 #[cfg(unix)]
 mod unix_impl {
-    use chrono::Utc;
-    use clap::Parser;
     use crate::infra::pingpong::{
         ensure_message_size, interval_for_rate, pace_until, parse_payload, payload, scoped_name,
     };
     use crate::infra::result_json::{BenchmarkConfigOut, BenchmarkResultsOut, LatencyStatsOut};
+    use chrono::Utc;
+    use clap::Parser;
     use hdrhistogram::Histogram;
     use iceoryx2::port::subscriber::Subscriber;
     use iceoryx2::prelude::*;

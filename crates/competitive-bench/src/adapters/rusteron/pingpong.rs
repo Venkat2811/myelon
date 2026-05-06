@@ -1,5 +1,5 @@
-use clap::Parser;
 use crate::infra::result_json::{BenchmarkConfigOut, BenchmarkResultsOut, LatencyStatsOut};
+use clap::Parser;
 use hdrhistogram::Histogram;
 use rusteron_client::*;
 use rusteron_media_driver::{AeronCError, AeronDriver, AeronDriverContext};

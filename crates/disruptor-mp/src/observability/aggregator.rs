@@ -8,7 +8,7 @@
 //! `metrics::set_global_recorder` flow — this aggregator doesn't pick
 //! a backend, it goes through the facade.
 //!
-//! Cost model: O(n_slots) atomic loads per tick (default 100 ms),
+//! Cost model: `O(n_slots)` atomic loads per tick (default 100 ms),
 //! plus one `metrics::counter!()` registration per unique label per
 //! tick. None of this runs on the producer/consumer hot path.
 
@@ -39,7 +39,7 @@ impl Default for AggregatorConfig {
     }
 }
 
-/// Runs the aggregator until dropped or [`stop`] is called.
+/// Runs the aggregator until dropped or [`AggregatorHandle::stop`] is called.
 ///
 /// The handle owns the worker thread; dropping joins it. Internally
 /// the aggregator re-attaches to the same memory the writer initialised,

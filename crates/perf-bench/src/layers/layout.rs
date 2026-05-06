@@ -14,9 +14,7 @@ use myelon::transport::{
     FixedFrame, FramedTransportConsumer, FramedTransportProducer, MmapFramedTransportConsumer,
     MmapFramedTransportProducer, MyelonWaitStrategy,
 };
-use myelon::typed_transport::{
-    MmapTypedConsumer, MmapTypedProducer, TypedConsumer, TypedProducer,
-};
+use myelon::typed_transport::{MmapTypedConsumer, MmapTypedProducer, TypedConsumer, TypedProducer};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 

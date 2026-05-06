@@ -1,5 +1,5 @@
-use clap::Parser;
 use crate::infra::result_json::{BenchmarkConfigOut, BenchmarkResultsOut, LatencyStatsOut};
+use clap::Parser;
 use crossbar::{error::Error as CrossbarError, Channel, Config, WaitStrategy};
 use hdrhistogram::Histogram;
 use std::error::Error;

@@ -17,7 +17,7 @@ pub struct SleepConfig {
     pub block_strategy_ms: f64,
     /// Consumer discovery polling interval (milliseconds)
     pub discovery_poll_ms: u64,
-    /// consume_next_with_sleep duration (microseconds)
+    /// `consume_next_with_sleep` duration (microseconds)
     pub consume_sleep_us: u64,
     /// Python consumer busy wait prevention (microseconds)
     pub consumer_busy_wait_us: u64,

@@ -1,24 +1,70 @@
 # disruptor-mp
 
-Multiprocess shared-memory ring buffer support for Disruptor-style publication.
+Multiprocess shared-memory ring buffers for Disruptor-style
+publication.
 
-This crate is intentionally **multiprocess-only**.
-It no longer vendors/copypastes single-process internals from `disruptor-rs`.
+`disruptor-mp` extends the upstream single-process
+[`disruptor`](https://crates.io/crates/disruptor) crate with a
+cross-process data plane: producers and consumers in different OS
+processes coordinate through a shared-memory segment with
+cache-line-padded sequence cursors and a fixed-size ring buffer.
 
-## Boundary
+## Where this crate sits
 
-- `disruptor-mp` owns:
-  - shared-memory lifecycle, producer/consumer coordination, and multiprocess benchmarks/tests via stable namespaces:
-    - `disruptor_mp::shared_memory`
-    - `disruptor_mp::lock_free`
-    - `disruptor_mp::backend`
-  - high-level constructors and types:
-    - `attach_shared_consumer`
-    - `build_shared_single_producer`
-    - `SharedProducer`, `SharedConsumer`, `SharedCursor`, `SharedRingBuffer`, `ShmRingBuffer`
-    - `CoordinationMode`, `DiscoveryMode`, `ConsumerBarrier`, `ProducerBarrier`
-- crates.io `disruptor` owns:
-  - single-process/threaded disruptor APIs (`build_single_producer`, `build_multi_producer`, wait strategies, pollers).
+This is the substrate. Higher-level transports (framing, codecs,
+typed zero-copy, topology) live in
+[`myelon`](../myelon/) and stack on top of the
+types here. If you want a typed transport with serialisation and
+fragmentation, depend on `myelon` instead — it re-exports
+everything from this crate.
+
+```
+                  ┌────────────────────────────────┐
+                  │  myelon                        │
+                  │  framing, codecs, typed        │ ← optional, sits on top
+                  │  zero-copy, topology           │
+                  └───────────────┬────────────────┘
+                                  │ wraps
+                  ┌───────────────▼────────────────┐
+                  │  disruptor-mp  (this crate)    │
+                  │  Layer 0: raw ring buffer      │ ← what you get here
+                  │  + coordination + observability│
+                  └───────────────┬────────────────┘
+                                  │ depends on
+                  ┌───────────────▼────────────────┐
+                  │  disruptor  (crates.io)        │
+                  │  single-process / threaded     │
+                  └────────────────────────────────┘
+```
+
+## What this crate provides
+
+| Concern | Type | Purpose |
+|---|---|---|
+| Raw ring (SHM) | `SharedProducer<E>`, `SharedConsumer<E>` | Cross-process publish/consume of fixed-size events over a POSIX shared-memory segment. |
+| Raw ring (mmap) | `MmapProducer<E>`, `MmapConsumer<E>` | Same, backed by a memory-mapped file. |
+| Builders | `build_shared_single_producer(...)`, `attach_shared_consumer(...)` | Construct producer/consumer with discovery and coordination wired up. |
+| Coordination | `CoordinationMode::{Immediate, WaitForConsumers, Discovery}` | When does the producer consider its peers attached? |
+| Liveness | `RequiredConsumerLivenessConfig`, `RequiredConsumerFailureAction` | A stalled required consumer is treated as a failure or alert, not silent backpressure. |
+| Naming | `portable_shm_segment_name(name)` | Derive a macOS-safe SHM segment name from an arbitrary label. |
+| Observability | `disruptor_mp::observability::*` (RFC 0040) | Hot-path counters file (`events_published`, `events_consumed`, `producer_full_events`, `consumer_empty_spins`, `consumer_lag_max`) plus optional `metrics`-rs / Prometheus / OTLP exporters. See `the workspace book`. |
+
+`E` is your event type — anything `Copy + Default + 'static` with a
+stable layout. The crate stays out of the wire-format business; pick
+the layer above (`myelon`) when you need framing or
+serialisation.
+
+## Boundary with upstream `disruptor`
+
+- `disruptor-mp` owns multiprocess concerns: shared-memory lifecycle,
+  producer/consumer coordination, mmap layout, observability, and
+  multiprocess benchmarks/tests. Stable public namespaces:
+  - `disruptor_mp::shared_memory`
+  - `disruptor_mp::lock_free`
+  - `disruptor_mp::backend`
+- The crates.io [`disruptor`](https://crates.io/crates/disruptor) crate
+  owns single-process / threaded APIs (`build_single_producer`,
+  `build_multi_producer`, wait strategies, pollers).
 
 See `the workspace book` for migration details.
 See `the workspace book` for shared-memory layout versioning rules.
@@ -35,6 +81,59 @@ Internally this crate depends on crates.io `disruptor` as:
 [dependencies]
 disruptor_core = { package = "disruptor", version = "3.7.1" }
 ```
+
+## Required-consumer liveness (RFC 0017.5)
+
+The base producer/consumer model is strict broadcast — the slowest
+consumer gates capacity. By default that means a stalled or crashed
+required consumer backpressures the producer indefinitely. The
+liveness layer turns that silent stall into a producer-observable,
+time-bounded event — opt-in, no consumer-side heartbeat, no cost on
+the steady-state hot path.
+
+```rust,no_run
+# fn main() -> Result<(), Box<dyn std::error::Error>> {
+use disruptor_mp::{
+    RequiredConsumerLivenessConfig, RequiredConsumerFailureAction,
+    build_shared_single_producer,
+};
+use std::time::Duration;
+
+let mut producer = build_shared_single_producer::<u64>("ring", 4096)
+    .build_producer(Default::default)?;
+
+producer.enable_required_consumer_liveness(RequiredConsumerLivenessConfig {
+    required_consumer_ids: vec!["worker_0".into(), "worker_1".into()],
+    startup_wait_timeout:    Duration::from_secs(10),
+    progress_timeout:        Duration::from_secs(5),
+    progress_check_interval: Duration::from_millis(100),
+    shutdown_grace_period:   Duration::from_secs(2),
+    failure_action:          RequiredConsumerFailureAction::GracefulShutdown,
+    alert_hook:              None,
+});
+
+// Use publish_managed instead of publish — same arguments, but the result
+// surfaces RequiredConsumerError instead of blocking forever on a stalled
+// required consumer.
+producer.publish_managed(|slot| { *slot = 42; })?;
+# Ok(()) }
+```
+
+| Behaviour | What happens |
+|---|---|
+| Required consumer doesn't appear within `startup_wait_timeout`. | First `publish_managed` returns `RequiredConsumerError::StartupTimeout { missing }`. |
+| Required consumer stalls past `progress_timeout` while gating the producer. | One stderr alert + optional `RequiredConsumerAlertHook` callback. |
+| Same consumer ID rejoins before `shutdown_grace_period` expires. | Producer recovers, alert state clears, publishing resumes. |
+| Stall persists past `shutdown_grace_period`. | Next `publish_managed` returns `RequiredConsumerError::GracefulShutdownTriggered { consumer_id, last_sequence, stalled_for }`. |
+| Idle topology (no publish work). | Liveness is not checked. No false positives. |
+
+The liveness check is **cold-path only** — it runs only while the
+producer is blocked on a gating required consumer. Steady-state
+publish cost is unchanged. Existing unmanaged calls (`publish`,
+`try_publish`, `publish_batch`) keep their original semantics for
+callers that don't opt in. By design, the liveness layer does **not**
+add dead-consumer eviction, quorum, or degraded-broadcast modes —
+the system stays strict-broadcast.
 
 ## Quick Start (Multiprocess)
 

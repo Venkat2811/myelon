@@ -62,7 +62,7 @@ impl CoordinationMode {
 pub struct SharedProducer<E> {
     ring_buffer: SharedRingBuffer<E>,
     producer_sequence: SharedCursor,
-    /// Consumer barrier for tracking all consumers (replaces min_consumer_sequence)
+    /// Consumer barrier for tracking all consumers (replaces `min_consumer_sequence`)
     pub(crate) consumer_barrier: SharedConsumerBarrier,
     /// Next sequence to be published
     sequence: Sequence,
@@ -497,7 +497,7 @@ where
     }
 
     /// Attempt to publish an event but give up after `timeout`.
-    /// Returns Ok(sequence) on success or Err(PublishTimeoutError::Timeout) if the timeout expired.
+    /// Returns `Ok(sequence)` on success or `Err(PublishTimeoutError::Timeout)` if the timeout expired.
     pub fn publish_with_timeout<F>(
         &mut self,
         timeout: Duration,
@@ -649,7 +649,7 @@ where
     /// Wait until the provided sequence is consumed by all known consumers or timeout.
     ///
     /// The waiting behavior is controlled by the provided `AutoWaitStrategy`:
-    /// - BusySpin / BusySpinWithSpinLoopHint: busy spin using `spin_loop`
+    /// - `BusySpin` / `BusySpinWithSpinLoopHint`: busy spin using `spin_loop`
     /// - Block: sleep using block strategy duration from wait config
     /// - Sleep(d): sleep for the specified duration
     pub fn wait_until_consumed_with_strategy(

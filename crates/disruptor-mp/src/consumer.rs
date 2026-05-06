@@ -395,7 +395,7 @@ where
 
     /// Process next available event with blocking semantics (HIGH PERFORMANCE)
     /// This method blocks until an event is available, then processes it
-    /// Uses spin_loop() for maximum throughput (CPU intensive)
+    /// Uses `spin_loop()` for maximum throughput (CPU intensive)
     /// Returns the sequence and whether this was the end of a batch
     pub fn process_next_blocking<F>(&mut self, mut processor: F) -> (Sequence, bool)
     where
@@ -415,7 +415,7 @@ where
 
     /// Process next available event with blocking semantics (CPU EFFICIENT)
     /// This method blocks until an event is available, then processes it
-    /// Uses sleep() for better CPU efficiency (lower throughput)
+    /// Uses `sleep()` for better CPU efficiency (lower throughput)
     /// Returns the sequence and whether this was the end of a batch
     pub fn process_next_blocking_with_sleep<F>(&mut self, mut processor: F) -> (Sequence, bool)
     where

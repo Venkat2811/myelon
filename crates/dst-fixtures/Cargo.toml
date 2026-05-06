@@ -1,9 +1,16 @@
 [package]
-name          = "dst-fixtures"
-version       = "0.1.0"
-edition       = "2021"
-description   = "Shared deterministic simulation support types for disruptor-mp and myelon tests"
-license       = "MIT"
+name        = "dst-fixtures"
+version     = "0.1.0"
+description = "Internal: deterministic-simulation test fixtures shared by disruptor-mp and myelon integration tests."
+publish     = false
+edition.workspace      = true
+license.workspace      = true
+authors.workspace      = true
+repository.workspace   = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
 
 [lib]
 name = "dst_fixtures"

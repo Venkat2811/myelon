@@ -34,9 +34,7 @@ use myelon::transport::{
     FixedFrame, FramedTransportConsumer, FramedTransportProducer, MmapFramedTransportConsumer,
     MmapFramedTransportProducer, MyelonWaitStrategy, ReassemblyBuffer,
 };
-use myelon::typed_transport::{
-    MmapTypedConsumer, MmapTypedProducer, TypedConsumer, TypedProducer,
-};
+use myelon::typed_transport::{MmapTypedConsumer, MmapTypedProducer, TypedConsumer, TypedProducer};
 use myelon::AlignedFixedFrame;
 use myelon::{
     attach_shared_consumer as my_attach_shared_consumer,

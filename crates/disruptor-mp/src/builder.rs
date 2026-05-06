@@ -171,7 +171,7 @@ impl AutoWaitStrategy {
     /// Create a sleep-based wait strategy with nanosecond precision
     ///
     /// # Special Values
-    /// - `0` = Use spin_loop() instead of sleep (high performance)
+    /// - `0` = use `spin_loop()` instead of sleep (high performance)
     /// - `1..` = Sleep for the specified nanoseconds (lower performance, CPU efficient)
     ///
     /// Note: Actual sleep precision depends on the operating system.
@@ -187,7 +187,7 @@ impl AutoWaitStrategy {
     /// Create a sleep-based wait strategy with microsecond precision
     ///
     /// # Special Values
-    /// - `0` = Use spin_loop() instead of sleep (high performance)
+    /// - `0` = use `spin_loop()` instead of sleep (high performance)
     /// - `1..` = Sleep for the specified microseconds (lower performance, CPU efficient)
     pub fn sleep_micros(micros: u64) -> Self {
         if micros == 0 {
@@ -200,8 +200,8 @@ impl AutoWaitStrategy {
     /// Create wait strategy from environment variables with fallback
     ///
     /// Checks these environment variables in order:
-    /// 1. `AUTO_WAIT_DELAY_NS` - nanosecond precision (0 = spin_loop)
-    /// 2. `AUTO_WAIT_DELAY_US` - microsecond precision (0 = spin_loop)
+    /// 1. `AUTO_WAIT_DELAY_NS` - nanosecond precision (`0` = `spin_loop`)
+    /// 2. `AUTO_WAIT_DELAY_US` - microsecond precision (`0` = `spin_loop`)
     /// 3. Falls back to the provided default
     ///
     /// # Examples
@@ -283,11 +283,11 @@ impl AutoConsumer {
     }
 }
 
-/// Automatic resource management for AutoConsumer
+/// Automatic resource management for [`AutoConsumer`].
 ///
-/// This ensures proper cleanup when the consumer goes out of scope,
-/// which is essential for Competitor integration where Python's garbage
-/// collection expects automatic resource management.
+/// Ensures proper cleanup when the consumer goes out of scope,
+/// which matters for embedded-Python integrations (e.g. Competitor) where
+/// the host's garbage collector expects automatic resource management.
 impl Drop for AutoConsumer {
     fn drop(&mut self) {
         // Signal shutdown and wait for thread to finish
@@ -489,7 +489,8 @@ where
     /// Enable optimized discovery with consumer naming convention for fixed topology (convenience method)
     ///
     /// This uses consumer name prefixes for much faster consumer discovery
-    /// compared to PID scanning. Consumers will be discovered using names like: "DIS_SM_1", "DIS_SM_2", etc.
+    /// compared to PID scanning. Consumers will be discovered using names
+    /// like `DIS_SM_1`, `DIS_SM_2`, etc.
     /// The prefix identifies the consumer group/application, not the OS process name.
     /// Stops scanning once the expected number of consumers are discovered, saving CPU cycles.
     /// Default scan interval: 100ms.
@@ -1004,7 +1005,7 @@ fn pin_current_thread_to_core(core_id: usize, thread_name: &str) {
 /// - One process creates and owns the producer
 /// - Multiple processes can attach as consumers (each sees all events)
 ///
-/// Note: SharedProducer cannot be cloned across processes. Each shared memory
+/// Note: `SharedProducer` cannot be cloned across processes. Each shared memory
 /// segment supports exactly one producer process.
 ///
 /// For automatic coordination, use the builder pattern:

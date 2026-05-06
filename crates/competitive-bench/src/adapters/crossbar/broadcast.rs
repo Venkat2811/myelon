@@ -1,5 +1,5 @@
-use clap::Parser;
 use crate::infra::result_json::{BenchmarkConfigOut, BenchmarkResultsOut, LatencyStatsOut};
+use clap::Parser;
 use crossbar::{error::Error as CrossbarError, Config, Publisher, Subscriber, WaitStrategy};
 use perf_bench::infra::coordination::BenchmarkCoordination;
 use perf_bench::infra::latency::LatencyRecorder;

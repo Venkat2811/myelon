@@ -1,9 +1,16 @@
 [package]
-name = "dst-runner"
-version = "0.1.0"
-edition = "2021"
-license = "MIT"
-description = "Real multiprocess deterministic-surface test runner for disruptor-mp and myelon"
+name        = "dst-runner"
+version     = "0.1.0"
+description = "Internal: multiprocess deterministic-simulation test runner for disruptor-mp and myelon."
+publish     = false
+edition.workspace      = true
+license.workspace      = true
+authors.workspace      = true
+repository.workspace   = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
 
 [dependencies]
 disruptor_mp = { package = "disruptor-mp", path = "../disruptor-mp" }

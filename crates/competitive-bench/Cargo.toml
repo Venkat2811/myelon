@@ -1,11 +1,17 @@
 [package]
-name = "competitive-bench"
-version = "0.1.0"
-edition = "2021"
-description = "Parity-oriented IPC benchmark orchestrator for mp_ipc_world_domination-style comparisons"
-license = "MIT"
-readme = "README.md"
-publish = false
+name        = "competitive-bench"
+version     = "0.1.0"
+description = "Internal IPC benchmark harness comparing disruptor-mp against external transports (crossbar, shmipc, rusteron, iceoryx2, zmq, iggy, redpanda) on a fixed `1p1c` ping-pong and `1p4c`/`1p8c` broadcast contract."
+readme      = "README.md"
+publish     = false
+edition.workspace      = true
+license.workspace      = true
+authors.workspace      = true
+repository.workspace   = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
 
 [dependencies]
 chrono = { version = "0.4", default-features = true }

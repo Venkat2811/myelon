@@ -91,10 +91,12 @@ pub struct CounterSlot {
 
 const _: () = assert!(std::mem::size_of::<CounterSlot>() == CACHE_LINE_BYTES);
 
-/// Mutable handle to a `CounterSlot`. Created by writers (producer /
-/// consumer construction) and held by reference for the lifetime of the
-/// segment. Increments are relaxed atomic; reads from a separate thread
-/// see eventually-consistent values.
+/// Mutable handle to a `CounterSlot`.
+///
+/// Created by writers (producer / consumer construction) and held by
+/// reference for the lifetime of the segment. Increments are relaxed
+/// atomic; reads from a separate thread see eventually-consistent
+/// values.
 #[derive(Clone, Copy, Debug)]
 pub struct CounterHandle {
     inner: NonNull<CounterSlot>,
@@ -182,18 +184,23 @@ impl CountersFile {
     pub unsafe fn init(ptr: NonNull<u8>) -> Self {
         let header_ptr = ptr.as_ptr() as *mut CountersHeader;
         let slots_offset = std::mem::size_of::<CountersHeader>() as u32;
-        std::ptr::write(
-            header_ptr,
-            CountersHeader {
-                magic: COUNTERS_MAGIC,
-                version: 0,
-                slot_count: AtomicU32::new(0),
-                slot_capacity: MAX_COUNTER_SLOTS as u32,
-                slot_stride: std::mem::size_of::<CounterSlot>() as u32,
-                slots_offset,
-                _reserved: [0u8; 64 - 24],
-            },
-        );
+        // SAFETY: caller's contract guarantees `ptr` is writable for at
+        // least `COUNTERS_FILE_RESERVED_BYTES` and that the memory is
+        // zero-initialised, which is what `write` requires here.
+        unsafe {
+            std::ptr::write(
+                header_ptr,
+                CountersHeader {
+                    magic: COUNTERS_MAGIC,
+                    version: 0,
+                    slot_count: AtomicU32::new(0),
+                    slot_capacity: MAX_COUNTER_SLOTS as u32,
+                    slot_stride: std::mem::size_of::<CounterSlot>() as u32,
+                    slots_offset,
+                    _reserved: [0u8; 64 - 24],
+                },
+            );
+        }
         // Slots are already zeroed by the caller's mmap/SHM allocation.
         Self {
             base: ptr,
@@ -209,7 +216,10 @@ impl CountersFile {
     /// readable memory whose lifetime contains the returned view. The
     /// memory must already have been initialised by a writer.
     pub unsafe fn attach(ptr: NonNull<u8>) -> Result<Self, AttachError> {
-        let header = &*(ptr.as_ptr() as *const CountersHeader);
+        // SAFETY: caller's contract guarantees `ptr` points at an
+        // initialised `CountersHeader` whose backing memory remains
+        // valid for at least the lifetime of the returned view.
+        let header = unsafe { &*(ptr.as_ptr() as *const CountersHeader) };
         if header.magic != COUNTERS_MAGIC {
             return Err(AttachError::BadMagic(header.magic));
         }

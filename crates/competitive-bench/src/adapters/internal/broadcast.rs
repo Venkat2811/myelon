@@ -3,9 +3,9 @@
 #[path = "../../../../disruptor-mp/benches/ipc/competitive/common.rs"]
 mod common;
 
+use crate::infra::result_json::{BenchmarkConfigOut, BenchmarkResultsOut, LatencyStatsOut};
 use clap::Parser;
 use common::{nanos_now, BenchmarkEvent};
-use crate::infra::result_json::{BenchmarkConfigOut, BenchmarkResultsOut, LatencyStatsOut};
 use disruptor_mp::{
     attach_shared_consumer as disruptor_attach_shared_consumer,
     build_shared_single_producer as disruptor_build_shared_single_producer, AutoWaitStrategy,

@@ -18,9 +18,7 @@ use crate::layers::framed_myelon::codec::payloads::{
 };
 use disruptor_mp::AutoWaitStrategy;
 use myelon::transport::{MyelonWaitStrategy, ReassemblyBuffer};
-use myelon::typed_transport::{
-    MmapTypedConsumer, MmapTypedProducer, TypedConsumer, TypedProducer,
-};
+use myelon::typed_transport::{MmapTypedConsumer, MmapTypedProducer, TypedConsumer, TypedProducer};
 use myelon::AlignedFixedFrame;
 use std::collections::HashMap;
 use std::hint::black_box;

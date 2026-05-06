@@ -1,13 +1,19 @@
 [package]
 name          = "disruptor-mp"
 version       = "3.7.1"
-edition       = "2021"
-description   = "Low latency multiprocess communication via shared-memory ring buffers (LMAX disruptor-inspired)."
-license       = "MIT"
-authors       = ["venkat"]
-repository    = "https://github.com/Venkat2811/myelon"
-categories    = ["data-structures", "concurrency"]
-keywords      = ["disruptor", "ringbuffer", "message", "mpmc"]
+description   = "Multiprocess shared-memory ring buffers for Disruptor-style publication, with cross-process producer/consumer coordination, optional mmap-backed transport, and observability counters."
+readme        = "README.md"
+categories    = ["data-structures", "concurrency", "memory-management"]
+keywords      = ["disruptor", "ringbuffer", "ipc", "shared-memory", "lock-free"]
+edition.workspace      = true
+license.workspace      = true
+authors.workspace      = true
+repository.workspace   = true
+homepage.workspace     = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
 
 [lib]
 name = "disruptor_mp"

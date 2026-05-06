@@ -2,7 +2,7 @@
 members = [
   "crates/disruptor-mp",
   "crates/dst-runner",
-  "crates/legacy-wip",
+  "crates/myelon",
   "crates/perf-bench",
   "crates/competitive-bench",
   "crates/dst-fixtures",
@@ -10,11 +10,65 @@ members = [
 resolver = "2"
 
 [workspace.package]
-edition = "2021"
-license = "MIT"
+edition      = "2021"
+license      = "MIT"
+authors      = ["Venkat Raman <vraman2811@gmail.com>"]
+repository   = "https://github.com/Venkat2811/myelon"
+homepage     = "https://github.com/Venkat2811/myelon"
+rust-version = "1.87"
 
 [workspace.metadata]
 project = "myelon"
+
+# ----------------------------------------------------------------------------
+# Shared lint configuration.
+#
+# Each crate opts in by adding `[lints] workspace = true` to its Cargo.toml.
+# The `missing_docs` rust lint is intentionally NOT enabled at workspace level
+# because the internal bench crates (`perf-bench`, `competitive-bench`) carry
+# heavy fixtures that don't need external doc coverage. Published crates set
+# `#![warn(missing_docs)]` in their `lib.rs` directly.
+# ----------------------------------------------------------------------------
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "warn"
+rust_2018_idioms       = { level = "warn", priority = -1 }
+nonstandard_style      = { level = "warn", priority = -1 }
+
+[workspace.lints.rustdoc]
+broken_intra_doc_links = "deny"
+unescaped_backticks    = "warn"
+private_doc_tests      = "warn"
+
+[workspace.lints.clippy]
+# Default tiers — `all` at warn, opinionated tiers off-by-default to
+# avoid stylistic noise on a multi-author codebase.
+all      = { level = "warn", priority = -1 }
+pedantic = { level = "allow", priority = -1 }
+nursery  = { level = "allow", priority = -1 }
+
+# `missing_safety_doc` stays warn — it catches `unsafe fn` declarations
+# that are missing the `# Safety` rustdoc section. The other doc-quality
+# lints (`missing_panics_doc`, `missing_errors_doc`,
+# `undocumented_unsafe_blocks`) are intentionally allowed at workspace
+# level: they surface useful gaps, but enforcing them repo-wide would
+# require backfilling hundreds of comments in pre-existing internal
+# code. Document `# Panics` / `# Errors` / `// SAFETY:` on a
+# per-function basis in the published crates (disruptor-mp, myelon)
+# progressively.
+missing_safety_doc            = "warn"
+
+# Rustdoc-quality lints worth enforcing repo-wide:
+empty_docs                    = "warn"
+needless_doctest_main         = "warn"
+doc_link_with_quotes          = "warn"
+doc_overindented_list_items   = "warn"
+tabs_in_doc_comments          = "warn"
+too_long_first_doc_paragraph  = "warn"
+# `doc_markdown` is high-signal but produces false positives on names
+# like `Competitor`, `MMAP`, etc. Enabled at warn so they surface; suppress
+# locally with `#[allow(clippy::doc_markdown)]` on the offending item
+# when the false-positive is unavoidable.
+doc_markdown                  = "warn"
 
 [profile.competitive]
 inherits = "release"

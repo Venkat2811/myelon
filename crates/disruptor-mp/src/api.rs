@@ -196,7 +196,7 @@
 //!
 //! See the `examples/` directory for complete examples:
 //! - `counters_auto.rs`: **Recommended** - Automatic coordination with event handlers
-//! - `counters.rs`: Manual coordination with external ProcessCoordination
+//! - `counters.rs`: Manual coordination with external `ProcessCoordination`
 //! - `shared_disruptor.rs`: Basic producer-consumer setup
 //!
 //! ## Running Examples
@@ -215,6 +215,10 @@
 //! cargo bench --bench ipc_shm
 //! ```
 
+// Doctests in `builder.rs` reference items that re-export through this
+// module's public API; suppressing the lint here keeps those examples
+// while not promoting the module to `pub`.
+#[allow(rustdoc::private_doc_tests)]
 #[path = "builder.rs"]
 mod builder;
 #[path = "consumer.rs"]

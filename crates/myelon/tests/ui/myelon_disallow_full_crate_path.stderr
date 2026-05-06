@@ -1,0 +1,5 @@
+error[E0432]: unresolved import `myelon::disruptor_mp`
+ --> tests/ui/myelon_disallow_full_crate_path.rs:1:5
+  |
+1 | use myelon::disruptor_mp;
+  |     ^^^^^^^^^^^^^^^^^^^^ no `disruptor_mp` in the root

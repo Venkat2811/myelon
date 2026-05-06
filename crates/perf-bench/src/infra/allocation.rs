@@ -25,9 +25,13 @@ thread_local! {
 #[global_allocator]
 static GLOBAL_ALLOCATOR: TrackingAllocator = TrackingAllocator;
 
+// SAFETY: this allocator forwards every call to `System` (which is itself
+// a sound `GlobalAlloc`) and only adds non-allocating bookkeeping in
+// thread-local cells.
 unsafe impl GlobalAlloc for TrackingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        let ptr = System.alloc(layout);
+        // SAFETY: contract identical to `System::alloc`.
+        let ptr = unsafe { System.alloc(layout) };
         if !ptr.is_null() && tracking_enabled() {
             ALLOC_COUNT.with(|count| count.set(count.get() + 1));
             ALLOC_BYTES.with(|bytes| bytes.set(bytes.get() + layout.size() as u64));
@@ -36,11 +40,13 @@ unsafe impl GlobalAlloc for TrackingAllocator {
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        System.dealloc(ptr, layout);
+        // SAFETY: caller's contract for `dealloc`.
+        unsafe { System.dealloc(ptr, layout) };
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        let out = System.realloc(ptr, layout, new_size);
+        // SAFETY: caller's contract for `realloc`.
+        let out = unsafe { System.realloc(ptr, layout, new_size) };
         if !out.is_null() && tracking_enabled() {
             ALLOC_COUNT.with(|count| count.set(count.get() + 1));
             ALLOC_BYTES.with(|bytes| bytes.set(bytes.get() + new_size as u64));
@@ -49,7 +55,8 @@ unsafe impl GlobalAlloc for TrackingAllocator {
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        let ptr = System.alloc_zeroed(layout);
+        // SAFETY: caller's contract for `alloc_zeroed`.
+        let ptr = unsafe { System.alloc_zeroed(layout) };
         if !ptr.is_null() && tracking_enabled() {
             ALLOC_COUNT.with(|count| count.set(count.get() + 1));
             ALLOC_BYTES.with(|bytes| bytes.set(bytes.get() + layout.size() as u64));
