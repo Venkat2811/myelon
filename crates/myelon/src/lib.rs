@@ -3,15 +3,21 @@
 //! Multiprocess shared-memory transport for inference and other
 //! low-latency pipelines.
 //!
-//! `myelon` is the **single, simplified façade** for the
-//! [`disruptor_mp`] substrate. It re-exports every relevant type
-//! from `disruptor-mp` (Layer 0 — the raw cross-process ring buffer
-//! plus its coordination, discovery, liveness, and observability
-//! primitives) and adds three more layers on top: framing, codec,
-//! and typed zero-copy. One dependency, one stable API surface, the
-//! whole stack.
+//! `myelon` is a **simplified façade** for the [`disruptor_mp`]
+//! substrate. It re-exports every relevant type from `disruptor-mp`
+//! (Layer 0 — the raw cross-process ring buffer plus its
+//! coordination, discovery, liveness, and observability primitives)
+//! and adds three more layers on top: framing, codec, and typed
+//! zero-copy.
 //!
-//! Pick the outermost layer that matches your data; the inner ones
+//! Both `myelon` and `disruptor-mp` are first-class entry points —
+//! depend on whichever exposes only the surface your code actually
+//! needs. The type identity is preserved across the re-export
+//! boundary, so a `disruptor_mp::SharedConsumer<E>` *is* a
+//! `myelon::SharedConsumer<E>`; helpers and patterns transfer
+//! between the two profiles unchanged.
+//!
+//! Pick the outermost layer that matches your data; inner layers
 //! (including Layer 0) are reachable through `myelon` without
 //! adding `disruptor-mp` as a separate dependency.
 //!
@@ -19,7 +25,7 @@
 //!
 //! ```text
 //! ┌───────────────────────────────────────────────────────────┐
-//! │ myelon                  ← single dep for most users       │
+//! │ myelon                  ← full layered façade             │
 //! │                                                           │
 //! │   Layer 3 — typed zero-copy (ZeroCopyCodec)               │
 //! │   Layer 2 — codec (bincode / rkyv / flatbuffers)          │

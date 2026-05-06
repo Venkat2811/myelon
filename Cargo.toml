@@ -6,6 +6,7 @@ members = [
   "crates/perf-bench",
   "crates/competitive-bench",
   "crates/dst-fixtures",
+  "crates/myelon-pulse",
   "examples",
 ]
 resolver = "2"

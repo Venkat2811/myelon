@@ -10,7 +10,7 @@ Repo for the [`myelon`](https://crates.io/crates/myelon) and [`disruptor-mp`](ht
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│ myelon                       ← single dep for most users     │
+│ myelon                       ← full layered façade           │
 │                                                              │
 │   Layer 3 — typed zero-copy                                  │
 │   Layer 2 — codec (bincode / rkyv / flatbuffers)             │
@@ -39,11 +39,16 @@ Repo for the [`myelon`](https://crates.io/crates/myelon) and [`disruptor-mp`](ht
                           single-process / threaded primitives
 ```
 
-**You almost certainly only need `myelon`.** It re-exports every relevant `disruptor-mp` type, so a single `myelon = "..."` dependency gives you the full Layer 0 substrate plus Layers 1–3 and the orthogonal concerns. Reach for `disruptor-mp` directly only when you want the substrate alone with no framing / codec / topology surface compiled in.
+Both crates are first-class entry points — pick by what surface your code actually needs:
+
+- **Depend on [`myelon`](crates/myelon/)** for the full layered stack. It re-exports every relevant `disruptor-mp` type, so one dep gives you Layer 0 plus framing / codec / typed-zero-copy / topology / layout.
+- **Depend on [`disruptor-mp`](crates/disruptor-mp/) directly** for Layer 0 only — the raw cross-process ring plus its coordination, discovery, liveness, and observability primitives. Smaller dep footprint; suits substrate-only consumers and projects that publish their own wire format on top.
+
+The type identity is preserved across the boundary — a `disruptor_mp::SharedConsumer<E>` *is* a `myelon::SharedConsumer<E>` — so helpers, rendezvous primitives, and patterns transfer unchanged between the two profiles.
 
 ## Where to go for what
 
-The default crate to depend on is [`myelon`](crates/myelon/) — every row below is reachable from it. The right-most column flags the few cases where depending on [`disruptor-mp`](crates/disruptor-mp/) directly is also reasonable.
+Every row below is reachable from [`myelon`](crates/myelon/); the right-most column flags rows where depending on [`disruptor-mp`](crates/disruptor-mp/) directly is also a clean choice.
 
 | You want to … | Layer | Type | Direct on `disruptor-mp`? |
 |---|---|---|---|

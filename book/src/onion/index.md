@@ -4,7 +4,7 @@ The central organising idea is a four-layer onion. Each layer wraps the layer be
 
 ```text
 ┌───────────────────────────────────────────────────────────┐
-│ myelon                  ← single dep for most users       │
+│ myelon                  ← full layered façade             │
 │                                                           │
 │   Layer 3 — typed zero-copy (ZeroCopyCodec)               │
 │   Layer 2 — codec (bincode / rkyv / flatbuffers)          │
@@ -33,15 +33,14 @@ The central organising idea is a four-layer onion. Each layer wraps the layer be
 | 2 | `TypedProducer<F>` / `TypedConsumer<F>` + a `Codec` impl | `myelon::typed_transport::*` |
 | 3 | Same typed transport + a `ZeroCopyCodec` impl | `myelon::typed_transport::*` + `myelon::codec::ZeroCopyCodec` |
 
-## Why one dependency reaches everything
+## Two ways to depend on it
 
-`myelon` is intentionally a **simplified façade** for `disruptor-mp`'s core capabilities, not just an additional crate stacked on top. The Layer 0 types you'd reach for in a substrate-only project (`SharedProducer`, builders, `CoordinationMode`, `RequiredConsumerLivenessConfig`, `observability::*`) are all re-exported under `myelon::*`, so:
+`myelon` is intentionally a **simplified façade** for `disruptor-mp`'s core capabilities — the Layer 0 types you'd reach for in a substrate-only project (`SharedProducer`, builders, `CoordinationMode`, `RequiredConsumerLivenessConfig`, `observability::*`) are all re-exported under `myelon::*`. Both crates are first-class; pick by what surface your code actually needs:
 
-- You add `myelon = "..."` to your `Cargo.toml` once.
-- You `use myelon::{SharedProducer, build_shared_single_producer, …};` for raw-ring work, or step up to `myelon::transport::*` / `myelon::typed_transport::*` when you need framing or typing.
-- You never reach into `disruptor-mp` directly unless you specifically don't want the higher layers compiled into your binary.
+- **Full layered stack** — depend on `myelon`. `use myelon::{SharedProducer, build_shared_single_producer, …};` for raw-ring work, or step up to `myelon::transport::*` / `myelon::typed_transport::*` when you need framing or typing. One dep covers everything.
+- **Substrate only** — depend on `disruptor-mp` directly. The Layer 0 surface is identical to what `myelon` re-exports, but framing / codec / typed-zero-copy / topology / layout aren't compiled into your binary. Useful when you're publishing your own wire-format crate on top of the substrate, or you simply want the smaller dependency surface. See [`examples/disruptor_mp_shm.rs`](https://github.com/Venkat2811/myelon/blob/main/examples/disruptor_mp_shm.rs) and [`examples/disruptor_mp_mmap.rs`](https://github.com/Venkat2811/myelon/blob/main/examples/disruptor_mp_mmap.rs).
 
-Reach for `disruptor-mp` as a direct dependency only when you want the substrate alone — for example, if you publish your own wire-format crate on top of it.
+The type identity is preserved across the boundary — a `disruptor_mp::SharedConsumer<E>` *is* a `myelon::SharedConsumer<E>` — so helpers, rendezvous primitives, and patterns transfer unchanged between the two profiles.
 
 ## Orthogonal concerns
 

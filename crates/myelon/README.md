@@ -8,7 +8,7 @@ Multiprocess shared-memory transport for inference and other low-latency pipelin
 
 ```
 ┌───────────────────────────────────────────────────────────┐
-│ myelon                  ← single dep for most users       │
+│ myelon                  ← full layered façade             │
 │                                                           │
 │   Layer 3 — typed zero-copy (ZeroCopyCodec)               │
 │   Layer 2 — codec (bincode / rkyv / flatbuffers)          │
@@ -278,7 +278,14 @@ Layer 2/3 wraps Layer 1: construct a `TypedProducer<F>` / `TypedConsumer<F>` and
 
 ## Relationship to `disruptor-mp`
 
-`disruptor-mp` provides Layer 0 (the raw shared-memory ring buffer with cross-process producer/consumer coordination). `myelon` re-exports every relevant `disruptor-mp` type and stacks Layers 1, 2, and 3 on top, plus the orthogonal concerns above. Downstream code should depend on `myelon` only — there's no scenario where both crates make sense as direct dependencies.
+`disruptor-mp` provides Layer 0 (the raw shared-memory ring buffer with cross-process producer/consumer coordination). `myelon` re-exports every relevant `disruptor-mp` type and stacks Layers 1, 2, and 3 on top, plus the orthogonal concerns above.
+
+Both crates are first-class entry points — pick by what surface your code actually needs:
+
+- **Depend on `myelon`** if you want the full layered stack. One dep gives you Layer 0 plus framing / codec / typed-zero-copy / topology / layout, all behind a single import path.
+- **Depend on `disruptor-mp` directly** if you only need Layer 0 — the raw cross-process ring plus coordination, discovery, liveness, and observability primitives. Smaller dep footprint; useful when you're publishing your own wire-format crate on top of the substrate, or you simply don't want the higher layers compiled into your binary. See [`examples/disruptor_mp_shm.rs`](../../examples/disruptor_mp_shm.rs) and [`examples/disruptor_mp_mmap.rs`](../../examples/disruptor_mp_mmap.rs) for that profile.
+
+The type identity is preserved across the re-export boundary — a `disruptor_mp::SharedConsumer<E>` **is** a `myelon::SharedConsumer<E>` — so helpers, rendezvous primitives, and patterns written for one profile compile unchanged against the other.
 
 ## License
 

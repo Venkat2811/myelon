@@ -2,10 +2,10 @@
 
 Workspace-level runnable examples for [`myelon`](../crates/myelon/) — the simplified façade for [`disruptor-mp`](../crates/disruptor-mp/)'s core capabilities (Layer 0) plus framing, codecs, typed zero-copy, and topology on top.
 
-Two dependency profiles are demonstrated side-by-side:
+Two dependency profiles are demonstrated side-by-side. Both are first-class — pick by what surface your code actually needs:
 
-- **Via `myelon` (default for most users)** — single dep, full Layer 0 + Layers 1–3 + topology + observability surface reachable through `myelon::*`. `shm_disruptor`, `mmap_disruptor`, `pingpong`, `counters`, and `fixed_inference_topology` use this profile.
-- **Direct on `disruptor-mp` (substrate-only)** — depend on `disruptor-mp` alone when you don't want the framing / codec / typed-zero-copy / topology surface compiled into your binary. `disruptor_mp_shm` and `disruptor_mp_mmap` are templates for that profile.
+- **Via `myelon`** — full Layer 0 + Layers 1–3 + topology + observability surface reachable through `myelon::*` from a single dep. `shm_disruptor`, `mmap_disruptor`, `pingpong`, `counters`, and `fixed_inference_topology` use this profile.
+- **Direct on `disruptor-mp` (substrate-only)** — depend on `disruptor-mp` alone for Layer 0 only, with framing / codec / typed-zero-copy / topology not compiled into your binary. `disruptor_mp_shm` and `disruptor_mp_mmap` are templates for that profile.
 
 Same multiprocess pattern, same correctness primitives, same runtime behaviour — only the import paths and the `Cargo.toml` dependency choice differ.
 

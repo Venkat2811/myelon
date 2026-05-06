@@ -1,0 +1,24 @@
+[package]
+name        = "myelon-pulse"
+version     = "0.1.0"
+description = "Vanity brand demo: a House-MD-titles-style angiogram of branching pulses, mapping to broadcast and ping-pong dataflows over the myelon transport stack."
+publish     = false
+edition.workspace      = true
+license.workspace      = true
+authors.workspace      = true
+repository.workspace   = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+macroquad = "0.4"
+num_cpus  = "1.16"
+clap      = { version = "4", features = ["derive"] }
+# Capture: pure-Rust GIF encoding for in-app recording. Screenshots
+# use macroquad's built-in `Image::export_png`. Video is intentionally
+# left out for now since it would require an `ffmpeg` subprocess; if
+# a higher-fidelity capture is needed later, GIFs can be re-encoded
+# off-line.
+gif       = "0.13"

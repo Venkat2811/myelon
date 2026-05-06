@@ -1,6 +1,6 @@
 # When to use which layer
 
-The default crate to depend on is `myelon`. Every row in the table below is reachable from it. The right-most column flags the few rows where depending on `disruptor-mp` directly is also reasonable.
+Both `myelon` and `disruptor-mp` are first-class entry points. Every row in the table below is reachable from `myelon`; the right-most column flags rows where depending on `disruptor-mp` directly is also a clean choice — pick by what surface your code actually needs.
 
 | Need | Layer | Type | Direct on `disruptor-mp`? |
 |---|---|---|---|
