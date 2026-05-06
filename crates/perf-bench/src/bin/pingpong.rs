@@ -82,6 +82,13 @@ struct Args {
     #[arg(long, value_parser = ["on", "off"], default_value = "off")]
     liveness: String,
 
+    /// Attach RFC-0040 observability counters to the producer/consumer hot
+    /// paths so a counters-on scenario can be exercised. Default-off — the
+    /// standard bench path stays counter-free. Currently honored by
+    /// `--layer raw_ring --backend shm`; other layers/backends ignore it.
+    #[arg(long)]
+    enable_counters: bool,
+
     // --- hidden flags for child process re-invocation ---
     /// Internal: child process flag for raw_ring / raw_myelon layers
     #[arg(long, hide = true)]
@@ -242,6 +249,10 @@ fn build_raw_args(args: &Args) -> Vec<String> {
     if let Some(ref path) = args.json_out {
         v.push("--json-out".to_string());
         v.push(path.clone());
+    }
+
+    if args.enable_counters {
+        v.push("--enable-counters".to_string());
     }
 
     v

@@ -108,6 +108,15 @@ pub struct PingPongArgs {
     #[arg(long, default_value = "1")]
     pub consumers: usize,
 
+    /// Attach RFC-0040 observability counters (events_published / events_consumed
+    /// / producer_full_events / consumer_empty_spins) on the hot path so a
+    /// counters-enabled scenario can be exercised. Default-off so the default
+    /// bench path stays counter-free. Currently honored by `--backend shm`;
+    /// `--backend mmap` ignores it (mmap producer/consumer have no counter
+    /// wiring).
+    #[arg(long)]
+    pub enable_counters: bool,
+
     /// Internal child-role flag
     #[arg(long, hide = true)]
     pub process_two: bool,

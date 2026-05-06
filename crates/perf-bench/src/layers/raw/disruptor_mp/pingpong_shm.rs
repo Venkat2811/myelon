@@ -37,6 +37,61 @@ const CONSUMER_PREFIX: &str = "cp";
 const ECHO_CONSUMER_ID: &str = "cp_0";
 const MAIN_CONSUMER_ID: &str = "cp_0";
 
+/// Env var the parent sets on the spawned echo child when
+/// `--enable-counters` was passed, so the child enables the same
+/// counters wiring. Read by `run_process_two`. Opt-in only — absent
+/// or any value other than "1" leaves the hot path counter-free.
+const COUNTERS_ENV_VAR: &str = "PERF_BENCH_PINGPONG_COUNTERS";
+
+/// Attach an RFC-0040 counters file to a `SharedProducer` when
+/// `enabled` is true. Allocates a private, leaked, cache-line-aligned
+/// region per call — the bench process keeps it for its full lifetime,
+/// so leaking is the simplest way to satisfy the `&'static CountersFile`
+/// borrow `attach_counters` needs. Off by default so the standard bench
+/// path stays bit-identical to pre-RFC-0040 behavior.
+fn maybe_attach_counters_producer<E: Copy + Default + 'static>(
+    producer: &mut SharedProducer<E>,
+    enabled: bool,
+) {
+    if !enabled {
+        return;
+    }
+    use disruptor_mp::observability::{CountersFile, COUNTERS_FILE_RESERVED_BYTES};
+    use std::ptr::NonNull;
+    #[repr(C, align(64))]
+    struct AlignedRegion([u8; COUNTERS_FILE_RESERVED_BYTES]);
+    let leaked: &'static mut AlignedRegion =
+        Box::leak(Box::new(AlignedRegion([0u8; COUNTERS_FILE_RESERVED_BYTES])));
+    let ptr = NonNull::new(leaked.0.as_mut_ptr()).expect("Box::leak yields non-null");
+    let file = unsafe { CountersFile::init(ptr) };
+    let leaked_file: &'static CountersFile = Box::leak(Box::new(file));
+    producer.attach_counters(leaked_file);
+}
+
+/// Sibling of `maybe_attach_counters_producer` for `SharedConsumer`.
+fn maybe_attach_counters_consumer<E: Copy + Default + 'static>(
+    consumer: &mut SharedConsumer<E>,
+    enabled: bool,
+) {
+    if !enabled {
+        return;
+    }
+    use disruptor_mp::observability::{CountersFile, COUNTERS_FILE_RESERVED_BYTES};
+    use std::ptr::NonNull;
+    #[repr(C, align(64))]
+    struct AlignedRegion([u8; COUNTERS_FILE_RESERVED_BYTES]);
+    let leaked: &'static mut AlignedRegion =
+        Box::leak(Box::new(AlignedRegion([0u8; COUNTERS_FILE_RESERVED_BYTES])));
+    let ptr = NonNull::new(leaked.0.as_mut_ptr()).expect("Box::leak yields non-null");
+    let file = unsafe { CountersFile::init(ptr) };
+    let leaked_file: &'static CountersFile = Box::leak(Box::new(file));
+    consumer.attach_counters(leaked_file);
+}
+
+fn child_counters_enabled() -> bool {
+    env::var(COUNTERS_ENV_VAR).ok().as_deref() == Some("1")
+}
+
 fn discovery_scan_rounds(num_consumers: usize) -> usize {
     if num_consumers > 1 {
         8 + num_consumers
@@ -191,6 +246,10 @@ fn spawn_echo_process(
 
     if pingpong::json_mode(args) {
         child_cmd.env("JSON_MODE", "1");
+    }
+
+    if args.enable_counters {
+        child_cmd.env(COUNTERS_ENV_VAR, "1");
     }
 
     Ok(ChildProcessGuard::new(child_cmd.spawn()?))
@@ -578,6 +637,7 @@ fn run_benchmark<const SIZE: usize>(
                 .discover_consumer_with_prefix(1, CONSUMER_PREFIX)
                 .with_coordination(CoordinationMode::Immediate)
                 .build_producer(BenchmarkEvent::default)?;
+        maybe_attach_counters_producer(&mut producer_ping, args.enable_counters);
         coordination
             .data()
             .producer_ready
@@ -601,12 +661,13 @@ fn run_benchmark<const SIZE: usize>(
             discovery_scan_rounds(1),
         );
 
-        let pong_consumer = attach_consumer_with_timeout::<BenchmarkEvent<SIZE>>(
+        let mut pong_consumer = attach_consumer_with_timeout::<BenchmarkEvent<SIZE>>(
             &pong_segment,
             buffer_size,
             MAIN_CONSUMER_ID,
             timeout,
         )?;
+        maybe_attach_counters_consumer(&mut pong_consumer, args.enable_counters);
         coordination
             .data()
             .consumer_attached
@@ -874,17 +935,20 @@ fn echo_server<const SIZE: usize>(
     buffer_size: usize,
     wait_strategy: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let enable_counters = child_counters_enabled();
     let mut ping_consumer = attach_consumer_with_timeout::<BenchmarkEvent<SIZE>>(
         ping_segment,
         buffer_size,
         ECHO_CONSUMER_ID,
         Duration::from_secs(30),
     )?;
+    maybe_attach_counters_consumer(&mut ping_consumer, enable_counters);
     let mut pong_producer =
         build_shared_single_producer::<BenchmarkEvent<SIZE>>(pong_segment, buffer_size)
             .discover_consumer_with_prefix(1, CONSUMER_PREFIX)
             .with_coordination(CoordinationMode::Immediate)
             .build_producer(BenchmarkEvent::default)?;
+    maybe_attach_counters_producer(&mut pong_producer, enable_counters);
 
     coordination.data().echo_ready.store(1, Ordering::Release);
 
