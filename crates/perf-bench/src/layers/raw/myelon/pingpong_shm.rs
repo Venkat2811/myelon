@@ -9,6 +9,7 @@ use crate::cli::pingpong::{self, PingPongArgs as Args};
 use crate::infra;
 use crate::infra::coordination::UnifiedCoordination;
 use crate::infra::latency::{self, LatencyRecorder};
+use crate::infra::liveness::{liveness_config, liveness_enabled};
 use crate::infra::output::reporting::{self, BenchReport};
 use clap::Parser;
 use common::{calculate_data_rate_gbps, format_throughput, BenchmarkEvent};
@@ -26,6 +27,21 @@ use std::time::{Duration, Instant};
 static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
 type PingPongRunResult =
     Result<(f64, Duration, Option<latency::LatencyStats>, bool, u64), Box<dyn std::error::Error>>;
+
+/// Same `publish_or_managed!` pattern as the disruptor-mp sibling
+/// — see `crates/perf-bench/src/layers/raw/disruptor_mp/pingpong_shm.rs`
+/// for the full rationale. Cached `liveness_enabled()` flag, branch
+/// predictor collapses the dispatch to ~zero overhead in the hot
+/// loop, baseline numbers stay bit-identical when the flag is off.
+macro_rules! publish_or_managed {
+    ($producer:expr, $body:expr) => {{
+        if $crate::infra::liveness::liveness_enabled() {
+            $producer.publish_managed($body)?;
+        } else {
+            $producer.publish($body);
+        }
+    }};
+}
 
 const DISCOVERY_SCAN_SLEEP: Duration = Duration::from_millis(150);
 const CONSUMER_PREFIX: &str = "cp";
@@ -294,9 +310,12 @@ fn run_warmup<const SIZE: usize>(
         for offset in 0..round {
             let lane_idx = (warmed as usize + offset) % lane_count;
             let seq = warmed + offset as u64;
-            lanes[lane_idx]
-                .producer_ping
-                .publish(|slot| write_event(slot, seq, common::nanos_now(), 0));
+            publish_or_managed!(lanes[lane_idx].producer_ping, |slot| write_event(
+                slot,
+                seq,
+                common::nanos_now(),
+                0
+            ));
             lanes[lane_idx]
                 .coordination
                 .data()
@@ -352,9 +371,12 @@ fn run_throughput_mode<const SIZE: usize>(
             let lane_idx = (messages_processed as usize + offset) % lane_count;
             let seq = args.warmup + messages_processed + offset as u64;
             let send_start = Instant::now();
-            lanes[lane_idx]
-                .producer_ping
-                .publish(|slot| write_event(slot, seq, common::nanos_now(), 0));
+            publish_or_managed!(lanes[lane_idx].producer_ping, |slot| write_event(
+                slot,
+                seq,
+                common::nanos_now(),
+                0
+            ));
             lanes[lane_idx]
                 .coordination
                 .data()
@@ -419,9 +441,12 @@ fn run_batch_timing_mode<const SIZE: usize>(
             let lane_idx = (messages_processed as usize + offset) % lane_count;
             let seq = args.warmup + messages_processed + offset as u64;
             let send_start = Instant::now();
-            lanes[lane_idx]
-                .producer_ping
-                .publish(|slot| write_event(slot, seq, common::nanos_now(), 0));
+            publish_or_managed!(lanes[lane_idx].producer_ping, |slot| write_event(
+                slot,
+                seq,
+                common::nanos_now(),
+                0
+            ));
             lanes[lane_idx]
                 .coordination
                 .data()
@@ -504,9 +529,12 @@ fn run_fixed_rate_mode<const SIZE: usize>(
             let seq = args.warmup + sent + offset as u64;
             let intended_send_time_ns = next_send_time.duration_since(base).as_nanos() as u64;
             let timestamp_ns = Instant::now().duration_since(base).as_nanos() as u64;
-            lanes[lane_idx]
-                .producer_ping
-                .publish(|slot| write_event(slot, seq, timestamp_ns, intended_send_time_ns));
+            publish_or_managed!(lanes[lane_idx].producer_ping, |slot| write_event(
+                slot,
+                seq,
+                timestamp_ns,
+                intended_send_time_ns
+            ));
             lanes[lane_idx]
                 .coordination
                 .data()
@@ -611,6 +639,11 @@ fn run_benchmark<const SIZE: usize>(
                 .discover_consumer_with_prefix(1, CONSUMER_PREFIX)
                 .with_coordination(CoordinationMode::Immediate)
                 .build_producer(BenchmarkEvent::default)?;
+        // RFC-0017.5 wiring (mirrors the disruptor-mp sibling).
+        // Required consumer = `cp_0` (`ECHO_CONSUMER_ID`).
+        if liveness_enabled() {
+            producer_ping.enable_required_consumer_liveness(liveness_config(&[ECHO_CONSUMER_ID]));
+        }
         coordination
             .data()
             .producer_ready
@@ -920,6 +953,11 @@ fn echo_server<const SIZE: usize>(
             .discover_consumer_with_prefix(1, CONSUMER_PREFIX)
             .with_coordination(CoordinationMode::Immediate)
             .build_producer(BenchmarkEvent::default)?;
+    // Echo-side liveness: required consumer = `cp_0`
+    // (`MAIN_CONSUMER_ID`, the parent's main consumer).
+    if liveness_enabled() {
+        pong_producer.enable_required_consumer_liveness(liveness_config(&[MAIN_CONSUMER_ID]));
+    }
 
     coordination.data().echo_ready.store(1, Ordering::Release);
 
@@ -939,7 +977,7 @@ fn echo_server<const SIZE: usize>(
     while !coordination.is_shutdown() {
         match ping_consumer.try_consume_next_leased() {
             Some(event) => {
-                pong_producer.publish(|slot| *slot = *event);
+                publish_or_managed!(pong_producer, |slot| *slot = *event);
             }
             None => {
                 if SHUTDOWN_REQUESTED.load(Ordering::Acquire) {

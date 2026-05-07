@@ -1,11 +1,10 @@
-//! Layer 0 multiprocess quick start over a memory-mapped file,
-//! **using `disruptor-mp` as a direct dependency** (not via the
-//! `myelon` façade).
+//! Layer 0 multiprocess quick start over SHM, **using `disruptor-mp`
+//! as a direct dependency** (not via the `myelon` façade).
 //!
-//! Same shape as [`mmap_disruptor`](./mmap_disruptor.rs) — one
-//! producer + one consumer in two real OS processes, mmap-backed
-//! ring — but every Layer 0 type comes from `disruptor_mp::*`
-//! rather than `myelon::*`.
+//! Same shape as [`shm_disruptor`](./shm_disruptor.rs) — one
+//! producer + one consumer in two real OS processes — but every
+//! Layer 0 type comes from `disruptor_mp::*` rather than
+//! `myelon::*`.
 //!
 //! # When to pick this dependency profile
 //!
@@ -18,25 +17,28 @@
 //! - You're publishing your own wire-format crate on top of the
 //!   substrate and want a small, stable dependency surface.
 //!
-//! Pick `myelon` (see [`mmap_disruptor.rs`](./mmap_disruptor.rs))
+//! Pick `myelon` (see [`shm_disruptor.rs`](./shm_disruptor.rs))
 //! otherwise — `myelon` re-exports every type used here, plus adds
 //! the higher layers, so most users only need that one dependency.
 //!
 //! Run:
 //!
 //! ```bash
-//! cargo run --release -p examples --example disruptor_mp_mmap
+//! cargo run --release -p demos --example disruptor_mp_shm
 //! ```
 
-use disruptor_mp::{MmapConsumer, MmapProducer, MmapTransportLayout};
-use examples::{child_role, child_segment, spawn_self, ChildProcessGuard};
-use std::env;
+use demos::{
+    attach_shared_consumer_with_retry, child_role, child_segment, spawn_self,
+    warm_shared_producer_discovery, ChildProcessGuard, DISCOVERY_SCAN_ROUNDS_1P1C,
+};
+use disruptor_mp::{build_shared_single_producer, portable_shm_segment_name, CoordinationMode};
 use std::time::Duration;
 
 const N_EVENTS: u64 = 100_000;
 const RING_SLOTS: usize = 4096;
-const READY_TIMEOUT: Duration = Duration::from_secs(10);
+const ATTACH_TIMEOUT: Duration = Duration::from_secs(10);
 
+const CONSUMER_PREFIX: &str = "cp";
 const CONSUMER_ID: &str = "cp_0";
 
 #[derive(Copy, Clone, Default)]
@@ -52,24 +54,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     run_parent()
 }
 
-fn build_layout(label: &str) -> MmapTransportLayout {
-    let root = env::temp_dir().join("myelon-mmap-example");
-    MmapTransportLayout::new(root, label.to_string()).expect("build mmap layout")
-}
-
 fn run_parent() -> Result<(), Box<dyn std::error::Error>> {
-    let label = format!("dmpmmap_{}", std::process::id());
-    println!("[parent] (disruptor-mp direct) mmap label = {label}; publishing {N_EVENTS} events");
+    let segment = portable_shm_segment_name("dmpshm");
+    println!(
+        "[parent] (disruptor-mp direct) segment = {segment}; \
+         publishing {N_EVENTS} events to one consumer"
+    );
 
-    let layout = build_layout(&label);
-    layout.ensure_directories()?;
-    let mut producer = MmapProducer::<Tick>::create(layout, RING_SLOTS, Tick::default)?;
+    let mut producer = build_shared_single_producer::<Tick>(&segment, RING_SLOTS)
+        .discover_consumer_with_prefix(1, CONSUMER_PREFIX)
+        .with_coordination(CoordinationMode::Immediate)
+        .build_producer(Tick::default)?;
 
-    let mut consumer_child = ChildProcessGuard::new(spawn_self("consumer", &label)?);
+    let mut consumer_child = ChildProcessGuard::new(spawn_self("consumer", &segment)?);
 
-    if !producer.wait_for_consumers_ready(1, READY_TIMEOUT) {
-        return Err("consumer did not attach within 10s".into());
-    }
+    warm_shared_producer_discovery(
+        || producer.min_gating_sequence(),
+        DISCOVERY_SCAN_ROUNDS_1P1C,
+    );
 
     for sequence in 1..=N_EVENTS {
         producer.publish(|slot| slot.sequence = sequence);
@@ -92,11 +94,19 @@ fn run_child(role: &str) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn run_consumer() -> Result<(), Box<dyn std::error::Error>> {
-    let label = child_segment();
-    println!("[consumer] (disruptor-mp direct) attaching to mmap label {label} as {CONSUMER_ID}");
+    let segment = child_segment();
+    println!("[consumer] (disruptor-mp direct) attaching to {segment} as {CONSUMER_ID}");
 
-    let layout = build_layout(&label);
-    let mut consumer = MmapConsumer::<Tick>::attach(layout, RING_SLOTS, CONSUMER_ID)?;
+    // `attach_shared_consumer_with_retry` returns a `SharedConsumer<Tick>`
+    // — the same type whether reached via `disruptor_mp::SharedConsumer`
+    // or `myelon::SharedConsumer`. The type identity is the reason the
+    // helper crate compiles unchanged for both dependency profiles.
+    let mut consumer = attach_shared_consumer_with_retry::<Tick>(
+        &segment,
+        RING_SLOTS,
+        CONSUMER_ID,
+        ATTACH_TIMEOUT,
+    )?;
 
     let mut delivered = 0u64;
     let mut last = 0u64;

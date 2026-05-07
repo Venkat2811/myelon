@@ -1,6 +1,6 @@
-# examples
+# demos
 
-Workspace-level runnable examples for [`myelon`](../crates/myelon/) — the simplified façade for [`disruptor-mp`](../crates/disruptor-mp/)'s core capabilities (Layer 0) plus framing, codecs, typed zero-copy, and topology on top.
+Workspace-level runnable examples for [`myelon`](../../crates/myelon/) — the simplified façade for [`disruptor-mp`](../../crates/disruptor-mp/)'s core capabilities (Layer 0) plus framing, codecs, typed zero-copy, and topology on top.
 
 Two dependency profiles are demonstrated side-by-side. Both are first-class — pick by what surface your code actually needs:
 
@@ -22,17 +22,19 @@ Same multiprocess pattern, same correctness primitives, same runtime behaviour �
 | [`pingpong.rs`](pingpong.rs) | Multiprocess request/response RTT. Two SHM rings, parent measures end-to-end round-trip latency. | `myelon::*` |
 | [`counters.rs`](counters.rs) | RFC-0040 hot-path observability end-to-end through the `myelon` re-export of `disruptor_mp::observability`. | `myelon::*` |
 | [`fixed_inference_topology.rs`](fixed_inference_topology.rs) | One scheduler / N workers (2..=8) topology with discovery and rendezvous baked in via `myelon::FixedTopology`. | `myelon::*` |
+| [`required_consumer_liveness.rs`](required_consumer_liveness.rs) | RFC-0017.5 in action. Two required consumers attach and consume in lockstep; parent SIGKILLs `cp_0` mid-publish; the producer's liveness layer fires a stall alert; parent respawns under the same `consumer_id` within `shutdown_grace_period`; the new process picks up the cursor preserved in SHM and catches up. Demonstrates same-ID rejoin recovery. | `myelon::*` + `disruptor_mp::{RequiredConsumerLivenessConfig, …}` |
 
 ## Run them
 
 ```bash
-cargo run --release -p examples --example shm_disruptor
-cargo run --release -p examples --example mmap_disruptor
-cargo run --release -p examples --example disruptor_mp_shm
-cargo run --release -p examples --example disruptor_mp_mmap
-cargo run --release -p examples --example pingpong
-cargo run --release -p examples --example counters
-cargo run --release -p examples --example fixed_inference_topology
+cargo run --release -p demos --example shm_disruptor
+cargo run --release -p demos --example mmap_disruptor
+cargo run --release -p demos --example disruptor_mp_shm
+cargo run --release -p demos --example disruptor_mp_mmap
+cargo run --release -p demos --example pingpong
+cargo run --release -p demos --example counters
+cargo run --release -p demos --example fixed_inference_topology
+cargo run --release -p demos --example required_consumer_liveness
 ```
 
 Always use `--release` for representative numbers.
@@ -64,13 +66,13 @@ cargo run --release -p perf-bench --bin perf-bench-pingpong -- \
     --layer codec --backend shm --codec rkyv --enable-counters
 ```
 
-See [`crates/perf-bench/README.md`](../crates/perf-bench/README.md) for the binary inventory, layer / backend / mode matrix, and file/directory structure.
+See [`crates/perf-bench/README.md`](../../crates/perf-bench/README.md) for the binary inventory, layer / backend / mode matrix, and file/directory structure.
 
 ### `crates/competitive-bench/` — apples-to-apples external comparison
 
 Strict 1p1c ping-pong and 1p4c / 1p8c broadcast against external transports: `crossbar`, `shmipc`, `rusteron` (Aeron client), `iceoryx2`, `zmq`, `iggy`, `redpanda`. Internal `disruptor-mp` and `myelon` raw-ring lanes serve as the baseline.
 
-See [`crates/competitive-bench/README.md`](../crates/competitive-bench/README.md).
+See [`crates/competitive-bench/README.md`](../../crates/competitive-bench/README.md).
 
 ## How the multiprocess wiring works
 
@@ -78,12 +80,12 @@ Each example follows the same shape via the tiny helper in [`src/lib.rs`](src/li
 
 ```rust
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    if let Some(role) = examples::child_role() {
+    if let Some(role) = demos::child_role() {
         // Re-entered as a child process; dispatch on the role.
         return run_child(&role);
     }
     // Original parent process: spawn child(ren) with
-    // `examples::spawn_self("role", segment)` and run the parent path.
+    // `demos::spawn_self("role", segment)` and run the parent path.
     run_parent()
 }
 ```

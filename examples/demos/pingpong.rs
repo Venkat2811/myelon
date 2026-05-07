@@ -11,7 +11,7 @@
 //! Run:
 //!
 //! ```bash
-//! cargo run --release -p examples --example pingpong
+//! cargo run --release -p demos --example pingpong
 //! ```
 //!
 //! ## Pattern
@@ -35,7 +35,7 @@
 //! passed verbatim to the child through the segment env so both
 //! sides agree on the exact strings.
 
-use examples::{
+use demos::{
     attach_shared_consumer_with_retry, child_role, child_segment, spawn_self,
     warm_shared_producer_discovery, ChildProcessGuard, DISCOVERY_SCAN_ROUNDS_1P1C,
 };

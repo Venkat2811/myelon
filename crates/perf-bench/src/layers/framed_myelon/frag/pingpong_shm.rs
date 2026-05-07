@@ -4,12 +4,28 @@ use crate::cli::myelon_pingpong::{
 use crate::infra::coordination::UnifiedCoordination;
 use crate::infra::events::nanos_now;
 use crate::infra::latency::LatencyRecorder;
+use crate::infra::liveness::{liveness_config, liveness_enabled};
 use crate::infra::output::report::BackendKind;
 use crate::infra::output::reporting::{self, BenchReport, BenchTransportSpec};
 use crate::infra::{
     self, segment_from_env, spawn_child, unique_shm_segment, ConsumerOutput, IpcBenchmark,
     ProducerOutput, ScenarioChildren,
 };
+
+/// Same `publish_or_managed!` pattern as the raw layers — see
+/// `crates/perf-bench/src/layers/raw/disruptor_mp/pingpong_shm.rs`
+/// for the rationale. `FramedTransportProducer` exposes both
+/// `publish` and `publish_managed`, with the same `&[u8] + kind`
+/// signature.
+macro_rules! publish_or_managed {
+    ($producer:expr, $payload:expr, $kind:expr) => {{
+        if $crate::infra::liveness::liveness_enabled() {
+            $producer.publish_managed($payload, $kind)?;
+        } else {
+            $producer.publish($payload, $kind);
+        }
+    }};
+}
 use myelon::transport::{
     FixedFrame, FramedTransportConsumer, FramedTransportProducer, MyelonWaitStrategy,
 };
@@ -111,6 +127,11 @@ fn producer_process() -> Result<(), Box<dyn std::error::Error>> {
         env.buffer_depth,
         1,
     )?;
+    // RFC-0017.5: pong_producer publishes back to the initiator's
+    // PONG_INITIATOR_ID consumer.
+    if liveness_enabled() {
+        pong_producer.enable_required_consumer_liveness(liveness_config(&[PONG_INITIATOR_ID]));
+    }
     coordination
         .data()
         .producer_ready
@@ -145,7 +166,7 @@ fn producer_process() -> Result<(), Box<dyn std::error::Error>> {
         if index == env.warmup {
             measured_start = Some(Instant::now());
         }
-        pong_producer.publish(&payload, 1);
+        publish_or_managed!(pong_producer, &payload, 1);
     }
 
     let elapsed = measured_start.unwrap_or_else(Instant::now).elapsed();
@@ -164,6 +185,11 @@ fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
         env.buffer_depth,
         1,
     )?;
+    // RFC-0017.5: ping_producer publishes to the echo's
+    // PING_ECHO_ID consumer.
+    if liveness_enabled() {
+        ping_producer.enable_required_consumer_liveness(liveness_config(&[PING_ECHO_ID]));
+    }
     let mut pong_consumer = attach_consumer_with_timeout(
         &env.pong_segment,
         env.buffer_depth,
@@ -216,7 +242,7 @@ fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
             measured_start = Some(Instant::now());
         }
 
-        ping_producer.publish(&payload, 1);
+        publish_or_managed!(ping_producer, &payload, 1);
         let (_kind, response) = pong_consumer.recv_message_blocking();
         if index < env.warmup {
             continue;

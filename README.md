@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/myelon-pulse-demo.gif" alt="myelon-pulse — angiogram-style brand demo: trunk, fractal branches, and pulses for myelon, the multiprocess shared-memory transport" width="900">
+</p>
+
 # myelon (workspace)
 
 Repo for the [`myelon`](https://crates.io/crates/myelon) and [`disruptor-mp`](https://crates.io/crates/disruptor-mp) crates, plus their internal bench and test-runner support crates. The repo name predates the crate rename — `myelon` is the GitHub repo; the publishable crate is `myelon`.
@@ -70,12 +74,15 @@ crates/
 ├── perf-bench/          # Internal. Performance benchmark consolidation.
 └── competitive-bench/   # Internal. Apples-to-apples external transport comparison.
 
-examples/                # Workspace-level runnable examples (one place for them all).
-                         #   shm_disruptor.rs            — Layer 0, SHM, multiprocess quick start
-                         #   mmap_disruptor.rs           — Layer 0, mmap, multiprocess quick start
-                         #   pingpong.rs                 — multiprocess RTT request/response
-                         #   counters.rs                 — RFC-0040 observability end-to-end
-                         #   fixed_inference_topology.rs — myelon::FixedTopology demo
+examples/
+├── demos/                  # Workspace-level runnable examples (one place for them all).
+│                           #   shm_disruptor.rs            — Layer 0, SHM, multiprocess quick start
+│                           #   mmap_disruptor.rs           — Layer 0, mmap, multiprocess quick start
+│                           #   pingpong.rs                 — multiprocess RTT request/response
+│                           #   counters.rs                 — RFC-0040 observability end-to-end
+│                           #   fixed_inference_topology.rs — myelon::FixedTopology demo
+│                           #   required_consumer_liveness.rs — RFC-0017.5 same-ID rejoin recovery
+└── myelon-pulse-vanity/    # Brand vanity demo (the video at the top of this README).
 
 book/                    # mdBook source for the user-facing docs site.
                          # Build: `mdbook build` (output at book/build, gitignored).
@@ -84,7 +91,7 @@ book/                    # mdBook source for the user-facing docs site.
 Run any example with:
 
 ```bash
-cargo run --release -p examples --example <name>
+cargo run --release -p demos --example <name>
 ```
 
 ## Cargo features (high-impact)

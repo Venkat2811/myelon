@@ -9,11 +9,11 @@
 //! Run any example with:
 //!
 //! ```bash
-//! cargo run --release -p examples --example shm_disruptor
-//! cargo run --release -p examples --example mmap_disruptor
-//! cargo run --release -p examples --example pingpong
-//! cargo run --release -p examples --example counters
-//! cargo run --release -p examples --example fixed_inference_topology
+//! cargo run --release -p demos --example shm_disruptor
+//! cargo run --release -p demos --example mmap_disruptor
+//! cargo run --release -p demos --example pingpong
+//! cargo run --release -p demos --example counters
+//! cargo run --release -p demos --example fixed_inference_topology
 //! ```
 //!
 //! ## Patterns shared with `crates/perf-bench`

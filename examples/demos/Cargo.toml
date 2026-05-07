@@ -1,5 +1,5 @@
 [package]
-name        = "examples"
+name        = "demos"
 version     = "0.1.0"
 description = "Workspace-level runnable examples for `disruptor-mp` and `myelon`."
 publish     = false
@@ -34,8 +34,8 @@ path = "src/lib.rs"
 # but the helper types it uses (`SharedConsumer`, `attach_shared_consumer`)
 # are the *same* types in either crate — myelon re-exports them — so the
 # substrate-only examples can use the helpers without conversion.
-disruptor-mp = { path = "../crates/disruptor-mp" }
-myelon       = { path = "../crates/myelon" }
+disruptor-mp = { path = "../../crates/disruptor-mp" }
+myelon       = { path = "../../crates/myelon" }
 
 [[example]]
 name = "shm_disruptor"
@@ -64,3 +64,7 @@ path = "counters.rs"
 [[example]]
 name = "fixed_inference_topology"
 path = "fixed_inference_topology.rs"
+
+[[example]]
+name = "required_consumer_liveness"
+path = "required_consumer_liveness.rs"

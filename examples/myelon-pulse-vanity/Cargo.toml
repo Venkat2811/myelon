@@ -1,5 +1,5 @@
 [package]
-name        = "myelon-pulse"
+name        = "myelon-pulse-vanity"
 version     = "0.1.0"
 description = "Vanity brand demo: a House-MD-titles-style angiogram of branching pulses, mapping to broadcast and ping-pong dataflows over the myelon transport stack."
 publish     = false
@@ -11,6 +11,13 @@ rust-version.workspace = true
 
 [lints]
 workspace = true
+
+# Package name is `myelon-pulse-vanity` (see directory layout), but the
+# user-facing binary keeps the brand name `myelon-pulse` — that's what
+# the window title, clap `--help`, and capture-file prefixes display.
+[[bin]]
+name = "myelon-pulse"
+path = "src/main.rs"
 
 [dependencies]
 macroquad = "0.4"

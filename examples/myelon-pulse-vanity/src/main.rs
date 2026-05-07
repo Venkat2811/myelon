@@ -74,6 +74,13 @@ struct Args {
     /// `cargo run`); the directory is gitignored.
     #[arg(long)]
     record: bool,
+
+    /// Enable the X-axis pitch oscillation that gives the tree a
+    /// volumetric "breathing" feel. Off by default — when off, the
+    /// scene renders flat (theta = 0) and `project_x_rot` reduces to
+    /// the identity transform, so segments and pulses draw in pure 2D.
+    #[arg(long)]
+    rotate: bool,
 }
 
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
@@ -151,6 +158,24 @@ struct Segment {
     born_at: f32,
     /// Seconds for this segment to fully reveal.
     grow_duration: f32,
+    /// Final Z value at this segment's tip (sample N-1).
+    /// Trunk = 0. Primary branches fan out to `±~12 % canvas_h`;
+    /// sub-branches drift slightly from their parent's `z_offset`
+    /// so the tree forms one coherent volume instead of noise.
+    z_offset: f32,
+    /// Z value at every sample point, length = `SAMPLES_PER_SEGMENT`.
+    /// Linearly ramps from the parent's Z **at this segment's
+    /// `attach_t`** (sample 0) to this segment's own `z_offset`
+    /// (sample N-1). Using the parent's Z *at the attachment
+    /// point* — rather than at the parent's tip — is what makes
+    /// junctions seamless, because a child branches off
+    /// mid-parent, not from the parent's tip.
+    z_samples: Vec<f32>,
+    /// Fractional position along the parent at which this segment
+    /// is attached. `0.0` for the trunk (no parent). Used by the
+    /// per-sample-Z pass so a child's start Z matches the parent's
+    /// Z at the actual junction point.
+    attach_t: f32,
 }
 
 impl Segment {
@@ -163,6 +188,23 @@ impl Segment {
         }
         let frac = f - i as f32;
         self.samples[i].lerp(self.samples[i + 1], frac)
+    }
+
+    /// Z-depth at fractional position `t` along the segment. Used
+    /// by pulse drawing so a pulse moving through a junction sees
+    /// a continuous Z (parent's tip Z = child's start Z).
+    fn at_z(&self, t: f32) -> f32 {
+        if self.z_samples.is_empty() {
+            return 0.0;
+        }
+        let t = t.clamp(0.0, 1.0);
+        let f = t * (SAMPLES_PER_SEGMENT - 1) as f32;
+        let i = f.floor() as usize;
+        if i >= SAMPLES_PER_SEGMENT - 1 {
+            return *self.z_samples.last().unwrap();
+        }
+        let frac = f - i as f32;
+        self.z_samples[i] * (1.0 - frac) + self.z_samples[i + 1] * frac
     }
 
     fn tangent_at(&self, t: f32) -> Vec2 {
@@ -187,6 +229,7 @@ fn build_segment(
     depth: u8,
     born_at: f32,
     grow_duration: f32,
+    attach_t: f32,
 ) -> Segment {
     let dir = p_end - p_start;
     let dir = if dir.length_squared() < 1e-6 {
@@ -222,6 +265,13 @@ fn build_segment(
         depth,
         born_at,
         grow_duration,
+        // `z_offset` and `z_samples` are filled in by `build_tree`
+        // after all segments exist, so each child can read its
+        // parent's Z **at the attachment point** (not the tip)
+        // for a continuous junction.
+        z_offset: 0.0,
+        z_samples: Vec::new(),
+        attach_t,
     }
 }
 
@@ -264,6 +314,9 @@ fn build_tree(canvas_w: f32, canvas_h: f32, leaf_target: usize, seed: u64) -> Tr
         // lands the full reveal around 5s and pairs with the
         // caption crossfade below.
         2.8,
+        // attach_t — trunk has no parent, so this is unused; the
+        // z_samples pass guards on `parent.is_none()`.
+        0.0,
     );
     segments.push(trunk);
 
@@ -284,6 +337,56 @@ fn build_tree(canvas_w: f32, canvas_h: f32, leaf_target: usize, seed: u64) -> Tr
     }
 
     let is_leaf: Vec<bool> = (0..n).map(|i| !has_children[i]).collect();
+
+    // Assign a Z-depth to every segment so the tree occupies a 3D
+    // volume rather than a flat plane. We walk segments in index
+    // order (parents come before children — they were pushed that
+    // way), so each child can read its parent's `z_offset` and
+    // place itself nearby. Trunk stays at z = 0; primary branches
+    // get the largest spread; sub-branches drift only slightly from
+    // their parent so the volume reads as one coherent shape rather
+    // than scattered noise. Values are deterministic from segment
+    // index, so the same seed + canvas size always gives the same
+    // 3D layout.
+    let primary_z_amp = canvas_h * 0.12;
+    let sub_drift_amp = canvas_h * 0.04;
+    for i in 1..n {
+        let parent_idx = segments[i].parent.expect("non-trunk segment has parent");
+        let parent_z = segments[parent_idx].z_offset;
+        let h =
+            ((i as f32) * 7.7351 + 1.3).sin() * 0.65 + ((i as f32) * 13.4189 + 4.1).sin() * 0.35;
+        let h = h.clamp(-1.0, 1.0);
+        let z = match segments[i].depth {
+            1 => h * primary_z_amp,
+            _ => parent_z + h * sub_drift_amp,
+        };
+        segments[i].z_offset = z;
+    }
+
+    // Per-sample Z. Each segment's Z linearly ramps from the
+    // parent's Z **at this segment's `attach_t`** (sample 0) to
+    // its own `z_offset` (sample N-1). Children branch off
+    // mid-parent, not from the parent's tip, so the parent-side
+    // Z to anchor on is the interpolated value at the actual
+    // attachment fraction — that's what makes a junction
+    // truly seamless under perspective. The loop visits parents
+    // before children (segments are pushed in BFS-ish order in
+    // `spawn_children`), so by the time we read
+    // `parent.at_z(t)` the parent's `z_samples` is already
+    // populated.
+    for i in 0..n {
+        let parent_attach_z = match segments[i].parent {
+            Some(p) => segments[p].at_z(segments[i].attach_t),
+            None => 0.0,
+        };
+        let own_z = segments[i].z_offset;
+        let mut z_samples = Vec::with_capacity(SAMPLES_PER_SEGMENT);
+        for k in 0..SAMPLES_PER_SEGMENT {
+            let t = k as f32 / (SAMPLES_PER_SEGMENT - 1) as f32;
+            z_samples.push(parent_attach_z * (1.0 - t) + own_z * t);
+        }
+        segments[i].z_samples = z_samples;
+    }
 
     let mut leaf_paths: Vec<Vec<usize>> = Vec::new();
     let mut leaf_path_lengths: Vec<f32> = Vec::new();
@@ -351,7 +454,7 @@ fn spawn_children(
 
     for k in 0..n_children {
         // Snapshot parent fields we need (we'll borrow segs mutably below).
-        let (parent_born, parent_grow, parent_len, attach_pt, parent_dir) = {
+        let (parent_born, parent_grow, parent_len, attach_pt, parent_dir, attach_t) = {
             let parent = &segs[parent_idx];
             let parent_len = parent.samples.last().unwrap().distance(parent.samples[0]);
             let attach_t = match depth {
@@ -365,6 +468,7 @@ fn spawn_children(
                 parent_len,
                 parent.at(attach_t),
                 parent.tangent_at(attach_t),
+                attach_t,
             )
         };
 
@@ -414,6 +518,7 @@ fn spawn_children(
             depth,
             child_born,
             child_grow,
+            attach_t,
         );
         let child_idx = segs.len();
         segs.push(seg);
@@ -777,7 +882,7 @@ fn tick_embers(embers: &mut [Ember], dt: f32, w: f32, h: f32) {
 // ---------------------------------------------------------------------------
 
 /// Returns `<cwd>/myelon-pulse-captures/`, creating it on first call.
-/// `cargo run -p myelon-pulse` runs the binary with the workspace
+/// `cargo run -p myelon-pulse-vanity` runs the binary with the workspace
 /// root as cwd, so captures land alongside the source tree (and are
 /// gitignored at that path) instead of polluting `$HOME`.
 fn capture_dir() -> PathBuf {
@@ -1110,8 +1215,68 @@ fn draw_seed(seed_pt: Vec2, intensity: f32) {
     );
 }
 
+/// Apply a fake X-axis rotation in 2D using a pinhole-camera
+/// perspective projection. Treats the input point as living on a
+/// flat plane at z=0, rotates that plane around a horizontal axis
+/// at `pivot_y` by `theta` radians, and projects back through a
+/// camera at z=+focal looking down -z.
+///
+/// At `theta = 0` it's the identity. As `theta` grows positively,
+/// points above the pivot tip *toward* the camera (z > 0, scale > 1
+/// → they appear larger), and points below the pivot tip *away*
+/// from it (z < 0, scale < 1 → they appear smaller). That
+/// asymmetric scaling is what gives the rotation a clear "tilting
+/// toward you / away from you" direction instead of the symmetric
+/// vertical squash a pure cos-multiplier would produce.
+///
+/// Still strictly 2D rendering — we just do the projection math
+/// before handing coordinates to macroquad's `draw_line` /
+/// `draw_circle`.
+#[inline]
+fn project_x_rot(
+    p: Vec2,
+    z_world: f32,
+    pivot_x: f32,
+    pivot_y: f32,
+    theta: f32,
+    focal: f32,
+) -> Vec2 {
+    let local_x = p.x - pivot_x;
+    // Up-positive Y: moving up the screen = larger model-y, so the
+    // sign convention matches how a human thinks about "above the
+    // pivot".
+    let local_y = pivot_y - p.y;
+    let (sin_t, cos_t) = theta.sin_cos();
+    // X-axis rotation of the (y, z) plane:
+    //   y' = y · cos θ - z · sin θ
+    //   z' = y · sin θ + z · cos θ
+    // Sign convention: theta > 0 → top of tree (local_y > 0) ends up
+    // at z' > 0, i.e. closer to the camera at z = +focal — reads as
+    // "tipping toward the viewer". `z_world` is each segment's
+    // baked-in depth so the tree has volume even at θ = 0.
+    let y_rotated = local_y * cos_t - z_world * sin_t;
+    let z_rotated = local_y * sin_t + z_world * cos_t;
+    // Pinhole projection. Clamp the denominator so we never blow up
+    // when the rotated point would otherwise pass through or behind
+    // the camera.
+    let denom = (focal - z_rotated).max(focal * 0.10);
+    let scale = focal / denom;
+    Vec2::new(pivot_x + local_x * scale, pivot_y - y_rotated * scale)
+}
+
 /// Draw a segment up to a fractional reveal `t_max` in [0, 1].
-fn draw_segment(seg: &Segment, t_max: f32, is_leaf: bool) {
+/// `(pivot_x, pivot_y)`, `theta`, and `focal` apply the X-axis
+/// rotation defined above to every sampled position; pass
+/// `theta = 0.0` for the unrotated view.
+fn draw_segment(
+    seg: &Segment,
+    t_max: f32,
+    is_leaf: bool,
+    pivot_x: f32,
+    pivot_y: f32,
+    theta: f32,
+    focal: f32,
+) {
     let n_total = seg.samples.len();
     let n = ((n_total - 1) as f32 * t_max.clamp(0.0, 1.0)).floor() as usize;
     if n == 0 {
@@ -1125,8 +1290,24 @@ fn draw_segment(seg: &Segment, t_max: f32, is_leaf: bool) {
     // Three glow passes, back to front: halo, glow, core.
     // We taper thickness from base (full) to tip (half).
     for i in 0..n {
-        let a = seg.samples[i];
-        let b = seg.samples[i + 1];
+        // Per-sample Z so the start of this segment matches the
+        // tip Z of its parent — junctions stay continuous.
+        let a = project_x_rot(
+            seg.samples[i],
+            seg.z_samples[i],
+            pivot_x,
+            pivot_y,
+            theta,
+            focal,
+        );
+        let b = project_x_rot(
+            seg.samples[i + 1],
+            seg.z_samples[i + 1],
+            pivot_x,
+            pivot_y,
+            theta,
+            focal,
+        );
         let f = i as f32 / (n_total - 1) as f32;
         let taper = 1.0 - f * 0.55;
         let t_base = depth_thick * taper;
@@ -1135,9 +1316,15 @@ fn draw_segment(seg: &Segment, t_max: f32, is_leaf: bool) {
         let glow_w = (4.5 * t_base).max(1.2);
         let core_w = (1.6 * t_base).max(0.45);
 
-        let halo_a = 0.10 * depth_dim;
-        let glow_a = 0.28 * depth_dim;
-        let core_a = 0.85 * depth_dim;
+        // Floor branch alphas so deep tendrils stay clearly
+        // visible. The pulse heads + trails are intrinsically
+        // bright and don't dim with depth, so without a floor on
+        // the line we'd see bright pulses on barely-visible lines
+        // — reading as "dots floating outside the line" rather
+        // than "pulses travelling along the cord".
+        let halo_a = (0.10 * depth_dim).max(0.06);
+        let glow_a = (0.28 * depth_dim).max(0.20);
+        let core_a = (0.85 * depth_dim).max(0.65);
 
         draw_line(
             a.x,
@@ -1169,7 +1356,15 @@ fn draw_segment(seg: &Segment, t_max: f32, is_leaf: bool) {
     // while the segment is still revealing. Heavily dim at depth
     // so deep tendrils don't flash bright dots all over the canvas.
     if t_max < 0.999 {
-        let p = seg.samples[n.min(n_total - 1)];
+        let tip_idx = n.min(n_total - 1);
+        let p = project_x_rot(
+            seg.samples[tip_idx],
+            seg.z_samples[tip_idx],
+            pivot_x,
+            pivot_y,
+            theta,
+            focal,
+        );
         let depth_dim_tip = 0.65_f32.powi(seg.depth as i32);
         for (r, a) in [(7.0, 0.14), (3.4, 0.40), (1.4, 0.85)] {
             draw_circle(
@@ -1182,7 +1377,14 @@ fn draw_segment(seg: &Segment, t_max: f32, is_leaf: bool) {
     } else if is_leaf && seg.depth >= 1 && seg.depth <= 3 {
         // Permanent leaf bead — only at actual leaves and only at
         // shallow-to-mid depths so the canvas stays uncluttered.
-        let p = seg.samples[n_total - 1];
+        let p = project_x_rot(
+            seg.samples[n_total - 1],
+            seg.z_samples[n_total - 1],
+            pivot_x,
+            pivot_y,
+            theta,
+            focal,
+        );
         let dim = 0.55_f32.powi(seg.depth as i32 - 1);
         for (r, a) in [(3.2, 0.08), (1.2, 0.30)] {
             draw_circle(
@@ -1195,21 +1397,39 @@ fn draw_segment(seg: &Segment, t_max: f32, is_leaf: bool) {
     }
 }
 
-fn draw_pulse(tree: &Tree, pulse: &Pulse) {
+fn draw_pulse(tree: &Tree, pulse: &Pulse, pivot_x: f32, pivot_y: f32, theta: f32, focal: f32) {
     // Head.
     if let Some((seg_idx, t)) = position_along_path(tree, pulse.path_idx, pulse.distance) {
-        let pos = tree.segments[seg_idx].at(t);
+        // BUG FIX: must use `at_z(t)` (the *interpolated* Z at this
+        // fractional position along the segment), not `z_offset`
+        // (the segment's tip Z). Using tip Z meant the head pulse
+        // projected with one Z while the line at that same point
+        // was drawn with `at_z(t)` — same 2D point, different Z,
+        // different projected pixel → head visibly drifted off the
+        // line at high pitch angles. The trail loop below already
+        // does this correctly.
+        let pos = project_x_rot(
+            tree.segments[seg_idx].at(t),
+            tree.segments[seg_idx].at_z(t),
+            pivot_x,
+            pivot_y,
+            theta,
+            focal,
+        );
         let life = pulse.life.clamp(0.0, 1.0);
         let r = 5.5 * life;
+        // Tighter halo (was r + 8.0). The previous halo radius
+        // bled well past the line and reinforced the floating-dot
+        // illusion when the line under it was dim.
         draw_circle(
             pos.x,
             pos.y,
-            r + 8.0,
+            r + 3.0,
             Color::new(
                 pulse.hot.r,
                 pulse.hot.g * 0.45,
                 pulse.hot.b * 0.15,
-                0.18 * life,
+                0.20 * life,
             ),
         );
         draw_circle(
@@ -1227,8 +1447,10 @@ fn draw_pulse(tree: &Tree, pulse: &Pulse) {
     }
 
     // Trail — sample backwards (or forwards for inbound) along the
-    // path at fixed pixel spacing.
-    const TRAIL_LEN: usize = 14;
+    // path at fixed pixel spacing. 8 dots is plenty in ping-pong
+    // mode where every leaf gets its own pulse simultaneously;
+    // more was visual noise.
+    const TRAIL_LEN: usize = 8;
     for i in 1..=TRAIL_LEN {
         let trail_dist = match pulse.dir {
             PulseDir::Outbound => pulse.distance - (i as f32 * 6.0),
@@ -1238,10 +1460,21 @@ fn draw_pulse(tree: &Tree, pulse: &Pulse) {
             continue;
         }
         if let Some((seg_idx, t)) = position_along_path(tree, pulse.path_idx, trail_dist) {
-            let pos = tree.segments[seg_idx].at(t);
+            let pos = project_x_rot(
+                tree.segments[seg_idx].at(t),
+                tree.segments[seg_idx].at_z(t),
+                pivot_x,
+                pivot_y,
+                theta,
+                focal,
+            );
             let f = (1.0 - i as f32 / TRAIL_LEN as f32) * pulse.life;
-            let r = 1.6 + f * 3.5;
-            let a = f * 0.45;
+            // Tighter trail dots — half the previous radius and
+            // alpha. Pulses now read as a comet-tail along the
+            // line rather than a pile of bright dots overwhelming
+            // a thin line.
+            let r = 0.9 + f * 1.8;
+            let a = f * 0.30;
             draw_circle(
                 pos.x,
                 pos.y,
@@ -1337,8 +1570,10 @@ fn draw_title(canvas_w: f32, canvas_h: f32, alpha: f32, time_s: f32, crackle: f3
         let flicker_raw = f_phase.sin() * 0.70 + (f_phase * 2.4 + 0.7).sin() * 0.30;
         let alpha_mul = (1.0 + flicker_raw * 0.32 * crackle).clamp(0.45, 1.55);
 
-        // Outer warm halo, two octaves; flicker rides through here
-        // so the glow buzzes too.
+        // Outer warm halo, two octaves; alpha modulation works
+        // here because each per-pass alpha is low (0.18 / 0.32),
+        // so the 8-stamp accumulation doesn't fully saturate and
+        // the flicker still rides through.
         for (off, ha) in [(4.0, 0.18), (2.0, 0.32)] {
             let halo = Color::new(
                 BRANCH_GLOW.r,
@@ -1350,8 +1585,21 @@ fn draw_title(canvas_w: f32, canvas_h: f32, alpha: f32, time_s: f32, crackle: f3
                 draw_text(&s, x + dx, y + dy, font_size, halo);
             }
         }
-        // Main: 5 cardinal-offset passes for thicker, brighter strokes.
-        let main = Color::new(1.00, 0.99, 0.97, alpha * alpha_mul);
+        // Main: 5 cardinal-offset passes for thicker, brighter
+        // strokes.
+        //
+        // Caveat: alpha-only modulation is *invisible* on the main
+        // glyph. Each of the 5 passes blends with the previous one,
+        // and the central stroke pixels saturate to ≥99 % brightness
+        // even at alpha 0.5 (`1 - 0.5⁵ = 0.969`). So instead we
+        // modulate the source RGB directly — the dim half of the
+        // flicker cycle drops the colour toward ~(0.6, 0.6, 0.6)
+        // and survives the multi-pass overwrite as genuinely dim
+        // text. White can't go brighter than white, so the bright
+        // half of the cycle is delivered by the halo brightening
+        // (alpha-modulated above) and the spark particles below.
+        let bright = alpha_mul.clamp(0.0, 1.0);
+        let main = Color::new(1.00 * bright, 0.99 * bright, 0.97 * bright, alpha);
         for (dx, dy) in main_offsets {
             draw_text(&s, x + dx, y + dy, font_size, main);
         }
@@ -1546,9 +1794,30 @@ struct App {
     /// over `CAPTION_FADE_S` whenever the caption text changes,
     /// then stays at 1.
     caption_fade_in: f32,
+    /// Time accumulator that drives the pitch oscillation. Starts
+    /// ticking partway through growth (around the `ATTACH RING`
+    /// caption), so the tree is already breathing in 3D before
+    /// pulses arrive — the rotation feels like part of the system
+    /// coming alive, not a separate effect bolted onto the steady
+    /// state.
+    rotation_clock: f32,
 }
 
 const CAPTION_FADE_S: f32 = 0.45;
+/// Growth fraction at which the tree starts pitching. `0.55` lines
+/// up with the `ATTACH RING` caption (its band runs `0.55..0.85`),
+/// so the rotation literally begins at "ring attached".
+const ROTATION_START_GROWTH_FRAC: f32 = 0.55;
+/// Angular frequency of the pitch oscillation in radians per
+/// second. Period = `2π / ROTATION_SPEED_RAD_S`. At `0.40` the
+/// full back-and-forth takes ~16 s, slow enough to feel meditative
+/// without dwelling at any one orientation.
+const ROTATION_SPEED_RAD_S: f32 = 0.40;
+/// Pitch oscillation amplitude in radians. `π/4` (45°) keeps the
+/// tree well clear of edge-on (`±π/2`), so it never collapses to a
+/// horizontal line; the cycle is always in the zone where
+/// perspective foreshortening reads as a 3D tilt.
+const ROTATION_AMPLITUDE_RAD: f32 = std::f32::consts::FRAC_PI_4;
 
 impl App {
     fn new(mode: Mode, leaf_target: usize, record_mode: bool) -> Self {
@@ -1567,6 +1836,7 @@ impl App {
             shot_toast: None,
             last_caption: "",
             caption_fade_in: 0.0,
+            rotation_clock: 0.0,
         }
     }
 
@@ -1578,6 +1848,7 @@ impl App {
         self.growth_clock = 0.0;
         self.title_alpha = 0.0;
         self.live_clock = 0.0;
+        self.rotation_clock = 0.0;
         self.pulse_system.pulses.clear();
         self.pulse_system.broadcast_clock = 0.0;
         self.pulse_system.alternation_clock = 0.0;
@@ -1596,6 +1867,7 @@ impl App {
         self.growth_clock = 0.0;
         self.title_alpha = 0.0;
         self.live_clock = 0.0;
+        self.rotation_clock = 0.0;
         self.pulse_system.pulses.clear();
         self.pulse_system.path_states.clear();
         self.last_caption = "";
@@ -1773,6 +2045,16 @@ async fn main() {
                     if app.growth_clock >= tree.full_grow_duration + 0.7 {
                         app.phase = Phase::Live;
                     }
+                    // Once growth crosses the ATTACH RING threshold,
+                    // the tree starts pitching. Rotation clock ticks
+                    // continuously from this point on (across the
+                    // Growing → Live boundary), so the oscillation
+                    // is already in progress when pulses arrive.
+                    let frac =
+                        (app.growth_clock / tree.full_grow_duration.max(0.01)).clamp(0.0, 1.0);
+                    if args.rotate && frac >= ROTATION_START_GROWTH_FRAC {
+                        app.rotation_clock += dt;
+                    }
                 }
                 // Title fades in during the second half of growth.
                 if let Some(tree) = &app.tree {
@@ -1793,6 +2075,13 @@ async fn main() {
                 };
                 app.seed_pulse = warmup;
                 app.live_clock += dt;
+                // Rotation clock keeps ticking across the
+                // Growing → Live boundary (no grace period); the
+                // oscillation that started during ATTACH RING just
+                // continues while pulses fly. Gated on `--rotate`.
+                if args.rotate {
+                    app.rotation_clock += dt;
+                }
                 if let Some(tree) = &app.tree {
                     app.pulse_system.tick(dt, args.mode, tree, cur_size.0);
                 }
@@ -1807,6 +2096,31 @@ async fn main() {
 
         let seed_pt = Vec2::new(cur_size.0 * 0.10, cur_size.1 * 0.50);
         draw_seed(seed_pt, app.seed_pulse);
+
+        // Pitch transform applied to tree segments + pulses (not to
+        // background, embers, seed, title, or UI chrome).
+        // `project_x_rot` does a real X-axis rotation around a
+        // horizontal pivot through `(pivot_x, pivot_y)` followed by
+        // pinhole-perspective projection back to 2D, with each
+        // segment's baked-in `z_offset` giving the tree volumetric
+        // depth so it reads as 3D even at θ = 0.
+        //
+        // Theta is an *oscillation*, not a continuous rotation:
+        //   θ(t) = AMPLITUDE · sin(t · SPEED)
+        // so the tree pitches forward to ~+45°, back through facing,
+        // and to ~-45° on the other side, then back. Never reaches
+        // edge-on (±90°), where the tree would degenerate to a flat
+        // line. The full back-and-forth period is `2π/SPEED`
+        // (~16 s at SPEED = 0.40), slow enough to feel like a 3D
+        // structure breathing rather than spinning.
+        //
+        // The seed sits at `(seed.x, pivot_y)` — exactly on the
+        // pivot line — so it stays anchored while the branches
+        // breathe in 3D around it.
+        let pivot_x = cur_size.0 * 0.50;
+        let pivot_y = cur_size.1 * 0.50;
+        let theta = ROTATION_AMPLITUDE_RAD * (app.rotation_clock * ROTATION_SPEED_RAD_S).sin();
+        let focal = cur_size.1 * 1.5;
 
         if let Some(tree) = &app.tree {
             // Draw segments deepest-first so trunk core overlays the
@@ -1823,13 +2137,21 @@ async fn main() {
                     progress
                 };
                 if progress > 0.001 {
-                    draw_segment(seg, progress, tree.is_leaf[i]);
+                    draw_segment(
+                        seg,
+                        progress,
+                        tree.is_leaf[i],
+                        pivot_x,
+                        pivot_y,
+                        theta,
+                        focal,
+                    );
                 }
             }
 
             if matches!(app.phase, Phase::Live) {
                 for pulse in &app.pulse_system.pulses {
-                    draw_pulse(tree, pulse);
+                    draw_pulse(tree, pulse, pivot_x, pivot_y, theta, focal);
                 }
             }
         }

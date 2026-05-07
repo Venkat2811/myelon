@@ -4,8 +4,21 @@ use crate::cli::myelon_pingpong::{
 use crate::infra::coordination::UnifiedCoordination;
 use crate::infra::events::nanos_now;
 use crate::infra::latency::LatencyRecorder;
+use crate::infra::liveness::{liveness_config, liveness_enabled};
 use crate::infra::output::report::BackendKind;
 use crate::infra::output::reporting::{self, BenchReport, BenchTransportSpec};
+
+/// `publish_or_managed!` for `TypedProducer` — both `publish` and
+/// `publish_managed` return `Result`, so both branches use `?`.
+macro_rules! publish_or_managed {
+    ($producer:expr, $payload:expr, $kind:expr) => {{
+        if $crate::infra::liveness::liveness_enabled() {
+            $producer.publish_managed($payload, $kind)?;
+        } else {
+            $producer.publish($payload, $kind)?;
+        }
+    }};
+}
 use crate::infra::{
     self, segment_from_env, spawn_child, unique_shm_segment, ConsumerOutput, IpcBenchmark,
     ProducerOutput, ScenarioChildren,
@@ -110,6 +123,9 @@ fn producer_process() -> Result<(), Box<dyn std::error::Error>> {
     let coordination = UnifiedCoordination::create(&env.coordination_segment)?;
     let mut pong_producer =
         TypedProducer::<Frame>::create_with_consumers(&env.pong_segment, env.buffer_depth, 1)?;
+    if liveness_enabled() {
+        pong_producer.enable_required_consumer_liveness(liveness_config(&[PONG_INITIATOR_ID]));
+    }
     coordination
         .data()
         .producer_ready
@@ -146,7 +162,7 @@ fn producer_process() -> Result<(), Box<dyn std::error::Error>> {
                 if index == env.warmup {
                     measured_start = Some(Instant::now());
                 }
-                pong_producer.publish(&message, 1)?;
+                publish_or_managed!(pong_producer, &message, 1);
             }
         }
         "rkyv" => {
@@ -158,7 +174,7 @@ fn producer_process() -> Result<(), Box<dyn std::error::Error>> {
                 if index == env.warmup {
                     measured_start = Some(Instant::now());
                 }
-                pong_producer.publish(&message, 1)?;
+                publish_or_managed!(pong_producer, &message, 1);
             }
         }
         "flatbuf" => {
@@ -170,7 +186,7 @@ fn producer_process() -> Result<(), Box<dyn std::error::Error>> {
                 if index == env.warmup {
                     measured_start = Some(Instant::now());
                 }
-                pong_producer.publish(&message, 1)?;
+                publish_or_managed!(pong_producer, &message, 1);
             }
         }
         other => return Err(format!("unsupported codec: {other}").into()),
@@ -189,6 +205,9 @@ fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
         UnifiedCoordination::attach_with_timeout(&env.coordination_segment, ATTACH_TIMEOUT)?;
     let mut ping_producer =
         TypedProducer::<Frame>::create_with_consumers(&env.ping_segment, env.buffer_depth, 1)?;
+    if liveness_enabled() {
+        ping_producer.enable_required_consumer_liveness(liveness_config(&[PING_ECHO_ID]));
+    }
     let mut pong_consumer = attach_consumer_with_timeout(
         &env.pong_segment,
         env.buffer_depth,
@@ -243,7 +262,7 @@ fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
                 if index == env.warmup {
                     measured_start = Some(Instant::now());
                 }
-                ping_producer.publish(&message, 1)?;
+                publish_or_managed!(ping_producer, &message, 1);
                 let (_kind, response) = pong_consumer.recv::<BincodeBatch>()?;
                 if index < env.warmup {
                     continue;
@@ -273,7 +292,7 @@ fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
                 if index == env.warmup {
                     measured_start = Some(Instant::now());
                 }
-                ping_producer.publish(&message, 1)?;
+                publish_or_managed!(ping_producer, &message, 1);
                 let (_kind, response) = pong_consumer.recv::<RkyvBatch>()?;
                 if index < env.warmup {
                     continue;
@@ -303,7 +322,7 @@ fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
                 if index == env.warmup {
                     measured_start = Some(Instant::now());
                 }
-                ping_producer.publish(&message, 1)?;
+                publish_or_managed!(ping_producer, &message, 1);
                 let (_kind, response) = pong_consumer.recv::<FlatbufBatch>()?;
                 if index < env.warmup {
                     continue;

@@ -1,41 +1,35 @@
-//! Layer 0 multiprocess quick start over a memory-mapped file.
+//! Layer 0 multiprocess quick start over a memory-mapped file,
+//! **using `disruptor-mp` as a direct dependency** (not via the
+//! `myelon` façade).
 //!
-//! Mirror of [`shm_disruptor`](./shm_disruptor.rs) but backed by
-//! [`MmapTransportLayout`] / [`MmapProducer`] / [`MmapConsumer`]
-//! instead of a POSIX shared-memory segment. The wire-level
-//! semantics (broadcast, gating, sequence cursors) are identical;
-//! only the backing storage differs.
+//! Same shape as [`mmap_disruptor`](./mmap_disruptor.rs) — one
+//! producer + one consumer in two real OS processes, mmap-backed
+//! ring — but every Layer 0 type comes from `disruptor_mp::*`
+//! rather than `myelon::*`.
 //!
-//! Two real OS processes:
+//! # When to pick this dependency profile
 //!
-//! - **producer** (parent) creates the mmap layout, publishes a
-//!   stream of fixed-size events.
-//! - **consumer** (child) attaches under a stable consumer ID,
-//!   drains every event.
+//! Pick `disruptor-mp` directly when:
+//!
+//! - You only need the raw cross-process ring buffer plus its
+//!   coordination, discovery, liveness, and observability primitives,
+//!   and you don't want the framing / codec / typed-zero-copy /
+//!   topology surface compiled into your binary.
+//! - You're publishing your own wire-format crate on top of the
+//!   substrate and want a small, stable dependency surface.
+//!
+//! Pick `myelon` (see [`mmap_disruptor.rs`](./mmap_disruptor.rs))
+//! otherwise — `myelon` re-exports every type used here, plus adds
+//! the higher layers, so most users only need that one dependency.
 //!
 //! Run:
 //!
 //! ```bash
-//! cargo run --release -p examples --example mmap_disruptor
+//! cargo run --release -p demos --example disruptor_mp_mmap
 //! ```
-//!
-//! ## Why mmap over SHM
-//!
-//! - The region is a regular file, so it survives reboots and is
-//!   inspectable / movable / archivable.
-//! - Naming uses filesystem paths, not the macOS PSHMNAMLEN budget.
-//!
-//! ## Pattern
-//!
-//! Mirrors `crates/perf-bench/src/layers/raw/disruptor_mp/pingpong_mmap.rs`:
-//! the producer uses [`MmapProducer::wait_for_consumers_ready`] as
-//! its rendezvous primitive (mmap producers expose this directly,
-//! unlike the SHM side which leans on
-//! `discover_consumer_with_prefix` + a warmup scan).
-//! [`ChildProcessGuard`] keeps cleanup honest.
 
-use examples::{child_role, child_segment, spawn_self, ChildProcessGuard};
-use myelon::{MmapConsumer, MmapProducer, MmapTransportLayout};
+use demos::{child_role, child_segment, spawn_self, ChildProcessGuard};
+use disruptor_mp::{MmapConsumer, MmapProducer, MmapTransportLayout};
 use std::env;
 use std::time::Duration;
 
@@ -64,20 +58,15 @@ fn build_layout(label: &str) -> MmapTransportLayout {
 }
 
 fn run_parent() -> Result<(), Box<dyn std::error::Error>> {
-    let label = format!("mmapdemo_{}", std::process::id());
-    println!("[parent] mmap label = {label}; publishing {N_EVENTS} events");
+    let label = format!("dmpmmap_{}", std::process::id());
+    println!("[parent] (disruptor-mp direct) mmap label = {label}; publishing {N_EVENTS} events");
 
-    // Build the producer first so the mmap region exists before the
-    // child attempts to attach.
     let layout = build_layout(&label);
     layout.ensure_directories()?;
     let mut producer = MmapProducer::<Tick>::create(layout, RING_SLOTS, Tick::default)?;
 
-    // Spawn child under a guard so a panic below doesn't orphan it.
     let mut consumer_child = ChildProcessGuard::new(spawn_self("consumer", &label)?);
 
-    // Block until the consumer registers with the producer's gating
-    // barrier. Returns `false` on timeout.
     if !producer.wait_for_consumers_ready(1, READY_TIMEOUT) {
         return Err("consumer did not attach within 10s".into());
     }
@@ -104,13 +93,9 @@ fn run_child(role: &str) -> Result<(), Box<dyn std::error::Error>> {
 
 fn run_consumer() -> Result<(), Box<dyn std::error::Error>> {
     let label = child_segment();
-    println!("[consumer] attaching to mmap label {label} as {CONSUMER_ID}");
+    println!("[consumer] (disruptor-mp direct) attaching to mmap label {label} as {CONSUMER_ID}");
 
     let layout = build_layout(&label);
-
-    // The mmap consumer's `attach` waits internally for the producer
-    // to finish creating the layout, so explicit retry-on-attach
-    // (used by the SHM example) is not needed here.
     let mut consumer = MmapConsumer::<Tick>::attach(layout, RING_SLOTS, CONSUMER_ID)?;
 
     let mut delivered = 0u64;

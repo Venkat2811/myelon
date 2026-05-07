@@ -9,6 +9,7 @@ use crate::cli::pingpong::{self, PingPongArgs as Args, PingPongBackend};
 use crate::infra;
 use crate::infra::coordination::UnifiedCoordination;
 use crate::infra::latency::{self, LatencyRecorder};
+use crate::infra::liveness::{liveness_config, liveness_enabled};
 use crate::infra::output::reporting::{self, BenchReport};
 use clap::Parser;
 use common::{calculate_data_rate_gbps, format_throughput, BenchmarkEvent};
@@ -25,6 +26,25 @@ use std::time::{Duration, Instant};
 static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
 type PingPongRunResult =
     Result<(f64, Duration, Option<latency::LatencyStats>, bool, u64), Box<dyn std::error::Error>>;
+
+/// Dispatch a publish through `publish_managed` when
+/// `PERF_BENCH_LIVENESS=on` is set, or through plain `publish`
+/// otherwise. The cached flag check is one atomic load (the
+/// `OnceLock` in `infra::liveness`), and the branch resolves the
+/// same way every iteration of a hot loop, so the predictor
+/// collapses it to ~zero overhead. The `?` bubbles
+/// `RequiredConsumerError` up through the surrounding `Result`
+/// return type — every call site here is in a function that
+/// already returns `Result<…, Box<dyn Error>>`.
+macro_rules! publish_or_managed {
+    ($producer:expr, $body:expr) => {{
+        if $crate::infra::liveness::liveness_enabled() {
+            $producer.publish_managed($body)?;
+        } else {
+            $producer.publish($body);
+        }
+    }};
+}
 
 const DISCOVERY_SCAN_SLEEP: Duration = Duration::from_millis(150);
 const CONSUMER_PREFIX: &str = "cp";
@@ -328,9 +348,12 @@ fn run_warmup<const SIZE: usize>(
         for offset in 0..round {
             let lane_idx = (warmed as usize + offset) % lane_count;
             let seq = warmed + offset as u64;
-            lanes[lane_idx]
-                .producer_ping
-                .publish(|slot| write_event(slot, seq, common::nanos_now(), 0));
+            publish_or_managed!(lanes[lane_idx].producer_ping, |slot| write_event(
+                slot,
+                seq,
+                common::nanos_now(),
+                0
+            ));
             lanes[lane_idx]
                 .coordination
                 .data()
@@ -386,9 +409,12 @@ fn run_throughput_mode<const SIZE: usize>(
             let lane_idx = (messages_processed as usize + offset) % lane_count;
             let seq = args.warmup + messages_processed + offset as u64;
             let send_start = Instant::now();
-            lanes[lane_idx]
-                .producer_ping
-                .publish(|slot| write_event(slot, seq, common::nanos_now(), 0));
+            publish_or_managed!(lanes[lane_idx].producer_ping, |slot| write_event(
+                slot,
+                seq,
+                common::nanos_now(),
+                0
+            ));
             lanes[lane_idx]
                 .coordination
                 .data()
@@ -453,9 +479,12 @@ fn run_batch_timing_mode<const SIZE: usize>(
             let lane_idx = (messages_processed as usize + offset) % lane_count;
             let seq = args.warmup + messages_processed + offset as u64;
             let send_start = Instant::now();
-            lanes[lane_idx]
-                .producer_ping
-                .publish(|slot| write_event(slot, seq, common::nanos_now(), 0));
+            publish_or_managed!(lanes[lane_idx].producer_ping, |slot| write_event(
+                slot,
+                seq,
+                common::nanos_now(),
+                0
+            ));
             lanes[lane_idx]
                 .coordination
                 .data()
@@ -534,9 +563,12 @@ fn run_fixed_rate_mode<const SIZE: usize>(
             let seq = args.warmup + sent + offset as u64;
             let intended_send_time_ns = next_send_time.duration_since(base).as_nanos() as u64;
             let timestamp_ns = Instant::now().duration_since(base).as_nanos() as u64;
-            lanes[lane_idx]
-                .producer_ping
-                .publish(|slot| write_event(slot, seq, timestamp_ns, intended_send_time_ns));
+            publish_or_managed!(lanes[lane_idx].producer_ping, |slot| write_event(
+                slot,
+                seq,
+                timestamp_ns,
+                intended_send_time_ns
+            ));
             lanes[lane_idx]
                 .coordination
                 .data()
@@ -632,6 +664,16 @@ fn run_benchmark<const SIZE: usize>(
                 .with_coordination(CoordinationMode::Immediate)
                 .build_producer(BenchmarkEvent::default)?;
         maybe_attach_counters_producer(&mut producer_ping, args.enable_counters);
+        // RFC-0017.5 wiring. The pingpong binary's `--liveness on`
+        // flag forwards `PERF_BENCH_LIVENESS=on` into the env;
+        // when set, attach the policy here so the publish loops
+        // below can route through `publish_managed`. Required
+        // consumer ID matches what the echo side registers as
+        // (see `ECHO_CONSUMER_ID = "cp_0"`). Off by default — the
+        // unmanaged publish path stays the baseline.
+        if liveness_enabled() {
+            producer_ping.enable_required_consumer_liveness(liveness_config(&[ECHO_CONSUMER_ID]));
+        }
         coordination
             .data()
             .producer_ready
@@ -943,6 +985,14 @@ fn echo_server<const SIZE: usize>(
             .with_coordination(CoordinationMode::Immediate)
             .build_producer(BenchmarkEvent::default)?;
     maybe_attach_counters_producer(&mut pong_producer, enable_counters);
+    // The echo side's pong_producer publishes back to the parent's
+    // main consumer (`MAIN_CONSUMER_ID = "cp_0"`). Liveness is
+    // wired symmetrically: when the env flag is on (inherited from
+    // parent), the policy is attached here and the publish below
+    // routes through `publish_managed`.
+    if liveness_enabled() {
+        pong_producer.enable_required_consumer_liveness(liveness_config(&[MAIN_CONSUMER_ID]));
+    }
 
     coordination.data().echo_ready.store(1, Ordering::Release);
 
@@ -962,7 +1012,7 @@ fn echo_server<const SIZE: usize>(
     while !coordination.is_shutdown() {
         match ping_consumer.try_consume_next_leased() {
             Some(event) => {
-                pong_producer.publish(|slot| *slot = *event);
+                publish_or_managed!(pong_producer, |slot| *slot = *event);
             }
             None => {
                 if SHUTDOWN_REQUESTED.load(Ordering::Acquire) {

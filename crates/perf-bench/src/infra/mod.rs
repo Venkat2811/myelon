@@ -49,4 +49,5 @@ pub mod competitors;
 pub mod coordination;
 pub mod events;
 pub mod latency;
+pub mod liveness;
 pub mod repeatability;

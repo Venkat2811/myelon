@@ -11,7 +11,7 @@
 //!
 //! - [`dst_assertions`] — assertion enum + log used to record DST
 //!   observations during a run.
-//! - [`dst_buggify`] — probabilistic fault injector (LMAX-buggify
+//! - [`mod@dst_buggify`] — probabilistic fault injector (LMAX-buggify
 //!   style).
 //! - [`dst_contract`] — stable contract identifiers
 //!   (`OrderingPreserved`, `NoLoss`, etc.).
