@@ -58,7 +58,7 @@ Internally this crate depends on crates.io `disruptor` as:
 
 ```toml
 [dependencies]
-disruptor_core = { package = "disruptor", version = "3.7.1" }
+disruptor_core = { package = "disruptor", version = "4.2.0" }
 ```
 
 ## Required-consumer liveness (RFC 0017.5)
@@ -107,7 +107,7 @@ The liveness check is **cold-path only** — it runs only while the producer is 
 
 ```toml
 [dependencies]
-disruptor = { package = "disruptor-mp", version = "3.7.1" }
+disruptor = { package = "disruptor-mp", version = "0.1.0-alpha.1" }
 ```
 
 ```rust,no_run

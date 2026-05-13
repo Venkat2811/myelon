@@ -1,6 +1,9 @@
 [package]
 name        = "myelon"
-version     = "0.1.0"
+# 0.1.0-alpha.1 is the initial OSS-publish version. Pre-release tag
+# signals "API may evolve during the early-iteration window." See
+# CHANGELOG.md.
+version     = "0.1.0-alpha.1"
 description = "Inference-fabric crate providing typed transport, framing, and codec layers over multiprocess shared-memory ring buffers (disruptor-mp)."
 readme      = "README.md"
 categories  = ["data-structures", "concurrency", "encoding"]
@@ -16,7 +19,7 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
-disruptor_mp = { package = "disruptor-mp", path = "../disruptor-mp", version = "3.7.1" }
+disruptor_mp = { package = "disruptor-mp", path = "../disruptor-mp", version = "0.1.0-alpha.1" }
 serde = { version = "1", features = ["derive"] }
 rkyv = { version = "0.8", features = ["bytecheck"], optional = true }
 flatbuffers = { version = "24.12", optional = true }
