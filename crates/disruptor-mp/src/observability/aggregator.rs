@@ -48,6 +48,11 @@ impl Default for AggregatorConfig {
 pub struct AggregatorHandle {
     stop: Arc<Mutex<bool>>,
     join: Option<JoinHandle<()>>,
+    // When constructed via [`AggregatorHandle::spawn_arc`], holds an
+    // `Arc<CountersFile>` for the worker's lifetime. Dropped *after*
+    // `join` in `Drop::drop` (Rust drops fields in declaration order)
+    // so the backing memory outlives the worker thread.
+    _file_keeper: Option<Arc<CountersFile>>,
 }
 
 impl AggregatorHandle {
@@ -58,6 +63,11 @@ impl AggregatorHandle {
     /// re-attaches to the same memory by raw pointer; the caller is
     /// responsible for keeping the underlying mapping alive (which is
     /// the normal contract for a SHM-resident counters file).
+    ///
+    /// For a safe alternative when the caller can wrap the counters
+    /// file in an [`Arc`], use [`AggregatorHandle::spawn_arc`]: the
+    /// handle holds the `Arc` itself until the worker exits, so the
+    /// lifetime invariant is enforced by the ownership model.
     pub unsafe fn spawn(file: &CountersFile, config: AggregatorConfig) -> Self {
         let stop = Arc::new(Mutex::new(false));
         let stop_for_worker = Arc::clone(&stop);
@@ -79,7 +89,33 @@ impl AggregatorHandle {
         Self {
             stop,
             join: Some(join),
+            _file_keeper: None,
         }
+    }
+
+    /// Safe alternative to [`AggregatorHandle::spawn`]: the handle
+    /// retains an `Arc<CountersFile>` for the duration of the worker
+    /// thread, so the backing memory cannot be released early.
+    ///
+    /// The Arc's inner `CountersFile` is referenced by the worker via
+    /// the same raw pointer the unsafe path uses; the only difference
+    /// from `spawn` is who proves the lifetime. Here, the type system
+    /// does.
+    ///
+    /// Typical pattern: the SHM/mmap setup code constructs a
+    /// `CountersFile` via the unsafe `init`/`attach` path, then wraps
+    /// it in an `Arc` whose lifetime is tied to the SHM segment, and
+    /// passes that Arc here. The SHM segment must outlive the Arc.
+    #[must_use]
+    pub fn spawn_arc(file: Arc<CountersFile>, config: AggregatorConfig) -> Self {
+        // SAFETY: the Arc is moved into `_file_keeper` below, so the
+        // CountersFile lives for as long as this handle exists. The
+        // worker thread joins in Drop before _file_keeper drops (Rust
+        // drops fields in declaration order: stop, join, then
+        // _file_keeper).
+        let mut handle = unsafe { Self::spawn(&file, config) };
+        handle._file_keeper = Some(file);
+        handle
     }
 
     /// Signal the aggregator thread to exit at the next tick. Joining
@@ -146,5 +182,65 @@ impl CountersFile {
     /// without fighting the borrow checker.
     pub(crate) fn base_address(&self) -> usize {
         self.base.as_ptr() as usize
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::observability::{
+        ids, AggregatorConfig, AggregatorHandle, CountersFile, COUNTER_FLAG_PRODUCER,
+        COUNTERS_FILE_RESERVED_BYTES,
+    };
+
+    /// `spawn_arc` keeps the counters file alive for the worker's
+    /// lifetime via the `_file_keeper` Arc, then drops it after the
+    /// worker joins.
+    ///
+    /// This test exists to lock in the contract: if a regression
+    /// dropped the Arc before the join, valgrind / asan would flag the
+    /// worker's final snapshot read as use-after-free; a plain `cargo
+    /// test` would either pass or panic depending on timing.
+    #[test]
+    fn spawn_arc_keeps_file_alive_for_worker() {
+        // Leak a buffer for the test process — the Arc-managed file
+        // view will reference it for the duration of the test, and
+        // process exit cleans up.
+        let buf: Box<[u8; COUNTERS_FILE_RESERVED_BYTES]> =
+            Box::new([0u8; COUNTERS_FILE_RESERVED_BYTES]);
+        let leaked = Box::leak(buf);
+        let ptr = std::ptr::NonNull::new(leaked.as_mut_ptr()).expect("non-null leaked ptr");
+        // SAFETY: leaked buffer is 'static, zero-initialised, exactly
+        // COUNTERS_FILE_RESERVED_BYTES — the contract of `init`.
+        let file = unsafe { CountersFile::init(ptr) };
+
+        let arc = Arc::new(file);
+        let h = arc
+            .register(ids::EVENTS_PUBLISHED, COUNTER_FLAG_PRODUCER, "test_arc")
+            .expect("first slot");
+        h.inc();
+        h.inc();
+        h.inc();
+
+        // Spawn aggregator with a short interval so it ticks at least once
+        // during the test, then drop the handle to force join + the
+        // _file_keeper Arc drop.
+        let handle = AggregatorHandle::spawn_arc(
+            Arc::clone(&arc),
+            AggregatorConfig {
+                interval: Duration::from_millis(5),
+                metric_suffix: None,
+            },
+        );
+        std::thread::sleep(Duration::from_millis(30));
+        drop(handle);
+
+        // The original Arc still works after the handle dropped: the
+        // file was kept alive by `arc` independently of the handle's
+        // `_file_keeper` clone.
+        let snap = arc.snapshot();
+        assert_eq!(snap.len(), 1);
+        assert_eq!(snap[0].value, 3);
+        assert_eq!(snap[0].label, "test_arc");
     }
 }

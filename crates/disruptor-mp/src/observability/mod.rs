@@ -279,6 +279,40 @@ impl CountersFile {
         Some(unsafe { CounterHandle::from_ptr(ptr) })
     }
 
+    /// Allocate a fresh, zero-initialised counters file on the heap and
+    /// initialise it. Returns an [`OwnedCountersFile`] that owns the
+    /// backing buffer alongside the `CountersFile` view.
+    ///
+    /// Safe alternative to [`CountersFile::init`] for single-process use
+    /// cases (tests, in-process metrics) where the counters file does
+    /// not need to be shared across processes via SHM or mmap.
+    ///
+    /// The returned `OwnedCountersFile` derefs to `&CountersFile`, so
+    /// all `register` / `snapshot` / etc. operations work directly:
+    ///
+    /// ```
+    /// use disruptor_mp::observability::CountersFile;
+    /// let file = CountersFile::boxed();
+    /// let handle = file.register(1, 0, "events_published").unwrap();
+    /// handle.inc();
+    /// assert_eq!(file.snapshot()[0].value, 1);
+    /// ```
+    #[must_use]
+    pub fn boxed() -> OwnedCountersFile {
+        let buf: Box<[u8; COUNTERS_FILE_RESERVED_BYTES]> =
+            Box::new([0u8; COUNTERS_FILE_RESERVED_BYTES]);
+        let ptr = Box::into_raw(buf);
+        // SAFETY: `ptr` is a valid, non-null, exclusively-owned pointer to
+        // a freshly-allocated, zero-initialised buffer of exactly
+        // `COUNTERS_FILE_RESERVED_BYTES`. We reconstitute the `Box` in
+        // `OwnedCountersFile::drop` to release the allocation; the view
+        // stored in `file.base` aliases the same heap region.
+        let view = unsafe {
+            CountersFile::init(NonNull::new_unchecked(ptr as *mut u8))
+        };
+        OwnedCountersFile { file: view, buf: ptr }
+    }
+
     /// Snapshot all in-use slots — `(id, flags, value, label)` tuples.
     /// Intended for external readers and tests.
     pub fn snapshot(&self) -> Vec<CounterSnapshot> {
@@ -307,6 +341,58 @@ impl CountersFile {
             });
         }
         out
+    }
+}
+
+/// Heap-allocated [`CountersFile`] that owns its backing buffer.
+/// Produced by [`CountersFile::boxed`] for use cases that don't need
+/// cross-process sharing (tests, in-process metrics).
+///
+/// Derefs to `&CountersFile` so all the usual `register` /
+/// `snapshot` / etc. methods work directly.
+pub struct OwnedCountersFile {
+    file: CountersFile,
+    // Raw pointer to the boxed buffer. Reconstituted into a `Box` in
+    // `Drop` so the allocation is released. We keep it as a raw pointer
+    // rather than a `Box` field because `Box<[u8; N]>` and the `NonNull`
+    // inside `file` are both aliasing the same heap region, and Rust's
+    // aliasing rules are friendlier when we don't materialise both as
+    // separate owners during the struct's lifetime.
+    buf: *mut [u8; COUNTERS_FILE_RESERVED_BYTES],
+}
+
+// SAFETY: the buffer is heap-owned, isolated to this `OwnedCountersFile`
+// instance; the file view is `Send`+`Sync` (it's an opaque pointer that
+// the inner type already asserts safe for cross-thread access through
+// its own Send/Sync impls). Wrapping it adds no new aliasing.
+unsafe impl Send for OwnedCountersFile {}
+unsafe impl Sync for OwnedCountersFile {}
+
+impl std::ops::Deref for OwnedCountersFile {
+    type Target = CountersFile;
+    fn deref(&self) -> &CountersFile {
+        &self.file
+    }
+}
+
+impl std::fmt::Debug for OwnedCountersFile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OwnedCountersFile")
+            .field("file", &self.file)
+            .finish()
+    }
+}
+
+impl Drop for OwnedCountersFile {
+    fn drop(&mut self) {
+        // SAFETY: `buf` was produced by `Box::into_raw` in
+        // `CountersFile::boxed`; reconstituting the Box releases the
+        // allocation. `self.file` is dropped before this Drop body
+        // returns and the file's NonNull pointer is not accessed
+        // afterwards.
+        unsafe {
+            drop(Box::from_raw(self.buf));
+        }
     }
 }
 
@@ -556,5 +642,47 @@ mod tests {
         assert_eq!(snap[0].id, ids::EVENTS_PUBLISHED);
         assert_eq!(snap[0].value, 100);
         assert_eq!(snap[0].label, "events_published");
+    }
+
+    #[test]
+    fn boxed_creates_usable_counters_file() {
+        // The safe `CountersFile::boxed()` wrapper allocates and
+        // initialises the counters region in one call; the returned
+        // `OwnedCountersFile` derefs to `&CountersFile`.
+        let file = CountersFile::boxed();
+        assert_eq!(file.header().magic, COUNTERS_MAGIC);
+        let h = file
+            .register(ids::EVENTS_PUBLISHED, COUNTER_FLAG_PRODUCER, "events_published")
+            .expect("first slot fits");
+        for _ in 0..7 {
+            h.inc();
+        }
+        let snap = file.snapshot();
+        assert_eq!(snap.len(), 1);
+        assert_eq!(snap[0].id, ids::EVENTS_PUBLISHED);
+        assert_eq!(snap[0].value, 7);
+    }
+
+    #[test]
+    fn owned_counters_file_drop_releases_buffer() {
+        // Smoke-test for the Drop impl: allocating, registering, then
+        // dropping a sequence of `OwnedCountersFile`s should not leak
+        // or fault. Miri / asan would catch UAF / leak; this test just
+        // exercises the path so a regression in Drop is at minimum
+        // noisy in normal runs.
+        for _ in 0..1024 {
+            let f = CountersFile::boxed();
+            let _ = f.register(1, COUNTER_FLAG_PRODUCER, "x");
+            // Drop at end of scope.
+        }
+    }
+
+    #[test]
+    fn owned_counters_file_is_send_and_sync() {
+        // Compile-time check that we can move it across threads.
+        fn assert_send<T: Send>() {}
+        fn assert_sync<T: Sync>() {}
+        assert_send::<OwnedCountersFile>();
+        assert_sync::<OwnedCountersFile>();
     }
 }
