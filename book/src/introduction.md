@@ -20,6 +20,8 @@ If you want to skip ahead, the most useful starting points are:
 - [When to use which layer](onion/when-to-use-which.md) — decision matrix.
 - [Layer 0 quick start](examples/shm.md) — the smallest end-to-end multiprocess example.
 
+> **Status (`0.1.0-alpha.1`).** Three chapters are written: this introduction, [layered architecture](onion/index.md), and [when to use which layer](onion/when-to-use-which.md). The remaining ~28 chapters are scaffolds that redirect to the docs.rs API reference and the workspace README. Both are comprehensive — `disruptor-mp` and `myelon` ship at 0 missing-docs on their published surfaces. The book chapters will be filled in over the alpha-iteration window; the TOC structure exists today to make scope obvious. PRs welcome.
+
 ## Why this exists
 
 Two real OS processes that need to exchange events at sub-microsecond latency without Linux-only assumptions, with strict broadcast semantics, with deterministic-simulation tests, and with optional hot-path counters that don't tax the steady-state path. That's the contract.
