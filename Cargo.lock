@@ -866,6 +866,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "flatbuffers"
+version = "25.12.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "35f6839d7b3b98adde531effaf34f0c2badc6f4735d26fe74709d8e513a96ef3"
+dependencies = [
+ "bitflags 2.11.1",
+ "rustc_version",
+]
+
+[[package]]
 name = "flate2"
 version = "1.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2027,7 +2037,7 @@ version = "0.1.0-alpha.1"
 dependencies = [
  "bincode",
  "disruptor-mp",
- "flatbuffers",
+ "flatbuffers 25.12.19",
  "myelon-dst",
  "rkyv",
  "serde",
@@ -2351,7 +2361,7 @@ dependencies = [
  "clap",
  "ctrlc",
  "disruptor-mp",
- "flatbuffers",
+ "flatbuffers 24.12.23",
  "hdrhistogram",
  "libc",
  "myelon",

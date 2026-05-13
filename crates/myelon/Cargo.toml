@@ -22,7 +22,7 @@ workspace = true
 disruptor_mp = { package = "disruptor-mp", path = "../disruptor-mp", version = "0.1.0-alpha.1" }
 serde = { version = "1", features = ["derive"] }
 rkyv = { version = "0.8", features = ["bytecheck"], optional = true }
-flatbuffers = { version = "24.12", optional = true }
+flatbuffers = { version = "25.12", optional = true }
 
 [features]
 default = []

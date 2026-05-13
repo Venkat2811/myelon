@@ -1,0 +1,133 @@
+name: CI
+
+# Runs the four-gate sequence (fmt + clippy + test + doc) on every push to main
+# and on every PR. Also runs the DST track (RUSTFLAGS="--cfg dst") separately
+# so the cfg-gated code path stays green.
+#
+# Matrix is (ubuntu-latest, macos-latest) × stable Rust. We don't run on
+# Windows yet — the cross-process SHM/mmap code path exercises POSIX
+# primitives the Windows path doesn't currently implement. Add when ready.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  # Pin to MSRV declared in workspace Cargo.toml. CI verifies build still
+  # works on the floor; the toolchain channel is `stable` so we also catch
+  # forward-compat breakage on the same run.
+  RUST_MSRV: "1.87"
+
+jobs:
+  fmt:
+    name: fmt --check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: cargo fmt --all -- --check
+        run: cargo fmt --all -- --check
+
+  clippy:
+    name: clippy ${{ matrix.os }} (default features)
+    needs: fmt
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo clippy -p disruptor-mp -p myelon --lib -- -D warnings
+        run: cargo clippy -p disruptor-mp -p myelon --lib -- -D warnings
+      - name: cargo clippy with metrics+prometheus+otel features
+        run: cargo clippy -p disruptor-mp --lib --features metrics,metrics-prometheus,metrics-otel -- -D warnings
+
+  test:
+    name: test ${{ matrix.os }} (default features)
+    needs: fmt
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo test --lib -p disruptor-mp -p myelon
+        run: cargo test --lib -p disruptor-mp -p myelon
+      - name: cargo test (integration) -p disruptor-mp -p myelon
+        run: cargo test -p disruptor-mp -p myelon
+
+  doc:
+    name: rustdoc (-D warnings)
+    needs: fmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo doc -p disruptor-mp -p myelon --no-deps
+        env:
+          # broken_intra_doc_links is already `deny` in workspace lints; this
+          # adds belt-and-suspenders to make sure any unscoped warning fails.
+          RUSTDOCFLAGS: "-D warnings"
+        run: cargo doc -p disruptor-mp -p myelon --no-deps
+
+  dst:
+    name: DST track (RUSTFLAGS=--cfg dst)
+    needs: fmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo test --no-run --cfg dst
+        env:
+          RUSTFLAGS: "--cfg dst"
+        run: |
+          cargo test --no-run \
+            -p disruptor-mp -p myelon -p myelon-dst \
+            --features myelon-dst/_runner_bin
+
+  publish_dry_run:
+    name: cargo publish --dry-run
+    needs: [fmt, clippy, test, doc]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo publish --dry-run -p disruptor-mp
+        run: cargo publish --dry-run -p disruptor-mp
+      # `myelon` dry-run is gated on `disruptor-mp` being available on
+      # crates.io. Until the actual first publish lands, this step will
+      # fail at the registry-resolution step. After v0.1.0-alpha.1 is
+      # actually published, uncomment.
+      # - name: cargo publish --dry-run -p myelon
+      #   run: cargo publish --dry-run -p myelon
+
+  msrv:
+    name: MSRV (${{ env.RUST_MSRV }})
+    needs: fmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_MSRV }}
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo build -p disruptor-mp -p myelon
+        run: cargo build -p disruptor-mp -p myelon
