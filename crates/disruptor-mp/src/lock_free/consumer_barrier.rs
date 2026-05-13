@@ -384,8 +384,8 @@ impl SharedConsumerBarrier {
 
     /// Optimized discovery using name prefix conventions.
     fn discover_with_consumer_prefix(&mut self, prefix: &str) {
-        #[cfg(feature = "dst")]
-        if dst_fixtures::dst_buggify::buggify(file!(), line!()) {
+        #[cfg(dst)]
+        if crate::dst::buggify(file!(), line!()) {
             std::thread::sleep(Duration::from_millis(50));
         }
 
@@ -404,8 +404,8 @@ impl SharedConsumerBarrier {
 
             if let Ok(cursor) = SharedCursor::attach(&sequence_name) {
                 self.consumer_cursors.insert(consumer_name, cursor);
-                #[cfg(feature = "dst")]
-                dst_fixtures::dst_assertions::assert_sometimes(
+                #[cfg(dst)]
+                crate::dst::assert_sometimes(
                     true,
                     "consumer discovered",
                     format!("prefix={prefix} consumer={counter}"),
@@ -416,8 +416,8 @@ impl SharedConsumerBarrier {
 
     /// Deterministic discovery for coordinated auto-generated consumer IDs.
     fn discover_with_registered_slots(&mut self, max_consumers: usize) -> usize {
-        #[cfg(feature = "dst")]
-        if dst_fixtures::dst_buggify::buggify(file!(), line!()) {
+        #[cfg(dst)]
+        if crate::dst::buggify(file!(), line!()) {
             std::thread::sleep(Duration::from_millis(50));
         }
 
@@ -443,8 +443,8 @@ impl SharedConsumerBarrier {
 
             if let Ok(cursor) = SharedCursor::attach(&sequence_name) {
                 self.consumer_cursors.insert(consumer_name, cursor);
-                #[cfg(feature = "dst")]
-                dst_fixtures::dst_assertions::assert_sometimes(
+                #[cfg(dst)]
+                crate::dst::assert_sometimes(
                     true,
                     "consumer discovered",
                     format!("registered-slot={slot}"),
@@ -457,8 +457,8 @@ impl SharedConsumerBarrier {
 
     /// PID-based discovery fallback.
     fn discover_with_pid_based_scanning(&mut self) {
-        #[cfg(feature = "dst")]
-        if dst_fixtures::dst_buggify::buggify(file!(), line!()) {
+        #[cfg(dst)]
+        if crate::dst::buggify(file!(), line!()) {
             std::thread::sleep(Duration::from_millis(50));
         }
 
@@ -483,8 +483,8 @@ impl SharedConsumerBarrier {
 
                     if let Ok(cursor) = SharedCursor::attach(&sequence_name) {
                         self.consumer_cursors.insert(consumer_name, cursor);
-                        #[cfg(feature = "dst")]
-                        dst_fixtures::dst_assertions::assert_sometimes(
+                        #[cfg(dst)]
+                        crate::dst::assert_sometimes(
                             true,
                             "consumer discovered",
                             format!("pid={pid} counter={counter}"),

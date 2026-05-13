@@ -1,9 +1,11 @@
+#![cfg(dst)]
+//!
 use disruptor_mp::{
     attach_shared_consumer, build_shared_single_producer, MmapConsumer, MmapProducer,
     MmapTransportLayout, RequiredConsumerLivenessConfig,
 };
-use dst_fixtures::dst_contract::ProcessRole;
-use dst_runner::{payload_bytes, stable_payload_hash, BackendKind, ChildReport, OracleMessage};
+use disruptor_mp::dst::contract::ProcessRole;
+use myelon_dst::{payload_bytes, stable_payload_hash, BackendKind, ChildReport, OracleMessage};
 use serde_json::to_string;
 use std::env;
 use std::fmt::Display;

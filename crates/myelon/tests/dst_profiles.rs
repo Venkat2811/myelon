@@ -1,11 +1,12 @@
-use dst_fixtures::{
-    dst_contract::{
+#![cfg(dst)]
+use disruptor_mp::dst::{
+    contract::{
         DeterministicFaultInjector, FailureClass, FailureKind, LifecycleAssertion, ProcessRole,
         ReplayMismatch, ReplayValidator, SchedulerAction, StartupSchedule, TraceArtifact,
         TraceStatus,
     },
-    dst_mapping::coverage_for,
-    dst_profiles::{profile_catalog, profile_for, validate_profile_contract},
+    mapping::coverage_for,
+    profiles::{profile_catalog, profile_for, validate_profile_contract},
 };
 
 const KNOWN_DST_COVERAGE_TESTS: &[&str] = &[

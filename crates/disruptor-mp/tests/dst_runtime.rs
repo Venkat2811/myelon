@@ -1,3 +1,4 @@
+#![cfg(dst)]
 //! Deterministic DST runtime harness tests.
 
 #[path = "support/dst_contract.rs"]

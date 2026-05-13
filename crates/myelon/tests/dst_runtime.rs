@@ -1,10 +1,11 @@
-use dst_fixtures::{
-    dst_contract::{
+#![cfg(dst)]
+use disruptor_mp::dst::{
+    contract::{
         DeterministicFaultInjector, FailureClass, FailureKind, FailureStep, LifecycleAssertion,
         ProcessRole, ReplayMismatch, ReplayValidator, SchedulerAction, StartupSchedule,
         TraceArtifact, TraceStatus,
     },
-    dst_runtime::{replay_trace, DstRuntime, DstRuntimeState},
+    runtime::{replay_trace, DstRuntime, DstRuntimeState},
 };
 use myelon::inference::{FixedTopology, WorkerCount};
 

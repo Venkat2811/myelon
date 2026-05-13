@@ -5,7 +5,7 @@
 //! at least one executable test path in the current suite and gives a stable set
 //! of anchors for future seed/replay expansion.
 
-use crate::dst_contract::FailureClass;
+use super::contract::FailureClass;
 
 /// Coverage metadata for a failure class in the existing `tests/*` suite.
 #[derive(Debug, Clone, Copy)]

@@ -1,11 +1,12 @@
+#![cfg(dst)]
 //! DST-style real multiprocess FramedTransport checks.
 //!
 //! These tests deliberately use real OS child processes and real SHM-backed
 //! framed rings so fragmentation and backpressure behavior is exercised outside
 //! of the in-memory DST contract layer.
 
-use dst_fixtures::dst_buggify::ScopedBuggify;
-use dst_runner::{BackendKind, DstConfig};
+use disruptor_mp::dst::buggify::ScopedBuggify;
+use myelon_dst::{BackendKind, DstConfig};
 use myelon::transport::{
     FixedFrame, FramedTransportConsumer, FramedTransportProducer, MmapFramedTransportConsumer,
     MmapFramedTransportProducer, MyelonWaitStrategy,

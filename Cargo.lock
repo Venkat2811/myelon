@@ -797,13 +797,13 @@ dependencies = [
  "crossbeam",
  "ctrlc",
  "disruptor",
- "dst-fixtures",
  "hdrhistogram",
  "libc",
  "memmap2",
  "metrics",
  "metrics-exporter-prometheus",
  "metrics-util",
+ "myelon-dst",
  "nix 0.30.1",
  "num-format",
  "once_cell",
@@ -819,26 +819,6 @@ dependencies = [
  "thiserror 1.0.69",
  "trybuild",
  "winapi",
-]
-
-[[package]]
-name = "dst-fixtures"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "dst-runner"
-version = "0.1.0"
-dependencies = [
- "disruptor-mp",
- "dst-fixtures",
- "libc",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -1924,13 +1904,23 @@ version = "0.1.0"
 dependencies = [
  "bincode",
  "disruptor-mp",
- "dst-fixtures",
- "dst-runner",
  "flatbuffers",
+ "myelon-dst",
  "rkyv",
  "serde",
  "serde_json",
  "trybuild",
+]
+
+[[package]]
+name = "myelon-dst"
+version = "0.1.0"
+dependencies = [
+ "disruptor-mp",
+ "libc",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
 ]
 
 [[package]]

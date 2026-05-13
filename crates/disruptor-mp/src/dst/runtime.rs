@@ -3,7 +3,7 @@
 //! This module stays in test support only and currently models orchestration state
 //! transitions in-memory with seeded, replayable traces.
 
-use crate::dst_contract::{ProcessRole, SchedulerAction, TraceArtifact, TraceStatus};
+use super::contract::{ProcessRole, SchedulerAction, TraceArtifact, TraceStatus};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

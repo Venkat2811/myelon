@@ -1,6 +1,8 @@
-use dst_fixtures::dst_buggify::ScopedBuggify;
-use dst_fixtures::dst_contract::FailureClass;
-use dst_runner::{
+#![cfg(dst)]
+//!
+use disruptor_mp::dst::buggify::ScopedBuggify;
+use disruptor_mp::dst::contract::FailureClass;
+use myelon_dst::{
     BackendKind, DstConfig, DstProperty, DstRunner, DstRunnerError, OracleViolation,
     RawRingHarness, RequiredConsumerLivenessPolicy, TransportKind,
 };
@@ -28,7 +30,7 @@ fn harness() -> LockedHarness {
         _guard: RAW_RING_TEST_LOCK
             .lock()
             .expect("raw-ring dst test lock should not be poisoned"),
-        inner: RawRingHarness::new(env!("CARGO_BIN_EXE_dst-runner-child"))
+        inner: RawRingHarness::new(env!("CARGO_BIN_EXE_myelon-dst-runner-child"))
             .with_timeout(Duration::from_secs(45)),
     }
 }
@@ -82,7 +84,7 @@ fn run_failure_case(
     backend: BackendKind,
     consumer_count: usize,
     message_count: u64,
-) -> dst_runner::DstRunReport {
+) -> myelon_dst::DstRunReport {
     let config = DstConfig::raw_ring_from_seed(seed)
         .with_backend(backend)
         .with_ring_depth(2048)

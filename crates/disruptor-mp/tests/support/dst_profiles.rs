@@ -1,2 +1,3 @@
+#![cfg(dst)]
 /// Shared deterministic profile and assertion data re-export.
-pub use dst_fixtures::dst_profiles::*;
+pub use disruptor_mp::dst::profiles::*;

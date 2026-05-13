@@ -152,6 +152,12 @@ pub mod observability;
 mod required_consumer;
 mod segment_name;
 mod shared_memory_layout;
+
+// Deterministic-simulation testing primitives. Available when the
+// build is invoked with `RUSTFLAGS="--cfg dst"`. See the module docs
+// for the FoundationDB/TigerBeetle-style design.
+#[cfg(dst)]
+pub mod dst;
 pub use api::*;
 pub use required_consumer::{
     RequiredConsumerAlert, RequiredConsumerAlertHook, RequiredConsumerError,

@@ -829,8 +829,8 @@ where
                 return;
             }
 
-            #[cfg(feature = "dst")]
-            dst_fixtures::dst_assertions::assert_sometimes(
+            #[cfg(dst)]
+            disruptor_mp::dst::assert_sometimes(
                 true,
                 "fragmented message",
                 format!("msg_id={} len={}", meta.msg_id, meta.len),
@@ -1564,9 +1564,9 @@ pub fn publish_framed_payload<T, P, W>(
         return;
     }
 
-    #[cfg(feature = "dst")]
+    #[cfg(dst)]
     if payload.len() > chunk_size {
-        dst_fixtures::dst_assertions::assert_sometimes(
+        disruptor_mp::dst::assert_sometimes(
             true,
             "fragmented message",
             format!("payload_len={} chunk_size={chunk_size}", payload.len()),
@@ -1606,9 +1606,9 @@ where
         return Ok(());
     }
 
-    #[cfg(feature = "dst")]
+    #[cfg(dst)]
     if payload.len() > chunk_size {
-        dst_fixtures::dst_assertions::assert_sometimes(
+        disruptor_mp::dst::assert_sometimes(
             true,
             "fragmented message",
             format!("payload_len={} chunk_size={chunk_size}", payload.len()),

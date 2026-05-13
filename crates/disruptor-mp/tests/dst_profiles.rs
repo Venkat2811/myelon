@@ -1,3 +1,4 @@
+#![cfg(dst)]
 //! Tests for process profiles used by deterministic disruption scenarios.
 
 #[path = "support/dst_contract.rs"]

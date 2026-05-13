@@ -1,11 +1,10 @@
 [workspace]
 members = [
   "crates/disruptor-mp",
-  "crates/dst-runner",
   "crates/myelon",
+  "crates/myelon-dst",
   "crates/perf-bench",
   "crates/competitive-bench",
-  "crates/dst-fixtures",
   "examples/demos",
   "examples/myelon-pulse-vanity",
 ]
@@ -35,6 +34,10 @@ project = "myelon"
 unsafe_op_in_unsafe_fn = "warn"
 rust_2018_idioms       = { level = "warn", priority = -1 }
 nonstandard_style      = { level = "warn", priority = -1 }
+# Custom rustc cfg used by the DST harness (tokio loom-style).
+# Workspace devs opt in via `RUSTFLAGS="--cfg dst" cargo test ...`.
+# Published builds never see this cfg.
+unexpected_cfgs        = { level = "warn", check-cfg = ['cfg(dst)'] }
 
 [workspace.lints.rustdoc]
 broken_intra_doc_links = "deny"

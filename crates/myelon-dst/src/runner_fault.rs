@@ -1,4 +1,4 @@
-use dst_fixtures::dst_contract::{FailureClass, ProcessRole};
+use disruptor_mp::dst::contract::{FailureClass, ProcessRole};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -1,7 +1,8 @@
+#![cfg(dst)]
 //! DST-style real multiprocess typed transport checks for codec and zero-copy paths.
 
-use dst_fixtures::dst_buggify::ScopedBuggify;
-use dst_runner::{BackendKind, CodecKind, DstConfig};
+use disruptor_mp::dst::buggify::ScopedBuggify;
+use myelon_dst::{BackendKind, CodecKind, DstConfig};
 use myelon::codec::{Codec, CodecError};
 use myelon::transport::{FixedFrame, MyelonWaitStrategy, ReassemblyBuffer};
 use myelon::{MmapTypedConsumer, MmapTypedProducer, TypedConsumer, TypedProducer};

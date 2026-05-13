@@ -226,8 +226,8 @@ where
             .free_slots(last_published, rear_sequence_read);
 
         if free_slots < n {
-            #[cfg(feature = "dst")]
-            dst_fixtures::dst_assertions::assert_sometimes(
+            #[cfg(dst)]
+            crate::dst::assert_sometimes(
                 true,
                 "producer blocked",
                 format!("free_slots={free_slots} requested={n}"),
@@ -265,9 +265,9 @@ where
         // Publish sequence with release ordering so consumer-visible event writes happen-before sequence update.
         self.producer_sequence.store(sequence, Ordering::Release);
 
-        #[cfg(feature = "dst")]
+        #[cfg(dst)]
         if sequence > 0 && sequence % self.ring_buffer.size() as i64 == 0 {
-            dst_fixtures::dst_assertions::assert_sometimes(
+            crate::dst::assert_sometimes(
                 true,
                 "ring buffer wraps around",
                 format!("sequence={sequence} size={}", self.ring_buffer.size()),
@@ -353,8 +353,8 @@ where
             }
             std::hint::spin_loop();
         }
-        #[cfg(feature = "dst")]
-        if dst_fixtures::dst_buggify::buggify(file!(), line!()) {
+        #[cfg(dst)]
+        if crate::dst::buggify(file!(), line!()) {
             std::thread::yield_now();
         }
         self.apply_update(update);
@@ -541,8 +541,8 @@ where
         let mut update = Some(update);
         loop {
             if self.next_sequences(1).is_ok() {
-                #[cfg(feature = "dst")]
-                if dst_fixtures::dst_buggify::buggify(file!(), line!()) {
+                #[cfg(dst)]
+                if crate::dst::buggify(file!(), line!()) {
                     std::thread::yield_now();
                 }
                 let sequence =
@@ -601,8 +601,8 @@ where
     /// Return the minimum gating sequence across all discovered consumers.
     /// This may discover consumers based on configuration and scan interval.
     pub fn min_gating_sequence(&mut self) -> Sequence {
-        #[cfg(feature = "dst")]
-        if dst_fixtures::dst_buggify::buggify(file!(), line!()) {
+        #[cfg(dst)]
+        if crate::dst::buggify(file!(), line!()) {
             return self.last_published_sequence();
         }
         self.consumer_barrier.get_min_consumer_sequence()

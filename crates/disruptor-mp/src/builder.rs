@@ -796,8 +796,8 @@ where
     where
         F: FnMut() -> E,
     {
-        #[cfg(feature = "dst")]
-        if dst_fixtures::dst_buggify::buggify(file!(), line!()) {
+        #[cfg(dst)]
+        if crate::dst::buggify(file!(), line!()) {
             std::thread::sleep(Duration::from_millis(100));
         }
 
@@ -891,8 +891,8 @@ where
 
     /// Build a consumer (attaches to existing shared memory segments)
     pub fn build_consumer(self) -> MultiProcessResult<SharedConsumer<E>> {
-        #[cfg(feature = "dst")]
-        if dst_fixtures::dst_buggify::buggify(file!(), line!()) {
+        #[cfg(dst)]
+        if crate::dst::buggify(file!(), line!()) {
             std::thread::sleep(Duration::from_millis(100));
         }
 

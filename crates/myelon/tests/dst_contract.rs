@@ -1,10 +1,11 @@
-use dst_fixtures::{
-    dst_contract::{
+#![cfg(dst)]
+use disruptor_mp::dst::{
+    contract::{
         DeterministicFaultInjector, FailureClass, ProcessRole, ReplayMismatch, ReplayValidator,
         SchedulerAction, StartupSchedule, TraceArtifact,
     },
-    dst_mapping::coverage_for,
-    dst_profiles::{profile_catalog, profile_for},
+    mapping::coverage_for,
+    profiles::{profile_catalog, profile_for},
 };
 
 const KNOWN_DST_COVERAGE_TESTS: &[&str] = &[
@@ -49,13 +50,13 @@ fn test_myelon_failure_injector_and_replay_contract() {
     trace.push(
         ProcessRole::Producer,
         SchedulerAction::Spawn,
-        dst_fixtures::dst_contract::TraceStatus::Success,
+        disruptor_mp::dst::contract::TraceStatus::Success,
         "role=producer",
     );
     trace.push(
         ProcessRole::Producer,
         SchedulerAction::Start,
-        dst_fixtures::dst_contract::TraceStatus::Success,
+        disruptor_mp::dst::contract::TraceStatus::Success,
         "role=producer",
     );
 

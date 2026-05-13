@@ -1,10 +1,10 @@
-use crate::config::{BackendKind, DstConfig};
-use crate::fault::FaultInjector;
-use crate::oracle::MessageOracle;
-use crate::report::{ChildReport, DstProperty, DstRunReport, TransportKind};
-use crate::verify::verify_raw_ring_broadcast;
-use dst_fixtures::dst_assertions::AssertionLog;
-use dst_fixtures::dst_contract::{
+use crate::runner_config::{BackendKind, DstConfig};
+use crate::runner_fault::FaultInjector;
+use crate::runner_oracle::MessageOracle;
+use crate::runner_report::{ChildReport, DstProperty, DstRunReport, TransportKind};
+use crate::runner_verify::verify_raw_ring_broadcast;
+use disruptor_mp::dst::assertions::AssertionLog;
+use disruptor_mp::dst::contract::{
     FailureClass, ProcessRole, SchedulerAction, TraceArtifact, TraceStatus,
 };
 use serde::de::DeserializeOwned;
@@ -70,7 +70,7 @@ pub enum DstRunnerError {
         source: serde_json::Error,
     },
     #[error("oracle verification failed: {0:?}")]
-    Oracle(Vec<crate::oracle::OracleViolation>),
+    Oracle(Vec<crate::runner_oracle::OracleViolation>),
 }
 
 #[derive(Debug)]
@@ -158,7 +158,7 @@ impl DstRunner {
     pub fn with_config(config: DstConfig) -> Self {
         let trace = TraceArtifact::new(
             format!("dst-run-{:x}", config.seed),
-            "dst_runner/raw_ring",
+            "myelon_dst/raw_ring",
             config.seed,
         );
         let oracle = MessageOracle::with_broadcast_consumers(config.consumer_count);
@@ -464,7 +464,7 @@ impl DstRunner {
             None => self.config.ring_depth,
         };
 
-        let run_root = unique_run_root("dst_runner");
+        let run_root = unique_run_root("myelon_dst");
         fs::create_dir_all(&run_root).map_err(|err| {
             DstRunnerError::InvalidConfig(format!("failed to create run root: {err}"))
         })?;
@@ -1378,8 +1378,8 @@ fn concat_child_reports(prefix: Option<ChildReport>, suffix: ChildReport) -> Chi
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::oracle::OracleMessage;
-    use dst_fixtures::dst_contract::ProcessRole;
+    use crate::runner_oracle::OracleMessage;
+    use disruptor_mp::dst::contract::ProcessRole;
 
     fn report(sequences: &[u64]) -> ChildReport {
         ChildReport {

@@ -1,0 +1,38 @@
+[package]
+name        = "myelon-dst"
+version     = "0.1.0"
+description = "Internal: multiprocess deterministic-simulation harness for disruptor-mp and myelon. DST primitives live in `disruptor_mp::dst::*` (gated by `--cfg dst`); this crate provides the orchestrator."
+publish     = false
+edition.workspace      = true
+license.workspace      = true
+authors.workspace      = true
+repository.workspace   = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+name = "myelon_dst"
+
+# The harness child binary is only meaningful when DST is active.
+# `required-features = ["_runner_bin"]` makes cargo skip it for the
+# default workspace build; workspace tests enable the feature via
+# `cargo test --features _runner_bin` (or `cargo build --all-features`).
+[[bin]]
+name             = "myelon-dst-runner-child"
+path             = "src/bin/myelon-dst-runner-child.rs"
+required-features = ["_runner_bin"]
+
+[features]
+# Internal flag to enable the runner-child binary. Underscore prefix
+# signals "not part of the public feature surface" (this crate doesn't
+# publish anyway).
+_runner_bin = []
+
+[dependencies]
+disruptor_mp = { package = "disruptor-mp", path = "../disruptor-mp" }
+serde        = { version = "1.0", features = ["derive"] }
+serde_json   = "1.0"
+thiserror    = "1"
+libc         = "0.2"

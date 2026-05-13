@@ -1,3 +1,4 @@
+#![cfg(dst)]
 //! DST-style coverage for the counters file (RFC 0040).
 //!
 //! These tests exercise the counters file under deterministic fault
@@ -14,10 +15,10 @@
 //! Both invariants are checked under `DST_BUGGIFY=1` with a stable
 //! `DST_BUGGIFY_SEED` so reruns are identical.
 //!
-//! The tests are gated behind `#[cfg(feature = "dst")]` to align with
+//! The tests are gated behind `#[cfg(dst)]` to align with
 //! the rest of the DST test suite.
 
-#![cfg(feature = "dst")]
+#![cfg(dst)]
 
 use disruptor_mp::observability::{
     ids, AttachError, CountersFile, COUNTERS_FILE_RESERVED_BYTES, COUNTER_FLAG_CONSUMER,
@@ -92,7 +93,7 @@ fn counters_file_totals_are_deterministic_under_buggify() {
                 // Buggify-driven yields exercise scheduling-induced
                 // interleavings between threads; counter discipline
                 // (relaxed atomics) must absorb them losslessly.
-                if dst_fixtures::dst_buggify::buggify(file!(), line!()) {
+                if disruptor_mp::dst::buggify::buggify(file!(), line!()) {
                     thread::yield_now();
                 }
                 if i % 64 == 0 {
@@ -168,7 +169,7 @@ fn external_reader_sees_consistent_snapshot_during_writes() {
                 .expect("register");
             while stop.load(Ordering::Relaxed) == 0 {
                 h.inc();
-                if dst_fixtures::dst_buggify::buggify(file!(), line!()) {
+                if disruptor_mp::dst::buggify::buggify(file!(), line!()) {
                     thread::yield_now();
                 }
             }
@@ -201,7 +202,7 @@ fn external_reader_sees_consistent_snapshot_during_writes() {
                 );
                 *prev = c.value;
             }
-            if dst_fixtures::dst_buggify::buggify(file!(), line!()) {
+            if disruptor_mp::dst::buggify::buggify(file!(), line!()) {
                 thread::yield_now();
             }
         }

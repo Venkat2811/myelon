@@ -400,8 +400,8 @@ impl<F: FramedTransportFrame> TypedConsumer<F> {
         let mut delivered = 0usize;
         self.inner
             .process_available_messages(reassembly_buf, |kind, bytes| {
-                #[cfg(feature = "dst")]
-                dst_fixtures::dst_assertions::assert_sometimes(
+                #[cfg(dst)]
+                disruptor_mp::dst::assert_sometimes(
                     true,
                     "zero-copy access used",
                     format!("bytes={}", bytes.len()),
@@ -625,8 +625,8 @@ impl<F: FramedTransportFrame> MmapTypedConsumer<F> {
         let mut delivered = 0usize;
         self.inner
             .process_available_messages(reassembly_buf, |kind, bytes| {
-                #[cfg(feature = "dst")]
-                dst_fixtures::dst_assertions::assert_sometimes(
+                #[cfg(dst)]
+                disruptor_mp::dst::assert_sometimes(
                     true,
                     "zero-copy access used",
                     format!("bytes={}", bytes.len()),

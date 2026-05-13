@@ -1,2 +1,3 @@
+#![cfg(dst)]
 /// Shared deterministic test mapping re-export.
-pub use dst_fixtures::dst_mapping::*;
+pub use disruptor_mp::dst::mapping::*;

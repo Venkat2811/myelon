@@ -1,3 +1,4 @@
+#![cfg(dst)]
 //! Tests for deterministic DST contract primitives used by multiprocess regression tests.
 
 #[path = "support/dst_contract.rs"]

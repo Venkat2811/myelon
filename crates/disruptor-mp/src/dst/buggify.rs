@@ -146,7 +146,7 @@ pub fn buggify(file: &'static str, line: u32) -> bool {
 #[macro_export]
 macro_rules! dst_buggify {
     () => {
-        $crate::dst_buggify::buggify(file!(), line!())
+        $super::buggify::buggify(file!(), line!())
     };
 }
 

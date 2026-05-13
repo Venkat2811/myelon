@@ -5,7 +5,7 @@
 
 use std::time::Duration;
 
-use crate::dst_contract::FailureClass;
+use super::contract::FailureClass;
 
 /// High-level assertions each profile must satisfy in one or more test variants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

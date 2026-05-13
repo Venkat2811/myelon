@@ -1,5 +1,5 @@
-use crate::oracle::{MessageOracle, OracleViolation};
-use crate::report::ChildReport;
+use crate::runner_oracle::{MessageOracle, OracleViolation};
+use crate::runner_report::ChildReport;
 
 pub fn verify_raw_ring_broadcast(
     oracle: &MessageOracle,

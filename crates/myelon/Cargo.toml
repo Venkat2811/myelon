@@ -16,22 +16,18 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
-disruptor_mp = { package = "disruptor-mp", path = "../disruptor-mp" }
+disruptor_mp = { package = "disruptor-mp", path = "../disruptor-mp", version = "3.7.1" }
 serde = { version = "1", features = ["derive"] }
 rkyv = { version = "0.8", features = ["bytecheck"], optional = true }
 flatbuffers = { version = "24.12", optional = true }
-dst-fixtures = { path = "../dst-fixtures", optional = true }
 
 [features]
 default = []
 rkyv = ["dep:rkyv"]
 flatbuffers = ["dep:flatbuffers"]
-dst = ["disruptor_mp/dst", "dep:dst-fixtures"]
 
 [dev-dependencies]
 trybuild = "1.0"
-dst-fixtures = { path = "../dst-fixtures" }
-dst-runner = { path = "../dst-runner" }
 serde_json = "1"
 bincode = "1"
 
@@ -40,3 +36,9 @@ name = "myelon"
 
 # Workspace-level runnable examples live in the top-level `examples/`
 # crate so they can demonstrate `disruptor-mp` and `myelon` together.
+
+# DST harness — see disruptor-mp's matching block for the rationale.
+# Workspace devs run `RUSTFLAGS="--cfg dst" cargo test` to pull this in;
+# default publish builds don't activate the cfg.
+[target.'cfg(dst)'.dev-dependencies]
+myelon-dst = { path = "../myelon-dst" }

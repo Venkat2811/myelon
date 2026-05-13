@@ -339,8 +339,8 @@ where
             if let Some((seq, event)) = self.try_consume_next() {
                 return (seq, event);
             }
-            #[cfg(feature = "dst")]
-            if dst_fixtures::dst_buggify::buggify(file!(), line!()) {
+            #[cfg(dst)]
+            if crate::dst::buggify(file!(), line!()) {
                 std::thread::yield_now();
             }
             // High performance: Use spin_loop for maximum throughput
@@ -466,8 +466,8 @@ where
     where
         F: FnMut(&E, Sequence),
     {
-        #[cfg(feature = "dst")]
-        if dst_fixtures::dst_buggify::buggify(file!(), line!()) {
+        #[cfg(dst)]
+        if crate::dst::buggify(file!(), line!()) {
             return 0;
         }
 

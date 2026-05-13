@@ -1,2 +1,3 @@
+#![cfg(dst)]
 /// Shared deterministic runtime support re-export.
-pub use dst_fixtures::dst_runtime::*;
+pub use disruptor_mp::dst::runtime::*;

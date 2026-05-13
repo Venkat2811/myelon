@@ -1,7 +1,7 @@
-use crate::config::{CodecKind, DstConfig};
-use crate::oracle::OracleMessage;
-use dst_fixtures::dst_assertions::AssertionLog;
-use dst_fixtures::dst_contract::{FailureClass, ProcessRole, TraceArtifact};
+use crate::runner_config::{CodecKind, DstConfig};
+use crate::runner_oracle::OracleMessage;
+use disruptor_mp::dst::assertions::AssertionLog;
+use disruptor_mp::dst::contract::{FailureClass, ProcessRole, TraceArtifact};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
