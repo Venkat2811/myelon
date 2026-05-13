@@ -299,16 +299,25 @@ impl CountersFile {
     /// ```
     #[must_use]
     pub fn boxed() -> OwnedCountersFile {
-        let buf: Box<[u8; COUNTERS_FILE_RESERVED_BYTES]> =
-            Box::new([0u8; COUNTERS_FILE_RESERVED_BYTES]);
+        // `CountersHeader` and `CounterSlot` are `#[repr(C, align(64))]`,
+        // so the backing buffer must also be 64-byte aligned. A plain
+        // `Box<[u8; N]>` only guarantees `align_of::<u8>() = 1`, which
+        // tripped the doctest with a `misaligned pointer dereference:
+        // address must be a multiple of 0x40` on aarch64. The
+        // `OwnedCountersBuf` newtype below carries `#[repr(C, align(64))]`
+        // so the heap allocation comes out cache-line aligned. The
+        // matching `Drop` reconstitutes `Box<OwnedCountersBuf>` (same
+        // type, same alignment) to release the allocation safely.
+        let buf: Box<OwnedCountersBuf> =
+            Box::new(OwnedCountersBuf([0u8; COUNTERS_FILE_RESERVED_BYTES]));
         let ptr = Box::into_raw(buf);
         // SAFETY: `ptr` is a valid, non-null, exclusively-owned pointer to
-        // a freshly-allocated, zero-initialised buffer of exactly
-        // `COUNTERS_FILE_RESERVED_BYTES`. We reconstitute the `Box` in
-        // `OwnedCountersFile::drop` to release the allocation; the view
-        // stored in `file.base` aliases the same heap region.
+        // a freshly-allocated, zero-initialised, 64-byte-aligned buffer of
+        // exactly `COUNTERS_FILE_RESERVED_BYTES`. The view stored in
+        // `file.base` aliases the same heap region; `OwnedCountersFile`'s
+        // `Drop` reconstitutes the `Box<OwnedCountersBuf>` to free it.
         let view = unsafe {
-            CountersFile::init(NonNull::new_unchecked(ptr as *mut u8))
+            CountersFile::init(NonNull::new_unchecked(ptr.cast::<u8>()))
         };
         OwnedCountersFile { file: view, buf: ptr }
     }
@@ -344,6 +353,15 @@ impl CountersFile {
     }
 }
 
+/// 64-byte-aligned backing buffer for [`OwnedCountersFile`]. Kept
+/// `repr(C, align(64))` because [`CountersHeader`] and [`CounterSlot`]
+/// (the structs the buffer is reinterpreted as) are themselves 64-byte
+/// aligned — a plain `Box<[u8; N]>` only promises 1-byte alignment,
+/// which trips `misaligned pointer dereference` panics on platforms
+/// that enforce alignment (e.g. aarch64 in debug builds).
+#[repr(C, align(64))]
+struct OwnedCountersBuf([u8; COUNTERS_FILE_RESERVED_BYTES]);
+
 /// Heap-allocated [`CountersFile`] that owns its backing buffer.
 /// Produced by [`CountersFile::boxed`] for use cases that don't need
 /// cross-process sharing (tests, in-process metrics).
@@ -358,7 +376,7 @@ pub struct OwnedCountersFile {
     // inside `file` are both aliasing the same heap region, and Rust's
     // aliasing rules are friendlier when we don't materialise both as
     // separate owners during the struct's lifetime.
-    buf: *mut [u8; COUNTERS_FILE_RESERVED_BYTES],
+    buf: *mut OwnedCountersBuf,
 }
 
 // SAFETY: the buffer is heap-owned, isolated to this `OwnedCountersFile`
