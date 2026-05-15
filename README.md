@@ -164,15 +164,33 @@ The full sweep matrix (layer × backend × codec × payload × mode × consumer-
 
 ## Citation
 
-If you use `myelon` or `disruptor-mp` in research or downstream work, please cite:
+If you use `myelon` or `disruptor-mp` in research or downstream work, please cite the relevant crate.
+
+**`myelon`** — the layered façade (framing, codecs, typed zero-copy, topology):
 
 ```
-Venkat Raman. "myelon: Multiprocess shared-memory transport for inference and other low-latency pipelines". GitHub (2026). https://github.com/Venkat2811/myelon
+Venkat Raman. "myelon: Inference-fabric crate providing typed transport, framing, and codec layers over multiprocess shared-memory ring buffers". GitHub (2026). https://github.com/Venkat2811/myelon
 ```
 
 ```bibtex
 @misc{venkat2026myelon,
-  title        = {myelon: Multiprocess shared-memory transport for inference and other low-latency pipelines},
+  title        = {myelon: Inference-fabric crate providing typed transport, framing, and codec layers over multiprocess shared-memory ring buffers},
+  author       = {Venkat Raman},
+  year         = {2026},
+  publisher    = {GitHub},
+  url          = {https://github.com/Venkat2811/myelon}
+}
+```
+
+**`disruptor-mp`** — the Layer 0 substrate (raw cross-process ring buffer):
+
+```
+Venkat Raman. "disruptor-mp: Multiprocess shared-memory ring buffers for Disruptor-style publication". GitHub (2026). https://github.com/Venkat2811/myelon
+```
+
+```bibtex
+@misc{venkat2026disruptormp,
+  title        = {disruptor-mp: Multiprocess shared-memory ring buffers for Disruptor-style publication, with cross-process producer/consumer coordination, optional mmap-backed transport, and observability counters},
   author       = {Venkat Raman},
   year         = {2026},
   publisher    = {GitHub},
