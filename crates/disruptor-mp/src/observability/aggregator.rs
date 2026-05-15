@@ -201,17 +201,27 @@ mod tests {
     /// dropped the Arc before the join, valgrind / asan would flag the
     /// worker's final snapshot read as use-after-free; a plain `cargo
     /// test` would either pass or panic depending on timing.
+    // `CountersHeader` / `CounterSlot` are `#[repr(C, align(64))]`, so
+    // the backing buffer must be 64-byte aligned. A plain `Box<[u8; N]>`
+    // only guarantees `align_of::<u8>() = 1`, which trips a
+    // `misaligned pointer dereference: address must be a multiple of
+    // 0x40` panic on aarch64 / Linux x86_64 in debug mode. Same fix
+    // pattern as `CountersFile::boxed` — wrap the bytes in a
+    // 64-byte-aligned newtype.
+    #[repr(C, align(64))]
+    struct AlignedBuf([u8; COUNTERS_FILE_RESERVED_BYTES]);
+
     #[test]
     fn spawn_arc_keeps_file_alive_for_worker() {
-        // Leak a buffer for the test process — the Arc-managed file
+        // Leak the buffer for the test process — the Arc-managed file
         // view will reference it for the duration of the test, and
         // process exit cleans up.
-        let buf: Box<[u8; COUNTERS_FILE_RESERVED_BYTES]> =
-            Box::new([0u8; COUNTERS_FILE_RESERVED_BYTES]);
+        let buf: Box<AlignedBuf> = Box::new(AlignedBuf([0u8; COUNTERS_FILE_RESERVED_BYTES]));
         let leaked = Box::leak(buf);
-        let ptr = std::ptr::NonNull::new(leaked.as_mut_ptr()).expect("non-null leaked ptr");
+        let ptr = std::ptr::NonNull::new(leaked.0.as_mut_ptr()).expect("non-null leaked ptr");
         // SAFETY: leaked buffer is 'static, zero-initialised, exactly
-        // COUNTERS_FILE_RESERVED_BYTES — the contract of `init`.
+        // COUNTERS_FILE_RESERVED_BYTES wide, and 64-byte aligned —
+        // the contract of `init`.
         let file = unsafe { CountersFile::init(ptr) };
 
         let arc = Arc::new(file);
