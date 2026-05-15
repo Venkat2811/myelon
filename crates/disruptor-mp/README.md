@@ -202,3 +202,7 @@ This crate intentionally does not host its own benchmark scenarios. Performance 
 
 - **`crates/perf-bench`** — broad sweep across raw / framed / codec / typed-zero-copy layers and `shm` / `mmap` backends. Consolidated into `perf-bench-pingpong`, `perf-bench-broadcast`, `perf-bench-signal`, and `perf-bench-repeatability` binaries.
 - **`crates/competitive-bench`** — apples-to-apples comparison against external transports (`crossbar`, `shmipc`, `iceoryx2`, `rusteron`, `zmq`, `iggy`, `redpanda`).
+
+## License
+
+Licensed under either of [Apache License, Version 2.0](../../LICENSE-APACHE) or [MIT license](../../LICENSE-MIT) at your option.

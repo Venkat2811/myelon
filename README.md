@@ -4,7 +4,7 @@
 
 # myelon (workspace)
 
-Repo for the [`myelon`](https://crates.io/crates/myelon) and [`disruptor-mp`](https://crates.io/crates/disruptor-mp) crates, plus their internal bench and test-runner support crates. The repo name predates the crate rename — `myelon` is the GitHub repo; the publishable crate is `myelon`.
+Repo for the [`myelon`](https://crates.io/crates/myelon) and [`disruptor-mp`](https://crates.io/crates/disruptor-mp) crates, plus their internal bench and test-runner support crates.
 
 `myelon` is multiprocess shared-memory transport for inference and other low-latency pipelines. It offers **simplified access to `disruptor-mp`'s core capabilities** plus framing, codecs, typed zero-copy, and topology layered on top — all behind one stable public surface.
 
@@ -138,8 +138,18 @@ cargo run --release -p demos --example <name>
 
 - **[LMAX Disruptor](https://github.com/LMAX-Exchange/disruptor)** (Java) — Martin Thompson, Mike Barker, Dave Farley, and the LMAX Exchange team — for the original lock-free ring-buffer design and the mechanical-sympathy thinking this whole lineage descends from.
 - **[`disruptor-rs`](https://github.com/nicholassm/disruptor-rs)** — Nicholas Schultz-Møller and contributors — for the single-process Rust port (the [`disruptor`](https://crates.io/crates/disruptor) crate) that `disruptor-mp` extends to cross-process.
+- **vLLM** — the [`shm_broadcast.py`](https://github.com/vllm-project/vllm/blob/main/vllm/distributed/device_communicators/shm_broadcast.py) `ShmRingBuffer` (single-producer / multiple-consumer shared-memory ring for cross-worker broadcast) is the same pattern in the same problem space; we're indebted to it for showing the shape of the right answer in Python land.
 - Bill Dally (NVIDIA Chief Scientist) and Jeff Dean (Google), [_Advancing to AI's Next Frontier_](https://www.youtube.com/watch?v=g8BuAtM3fp4) (GTC 2026) — for framing nanosecond-scale chip-level optimization and the "latency is communication, not computation" insight that motivates `myelon`'s focus on shared-memory transport.
 
 ## License
 
-MIT.
+Licensed under either of
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or <http://www.apache.org/licenses/LICENSE-2.0>)
+- MIT license ([LICENSE-MIT](LICENSE-MIT) or <http://opensource.org/licenses/MIT>)
+
+at your option.
+
+### Contribution
+
+Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in the work by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any additional terms or conditions.
