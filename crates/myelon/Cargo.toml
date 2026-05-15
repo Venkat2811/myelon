@@ -4,7 +4,7 @@ name        = "myelon"
 # signals "API may evolve during the early-iteration window." See
 # CHANGELOG.md.
 version     = "0.1.0-alpha.1"
-description = "Inference-fabric crate providing typed transport, framing, and codec layers over multiprocess shared-memory ring buffers (disruptor-mp)."
+description = "Low-latency, high-throughput, zero-copy typed transport over multiprocess SHM and mmap ring buffers (disruptor-mp) — framing, codecs, typed zero-copy, and topology for inference and other low-latency pipelines."
 readme      = "README.md"
 categories  = ["data-structures", "concurrency", "encoding"]
 keywords    = ["ipc", "shared-memory", "transport", "framing", "inference"]
