@@ -1,4 +1,4 @@
-//! PingPong benchmark over the mmap backend.
+//! `PingPong` benchmark over the mmap backend.
 //!
 //! This replaces the previous stub with a real 1p1c ping-pong benchmark that
 //! supports maximum-throughput, coordinated-omission-aware fixed-rate, and

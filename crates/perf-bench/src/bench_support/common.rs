@@ -118,7 +118,7 @@ pub struct LatencyStats {
 }
 
 impl LatencyStats {
-    /// Create stats from an HdrHistogram
+    /// Create stats from an `HdrHistogram`
     pub fn from_histogram(hist: &Histogram<u64>) -> Self {
         Self {
             count: hist.len(),

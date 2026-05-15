@@ -1,15 +1,15 @@
 //! Nofrag (right-sized frame) ping-pong benchmark over SHM backend.
 //!
-//! Identical to frag/pingpong_shm.rs but uses right-sized FixedFrame slots
+//! Identical to `frag/pingpong_shm.rs` but uses right-sized `FixedFrame` slots
 //! instead of the fixed 64KB frame, eliminating internal fragmentation.
 //!
 //! Frame sizing:
-//!   1KB payload  -> Frame2K  = FixedFrame<{2*1024-12}>
-//!   4KB payload  -> Frame8K  = FixedFrame<{8*1024-12}>
-//!   16KB payload -> Frame32K = FixedFrame<{32*1024-12}>
-//!   64KB payload -> Frame64K = FixedFrame<{64*1024-12}>
+//!   1KB payload  -> `Frame2K`  = `FixedFrame`<{2*1024-12}>
+//!   4KB payload  -> `Frame8K`  = `FixedFrame`<{8*1024-12}>
+//!   16KB payload -> `Frame32K` = `FixedFrame`<{32*1024-12}>
+//!   64KB payload -> `Frame64K` = `FixedFrame`<{64*1024-12}>
 //!
-//! Run: cargo bench -p perf-bench --bench pingpong_nofrag_shm
+//! Run: cargo bench -p perf-bench --bench `pingpong_nofrag_shm`
 
 use crate::cli::myelon_pingpong::{
     FramedPingPongScenarioSpec, FramedPingPongSelection, PingPongMode,

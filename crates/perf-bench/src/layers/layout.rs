@@ -1,6 +1,6 @@
 //! Layout overhead validation — measures producer-create and attach-path cost.
 //!
-//! Run: cargo bench -p myelon-bench --bench layout_validation
+//! Run: cargo bench -p myelon-bench --bench `layout_validation`
 
 use crate::cli::layout;
 use crate::infra::events::BenchEvent;

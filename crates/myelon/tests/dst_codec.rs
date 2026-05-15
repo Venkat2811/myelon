@@ -2,10 +2,10 @@
 //! DST-style real multiprocess typed transport checks for codec and zero-copy paths.
 
 use disruptor_mp::dst::buggify::ScopedBuggify;
-use myelon_dst::{BackendKind, CodecKind, DstConfig};
 use myelon::codec::{Codec, CodecError};
 use myelon::transport::{FixedFrame, MyelonWaitStrategy, ReassemblyBuffer};
 use myelon::{MmapTypedConsumer, MmapTypedProducer, TypedConsumer, TypedProducer};
+use myelon_dst::{BackendKind, CodecKind, DstConfig};
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::io::Read;

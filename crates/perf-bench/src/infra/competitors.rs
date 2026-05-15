@@ -12,7 +12,7 @@
 pub struct CompetitorData {
     pub name: &'static str,
     pub commit: &'static str,
-    /// (message_size_bytes, p50_latency_us)
+    /// (`message_size_bytes`, `p50_latency_us`)
     pub latencies: &'static [(usize, f64)],
 }
 

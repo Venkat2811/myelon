@@ -179,7 +179,7 @@ pub struct SizeTuning {
 }
 
 /// Returns tuning parameters for a given message size.
-/// Mirrors the SIZE_TUNING macro from the Makefile exactly.
+/// Mirrors the `SIZE_TUNING` macro from the Makefile exactly.
 pub fn tune_for_size(cfg: &ParityConfig, size: usize) -> SizeTuning {
     if size >= cfg.giant_size_threshold {
         SizeTuning {

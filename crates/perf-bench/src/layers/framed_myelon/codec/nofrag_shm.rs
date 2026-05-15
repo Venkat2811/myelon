@@ -1,13 +1,13 @@
 //! Codec benchmark WITHOUT fragmentation — ring slot sized to fit encoded payload.
 //!
 //! This is the production-representative number: raw disruptor ring with slot
-//! size >= encoded payload, no FramedTransport, no fragmentation overhead.
+//! size >= encoded payload, no `FramedTransport`, no fragmentation overhead.
 //! Isolates pure codec overhead + raw ring transit.
 //!
 //! Slot sizes: 8KB (batch=8), 64KB (batch=64), 256KB (batch=256)
 //!
-//! Run: cargo bench -p myelon-bench --bench codec_nofrag_shm
-//! Single batch: cargo bench -p myelon-bench --bench codec_nofrag_shm -- --batch 256
+//! Run: cargo bench -p myelon-bench --bench `codec_nofrag_shm`
+//! Single batch: cargo bench -p myelon-bench --bench `codec_nofrag_shm` -- --batch 256
 
 use crate::infra::coordination::BenchmarkCoordination;
 use crate::infra::events::{format_throughput, nanos_now};

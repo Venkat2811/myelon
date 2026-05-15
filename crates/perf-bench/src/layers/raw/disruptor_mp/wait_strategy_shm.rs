@@ -1,9 +1,9 @@
 //! Wait strategy benchmark over SHM — 4 strategies x 7 consumer counts.
 //!
-//! Modes: quick (1p1c BusySpin), full (28 combos).
+//! Modes: quick (1p1c `BusySpin`), full (28 combos).
 //!
-//! Run: cargo bench -p perf-bench --bench wait_strategy_shm
-//! Full: BENCH_MODE=full cargo bench -p perf-bench --bench wait_strategy_shm
+//! Run: cargo bench -p perf-bench --bench `wait_strategy_shm`
+//! Full: `BENCH_MODE=full` cargo bench -p perf-bench --bench `wait_strategy_shm`
 
 use crate::cli::wait_strategy::{WaitStrategyScenarioSpec, WaitStrategySelection};
 use crate::infra::coordination::BenchmarkCoordination;

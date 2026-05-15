@@ -41,7 +41,7 @@ impl LatencyRecorder {
     /// Create a new recorder.
     ///
     /// `max_value_ns` is the highest latency value that can be recorded
-    /// without saturation. Typically 1-10 seconds (1_000_000_000 - 10_000_000_000).
+    /// without saturation. Typically 1-10 seconds (`1_000_000_000` - `10_000_000_000`).
     pub fn new(max_value_ns: u64) -> Self {
         Self {
             histogram: Histogram::new_with_max(max_value_ns, 3)

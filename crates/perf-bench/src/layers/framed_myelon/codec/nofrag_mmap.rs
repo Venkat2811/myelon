@@ -6,8 +6,8 @@
 //!
 //! Slot sizes: 8KB (batch=8), 64KB (batch=64), 256KB (batch=256)
 //!
-//! Run: cargo bench -p myelon-bench --bench codec_nofrag_mmap
-//! Single batch: cargo bench -p myelon-bench --bench codec_nofrag_mmap -- --batch 256
+//! Run: cargo bench -p myelon-bench --bench `codec_nofrag_mmap`
+//! Single batch: cargo bench -p myelon-bench --bench `codec_nofrag_mmap` -- --batch 256
 
 use crate::infra::events::{format_throughput, nanos_now};
 use crate::infra::latency::LatencyRecorder;

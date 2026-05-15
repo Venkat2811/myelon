@@ -189,8 +189,8 @@ impl CountersFile {
 mod tests {
     use super::*;
     use crate::observability::{
-        ids, AggregatorConfig, AggregatorHandle, CountersFile, COUNTER_FLAG_PRODUCER,
-        COUNTERS_FILE_RESERVED_BYTES,
+        ids, AggregatorConfig, AggregatorHandle, CountersFile, COUNTERS_FILE_RESERVED_BYTES,
+        COUNTER_FLAG_PRODUCER,
     };
 
     /// `spawn_arc` keeps the counters file alive for the worker's

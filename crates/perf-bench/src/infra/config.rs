@@ -31,12 +31,12 @@ pub fn read_env_string(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_string())
 }
 
-/// Default benchmark timeout in seconds. Override with BENCH_TIMEOUT env var.
+/// Default benchmark timeout in seconds. Override with `BENCH_TIMEOUT` env var.
 pub fn bench_timeout_secs() -> u64 {
     read_env_u64("BENCH_TIMEOUT", 300) // 5 minutes default
 }
 
-/// Read BENCH_TIMEOUT with a bench-specific default.
+/// Read `BENCH_TIMEOUT` with a bench-specific default.
 pub fn bench_timeout_secs_or(default_secs: u64) -> u64 {
     read_env_u64("BENCH_TIMEOUT", default_secs)
 }
@@ -49,7 +49,7 @@ pub fn bench_timeout_override_secs() -> Option<u64> {
         .filter(|value| *value > 0)
 }
 
-/// Construct a duration from BENCH_TIMEOUT with a bench-specific default.
+/// Construct a duration from `BENCH_TIMEOUT` with a bench-specific default.
 pub fn bench_timeout_duration(default_secs: u64) -> std::time::Duration {
     std::time::Duration::from_secs(bench_timeout_secs_or(default_secs))
 }
@@ -77,7 +77,7 @@ pub fn check_deadline(deadline: std::time::Instant, context: &str) {
     }
 }
 
-/// Parse `--timeout <seconds>` from bench CLI args, export BENCH_TIMEOUT,
+/// Parse `--timeout <seconds>` from bench CLI args, export `BENCH_TIMEOUT`,
 /// and return a filtered argv without the timeout flag/value pair.
 pub fn apply_timeout_arg(args: &[String]) -> Result<Vec<String>, String> {
     let mut filtered = Vec::with_capacity(args.len());

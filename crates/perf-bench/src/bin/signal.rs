@@ -1,7 +1,7 @@
 //! Dedicated signal benchmark binary.
 //!
 //! Measures raw ring throughput ceiling with minimal 64-byte events.
-//! This is a thin wrapper around the raw_ring broadcast executor that
+//! This is a thin wrapper around the `raw_ring` broadcast executor that
 //! hardcodes `--class signal` and forces latency recording via
 //! the `PERF_BENCH_SIGNAL_RECORD_LATENCY` env var.
 
@@ -63,7 +63,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     run_signal(&args)
 }
 
-/// Dispatch a BenchHarness child process.
+/// Dispatch a `BenchHarness` child process.
 fn dispatch_child(args: &[String]) -> Result<(), Box<dyn Error>> {
     use perf_bench::infra::BenchHarness;
 

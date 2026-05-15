@@ -1,16 +1,17 @@
 //! Shared codec payload types for benchmark scenarios.
 //!
-//! Eliminates 5 copies of TestPayload + make_payloads + encode/access functions
-//! from codec/shm, codec/mmap, codec/nofrag_shm, sweep/myelon_layers, sweep/nofrag_all.
+//! Eliminates 5 copies of `TestPayload` + `make_payloads` + encode/access functions
+//! from codec/shm, codec/mmap, `codec/nofrag_shm`, `sweep/myelon_layers`, `sweep/nofrag_all`.
 
 use crate::infra::allocation::measure_allocations;
 use myelon::codec::{Codec, CodecError, ZeroCopyCodec};
 use std::hint::black_box;
 use std::time::Instant;
 
-/// Common benchmark payload — a representative inference-style record
-/// with a small numeric id, two variable-length integer arrays, a
-/// scalar, and a short label. Realistic enough that codec costs are
+/// Common benchmark payload — a representative inference-style record.
+///
+/// Has a small numeric id, two variable-length integer arrays, a scalar, and a short label.
+/// Realistic enough that codec costs are
 /// dominated by the same operations a typical inference engine pays
 /// (vector encode, string encode, struct framing).
 #[derive(
@@ -49,7 +50,7 @@ pub fn make_payloads(count: usize) -> Vec<TestPayload> {
 
 // --- rkyv encode/access ---
 
-/// Encode payloads via rkyv. Returns AlignedVec (zero extra copies).
+/// Encode payloads via rkyv. Returns `AlignedVec` (zero extra copies).
 pub fn encode_rkyv(payloads: &Vec<TestPayload>) -> rkyv::util::AlignedVec {
     rkyv::to_bytes::<rkyv::rancor::Error>(payloads).unwrap()
 }
@@ -86,7 +87,7 @@ pub fn checksum_archived_rkyv(archived: &ArchivedPayloadBatch) -> u64 {
 
 use crate::generated::bench_payload_generated::myelon::bench as flatbench;
 
-/// Encode payloads via FlatBuffers. Returns `Vec<u8>`.
+/// Encode payloads via `FlatBuffers`. Returns `Vec<u8>`.
 pub fn encode_flatbuf(payloads: &[TestPayload]) -> Vec<u8> {
     let mut builder = flatbuffers::FlatBufferBuilder::with_capacity(64 * 1024);
     let mut entries = Vec::with_capacity(payloads.len());

@@ -1,7 +1,7 @@
 //! End-to-end Codec benchmark over SHM typed transport.
 //!
-//! Measures: struct -> Codec::encode -> TypedTransport publish -> ring ->
-//!           TypedTransport consume -> Codec::decode -> struct access.
+//! Measures: struct -> `Codec::encode` -> `TypedTransport` publish -> ring ->
+//!           `TypedTransport` consume -> `Codec::decode` -> struct access.
 //!
 //! This bench intentionally uses `TypedProducer` / `TypedConsumer` so it
 //! measures the RFC 0012 API surface, not ad-hoc encode/decode calls.

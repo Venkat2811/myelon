@@ -22,7 +22,7 @@ struct Args {
     #[arg(long, value_parser = ["shm", "mmap"], default_value = "shm")]
     backend: String,
 
-    /// Message size in bytes (raw_ring/raw_myelon only; framed/codec/typed_zc use preset payload specs)
+    /// Message size in bytes (`raw_ring/raw_myelon` only; `framed/codec/typed_zc` use preset payload specs)
     #[arg(long, short = 's', default_value_t = 64)]
     size: usize,
 
@@ -38,7 +38,7 @@ struct Args {
     #[arg(long, default_value = "busyspin")]
     wait_strategy: String,
 
-    /// Codec to use (for codec and typed_zc layers)
+    /// Codec to use (for codec and `typed_zc` layers)
     #[arg(long, value_parser = ["bincode", "rkyv", "flatbuf"])]
     codec: Option<String>,
 
@@ -90,7 +90,7 @@ struct Args {
     enable_counters: bool,
 
     // --- hidden flags for child process re-invocation ---
-    /// Internal: child process flag for raw_ring / raw_myelon layers
+    /// Internal: child process flag for `raw_ring` / `raw_myelon` layers
     #[arg(long, hide = true)]
     process_two: bool,
 }
@@ -138,7 +138,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 // Child process dispatch helpers
 // ---------------------------------------------------------------------------
 
-/// Dispatch a BenchHarness child process by checking all known child role tables.
+/// Dispatch a `BenchHarness` child process by checking all known child role tables.
 ///
 /// Collects all child roles from all harnesses into a single flat list,
 /// then dispatches once. This avoids the bug in `maybe_run_child` where
@@ -174,7 +174,7 @@ fn dispatch_bench_harness_child(args: &[String]) -> Result<(), Box<dyn Error>> {
     Err(format!("unrecognized child role: {role}").into())
 }
 
-/// Dispatch a raw_ring / raw_myelon child process (`--process-two`).
+/// Dispatch a `raw_ring` / `raw_myelon` child process (`--process-two`).
 ///
 /// The orchestrator sets `PERF_BENCH_DISPATCH` so the child knows which
 /// executor module to invoke.
@@ -258,7 +258,7 @@ fn build_raw_args(args: &Args) -> Vec<String> {
     v
 }
 
-/// Build FramedPingPongArgs / CodecPingPongArgs-compatible CLI args.
+/// Build `FramedPingPongArgs` / CodecPingPongArgs-compatible CLI args.
 fn build_myelon_args(args: &Args) -> Vec<String> {
     let mut v = vec!["perf-bench-pingpong".to_string()];
 

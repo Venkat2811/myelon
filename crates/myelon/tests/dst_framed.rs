@@ -6,11 +6,11 @@
 //! of the in-memory DST contract layer.
 
 use disruptor_mp::dst::buggify::ScopedBuggify;
-use myelon_dst::{BackendKind, DstConfig};
 use myelon::transport::{
     FixedFrame, FramedTransportConsumer, FramedTransportProducer, MmapFramedTransportConsumer,
     MmapFramedTransportProducer, MyelonWaitStrategy,
 };
+use myelon_dst::{BackendKind, DstConfig};
 use std::env;
 use std::io::Read;
 use std::path::PathBuf;

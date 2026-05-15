@@ -29,10 +29,10 @@ pub enum ExecutionStrategy {
         extra_args: Vec<&'static str>,
     },
 
-    /// Internal broadcast: invoke internal_broadcast binary with --adapter flag.
+    /// Internal broadcast: invoke `internal_broadcast` binary with --adapter flag.
     InternalBroadcast { adapter_flag: &'static str },
 
-    /// Crossbar broadcast: invoke crossbar_broadcast binary.
+    /// Crossbar broadcast: invoke `crossbar_broadcast` binary.
     CrossbarBroadcast,
 }
 

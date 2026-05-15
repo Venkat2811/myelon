@@ -1,6 +1,6 @@
 //! mmap wait strategy benchmark using myelon re-exports.
 //!
-//! Identical to disruptor_mp/wait_strategy_mmap.rs but uses myelon re-exports.
+//! Identical to `disruptor_mp/wait_strategy_mmap.rs` but uses myelon re-exports.
 //! The point: prove myelon re-export has identical perf to raw disruptor.
 
 use crate::cli::wait_strategy::{WaitStrategyScenarioSpec, WaitStrategySelection};

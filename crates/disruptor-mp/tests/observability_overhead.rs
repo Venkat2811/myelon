@@ -4,7 +4,7 @@
 //! Times two single-process hot loops:
 //!
 //!   1. baseline — empty atomic counter increment, no observability
-//!   2. with_inc — `CounterHandle::inc()` (relaxed atomic + label
+//!   2. `with_inc` — `CounterHandle::inc()` (relaxed atomic + label
 //!      indirection through the counters file)
 //!
 //! Prints both timings and the ratio. Asserts only a generous upper

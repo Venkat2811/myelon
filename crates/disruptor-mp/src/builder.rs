@@ -1181,7 +1181,7 @@ mod tests {
         drop(consumer);
     }
 
-    /// Test that BusySpin wait strategy works correctly
+    /// Test that `BusySpin` wait strategy works correctly
     #[test]
     fn test_busy_spin_wait_strategy() {
         let segment_name = format!("test_spn_{}", std::process::id() % 10000);
@@ -1264,7 +1264,7 @@ mod tests {
         drop(consumer);
     }
 
-    /// Test AutoConsumer shutdown mechanism
+    /// Test `AutoConsumer` shutdown mechanism
     #[test]
     fn test_auto_consumer_shutdown() {
         let segment_name = format!("test_sht_{}", std::process::id() % 10000);
@@ -1317,8 +1317,8 @@ mod tests {
         consumer.join();
     }
 
-    /// Test that AutoConsumer processes events correctly
-    /// Note: The batch tracking with end_of_batch flag is not reliable in the current
+    /// Test that `AutoConsumer` processes events correctly
+    /// Note: The batch tracking with `end_of_batch` flag is not reliable in the current
     /// implementation as it's approximated for performance reasons
     #[test]
     fn test_auto_consumer_batch_processing() {

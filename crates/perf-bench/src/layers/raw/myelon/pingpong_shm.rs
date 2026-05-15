@@ -1,4 +1,4 @@
-//! PingPong raw-myelon benchmark over the SHM backend.
+//! `PingPong` raw-myelon benchmark over the SHM backend.
 //!
 //! This replaces the previous wrapper with a real 1p1c ping-pong benchmark that
 //! supports maximum-throughput, coordinated-omission-aware fixed-rate, and

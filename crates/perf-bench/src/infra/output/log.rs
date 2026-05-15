@@ -49,7 +49,7 @@ pub fn log_dir() -> String {
     DEFAULT_LOG_DIR.to_string()
 }
 
-/// Check if logging is enabled (default: yes, disable with PERF_BENCH_LOG=0).
+/// Check if logging is enabled (default: yes, disable with `PERF_BENCH_LOG=0`).
 pub fn is_enabled() -> bool {
     std::env::var("PERF_BENCH_LOG")
         .map(|v| v != "0")

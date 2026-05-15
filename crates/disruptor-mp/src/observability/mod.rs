@@ -316,10 +316,11 @@ impl CountersFile {
         // exactly `COUNTERS_FILE_RESERVED_BYTES`. The view stored in
         // `file.base` aliases the same heap region; `OwnedCountersFile`'s
         // `Drop` reconstitutes the `Box<OwnedCountersBuf>` to free it.
-        let view = unsafe {
-            CountersFile::init(NonNull::new_unchecked(ptr.cast::<u8>()))
-        };
-        OwnedCountersFile { file: view, buf: ptr }
+        let view = unsafe { CountersFile::init(NonNull::new_unchecked(ptr.cast::<u8>())) };
+        OwnedCountersFile {
+            file: view,
+            buf: ptr,
+        }
     }
 
     /// Snapshot all in-use slots — `(id, flags, value, label)` tuples.
@@ -670,7 +671,11 @@ mod tests {
         let file = CountersFile::boxed();
         assert_eq!(file.header().magic, COUNTERS_MAGIC);
         let h = file
-            .register(ids::EVENTS_PUBLISHED, COUNTER_FLAG_PRODUCER, "events_published")
+            .register(
+                ids::EVENTS_PUBLISHED,
+                COUNTER_FLAG_PRODUCER,
+                "events_published",
+            )
             .expect("first slot fits");
         for _ in 0..7 {
             h.inc();

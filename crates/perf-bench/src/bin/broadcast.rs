@@ -3,7 +3,7 @@
 //! Replaces the 16 individual broadcast bench targets with a single binary
 //! that accepts CLI flags for all dimensions (layer, backend, mode, etc.).
 //!
-//! Covers: raw_ring e2e, framed e2e, codec e2e, wait strategy, sweeps,
+//! Covers: `raw_ring` e2e, framed e2e, codec e2e, wait strategy, sweeps,
 //! monster sweep, nofrag, and layout validation.
 
 use clap::Parser;
@@ -26,7 +26,7 @@ struct Args {
     backend: String,
 
     /// Message size in bytes (total event size including 16B header).
-    /// For raw_ring: overrides the default 144B message events (e.g. --size 2048).
+    /// For `raw_ring`: overrides the default 144B message events (e.g. --size 2048).
     /// For sweep layers: selects the event size to benchmark.
     #[arg(long, short = 's')]
     size: Option<usize>,
@@ -43,7 +43,7 @@ struct Args {
     #[arg(long, default_value = "busyspin")]
     wait_strategy: String,
 
-    /// Codec to use (for codec and typed_zc layers)
+    /// Codec to use (for codec and `typed_zc` layers)
     #[arg(long)]
     codec: Option<String>,
 
@@ -68,7 +68,7 @@ struct Args {
     timeout: u64,
 
     // --- Signal-specific (raw_ring) ---
-    /// Event class filter for raw_ring: signal, message, or all
+    /// Event class filter for `raw_ring`: signal, message, or all
     #[arg(long, value_parser = ["signal", "message", "all"], default_value = "all")]
     class: String,
 
@@ -130,12 +130,12 @@ fn main() -> Result<(), Box<dyn Error>> {
 // Child process dispatch helpers
 // ---------------------------------------------------------------------------
 
-/// Dispatch a BenchHarness child process.
+/// Dispatch a `BenchHarness` child process.
 ///
 /// Uses `PERF_BENCH_BROADCAST_HARNESS` env var (set by the orchestrator) to
 /// select the correct harness, then dispatches against that harness's child
 /// roles only. This avoids role name collisions (e.g., both codec/shm.rs and
-/// codec/mmap.rs use "codec_producer" as a role name).
+/// codec/mmap.rs use "`codec_producer`" as a role name).
 fn dispatch_bench_harness_child(args: &[String]) -> Result<(), Box<dyn Error>> {
     use perf_bench::infra::BenchHarness;
 
@@ -233,7 +233,7 @@ fn append_output_args(v: &mut Vec<String>, args: &Args) {
     }
 }
 
-/// Build args for raw_ring / raw_myelon broadcast scenarios.
+/// Build args for `raw_ring` / `raw_myelon` broadcast scenarios.
 ///
 /// These use `RawRingSelection::parse` which expects:
 ///   --class, --mode, --consumers, --target-rate, --events, --json, --tree, --json-out

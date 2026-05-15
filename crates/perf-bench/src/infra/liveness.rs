@@ -35,8 +35,9 @@ pub fn liveness_enabled() -> bool {
     *LIVENESS_ON.get_or_init(|| std::env::var("PERF_BENCH_LIVENESS").as_deref() == Ok("on"))
 }
 
-/// Build a [`RequiredConsumerLivenessConfig`] tuned for perf-bench
-/// timings. The library default `progress_timeout` is 250 ms, which
+/// Build a [`RequiredConsumerLivenessConfig`] tuned for perf-bench timings.
+///
+/// The library default `progress_timeout` is 250 ms, which
 /// is enormous on a hot ring; bench loops process millions of
 /// events per second and a healthy consumer should advance every
 /// few microseconds. We tighten the timing knobs proportionally so

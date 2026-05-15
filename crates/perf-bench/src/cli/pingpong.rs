@@ -68,7 +68,7 @@ pub struct PingPongArgs {
     #[arg(long)]
     pub json: bool,
 
-    /// Emit canonical JSON report to stdout and DISRUPTOR_MP_BENCHMARK_JSON_OUT
+    /// Emit canonical JSON report to stdout and `DISRUPTOR_MP_BENCHMARK_JSON_OUT`
     #[arg(long)]
     pub json_canonical: bool,
 
@@ -108,8 +108,8 @@ pub struct PingPongArgs {
     #[arg(long, default_value = "1")]
     pub consumers: usize,
 
-    /// Attach RFC-0040 observability counters (events_published / events_consumed
-    /// / producer_full_events / consumer_empty_spins) on the hot path so a
+    /// Attach RFC-0040 observability counters (`events_published` / `events_consumed`
+    /// / `producer_full_events` / `consumer_empty_spins`) on the hot path so a
     /// counters-enabled scenario can be exercised. Default-off so the default
     /// bench path stays counter-free. Currently honored by `--backend shm`;
     /// `--backend mmap` ignores it (mmap producer/consumer have no counter

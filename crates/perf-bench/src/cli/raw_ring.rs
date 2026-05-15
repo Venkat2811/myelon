@@ -402,10 +402,10 @@ fn signal_spec(
     }
 }
 
-/// Supported total event sizes for BenchEvent dispatching.
+/// Supported total event sizes for `BenchEvent` dispatching.
 ///
 /// Each value is the total size in bytes. The const generic payload = total - 16
-/// (BenchEvent header: 8B sequence + 8B timestamp_ns).
+/// (`BenchEvent` header: 8B sequence + 8B `timestamp_ns`).
 pub const SUPPORTED_EVENT_SIZES: &[usize] = &[
     32, 64, 128, 144, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 524288,
     1048576, 2097152, 8388608, 16777216, 33554432, 67108864,
@@ -416,7 +416,7 @@ pub fn is_supported_event_size(event_bytes: usize) -> bool {
     SUPPORTED_EVENT_SIZES.contains(&event_bytes)
 }
 
-/// Dispatches to a generic function based on the BenchEvent payload size (event_bytes - 16).
+/// Dispatches to a generic function based on the `BenchEvent` payload size (`event_bytes` - 16).
 ///
 /// Usage:
 /// ```ignore

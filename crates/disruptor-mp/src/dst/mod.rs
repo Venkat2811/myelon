@@ -46,8 +46,8 @@ pub mod profiles;
 pub mod runtime;
 
 pub use assertions::{
-    assert_always, assert_reachable, assert_sometimes, assert_unreachable,
-    reset_global_assertions, snapshot_global_assertions, AssertionKind, AssertionLog,
+    assert_always, assert_reachable, assert_sometimes, assert_unreachable, reset_global_assertions,
+    snapshot_global_assertions, AssertionKind, AssertionLog,
 };
 pub use buggify::{buggify, ScopedBuggify};
 pub use contract::{FailureClass, ProcessRole, SchedulerAction, TraceArtifact, TraceStatus};

@@ -1,10 +1,10 @@
 //! Monster Sweep Benchmark — mmap backend.
 //!
-//! Same sweep as monster_sweep_shm over file-backed mmap.
+//! Same sweep as `monster_sweep_shm` over file-backed mmap.
 //! Compare results for SHM vs mmap crossover analysis.
 //!
-//! Run: cargo bench -p myelon-bench --bench monster_sweep_mmap
-//! Quick: cargo bench -p myelon-bench --bench monster_sweep_mmap -- --quick
+//! Run: cargo bench -p myelon-bench --bench `monster_sweep_mmap`
+//! Quick: cargo bench -p myelon-bench --bench `monster_sweep_mmap` -- --quick
 
 use crate::cli::sweeps::{self as sweep_specs, SweepBackend};
 use crate::infra::events::{format_throughput, nanos_now, BenchEvent};

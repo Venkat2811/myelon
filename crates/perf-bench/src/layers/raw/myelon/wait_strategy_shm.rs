@@ -1,12 +1,12 @@
 //! Wait strategy benchmark over SHM — 4 strategies x 7 consumer counts.
 //!
-//! Identical to disruptor_mp/wait_strategy_shm.rs but uses myelon re-exports.
+//! Identical to `disruptor_mp/wait_strategy_shm.rs` but uses myelon re-exports.
 //! The point: prove myelon re-export has identical perf to raw disruptor.
 //!
-//! Modes: quick (1p1c BusySpin), full (28 combos).
+//! Modes: quick (1p1c `BusySpin`), full (28 combos).
 //!
-//! Run: cargo bench -p perf-bench --bench wait_strategy_myelon_shm
-//! Full: BENCH_MODE=full cargo bench -p perf-bench --bench wait_strategy_myelon_shm
+//! Run: cargo bench -p perf-bench --bench `wait_strategy_myelon_shm`
+//! Full: `BENCH_MODE=full` cargo bench -p perf-bench --bench `wait_strategy_myelon_shm`
 
 use crate::cli::wait_strategy::{WaitStrategyScenarioSpec, WaitStrategySelection};
 use crate::infra::coordination::BenchmarkCoordination;

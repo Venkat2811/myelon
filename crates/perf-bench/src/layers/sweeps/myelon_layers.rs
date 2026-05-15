@@ -1,17 +1,17 @@
-//! Myelon Layer Overhead Sweep — raw ring vs FramedTransport vs typed/ring zero-copy paths.
+//! Myelon Layer Overhead Sweep — raw ring vs `FramedTransport` vs typed/ring zero-copy paths.
 //!
 //! Answers: "How much overhead does each myelon abstraction layer add vs raw disruptor?"
 //!
 //! At each payload size, measures:
-//!   raw_ring:     `BenchEvent<SIZE>` directly on disruptor ring
-//!   framed:       FramedTransport publish(&[u8]) over SHM ring (64KB frame)
-//!   framed_batch: FramedTransport batch recv (process_available_messages)
-//!   framed_right: FramedTransport with right-sized frame (no bandwidth waste)
-//!   rkyv_nofrag:  Zero-copy rkyv with right-sized ring slots (no framing)
-//!   typed_zero_copy: TypedTransport + ZeroCopyCodec batch receive over framed transport (rkyv)
-//!   typed_zero_copy_flatbuf: same typed zero-copy path using FlatBuffers root access
+//!   `raw_ring`:     `BenchEvent<SIZE>` directly on disruptor ring
+//!   framed:       `FramedTransport` publish(&[u8]) over SHM ring (64KB frame)
+//!   `framed_batch`: `FramedTransport` batch recv (`process_available_messages`)
+//!   `framed_right`: `FramedTransport` with right-sized frame (no bandwidth waste)
+//!   `rkyv_nofrag`:  Zero-copy rkyv with right-sized ring slots (no framing)
+//!   `typed_zero_copy`: `TypedTransport` + `ZeroCopyCodec` batch receive over framed transport (rkyv)
+//!   `typed_zero_copy_flatbuf`: same typed zero-copy path using `FlatBuffers` root access
 //!
-//! Run: cargo bench -p perf-bench --bench myelon_layers
+//! Run: cargo bench -p perf-bench --bench `myelon_layers`
 
 use crate::cli::sweeps::{self as sweep_specs, BasicSweepSelection, SweepBackend};
 use crate::infra::coordination::BenchmarkCoordination;

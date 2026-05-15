@@ -24,7 +24,7 @@
 //!
 //! Env vars:
 //! - `PERF_BENCH_OUT_DIR`: override the run directory (skips timestamp creation)
-//! - BenchLog uses `PERF_BENCH_OUT_DIR/logs` automatically
+//! - `BenchLog` uses `PERF_BENCH_OUT_DIR/logs` automatically
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -59,7 +59,7 @@ impl RunMetadata {
 ///
 /// If `PERF_BENCH_OUT_DIR` is set, uses that directly.
 /// Otherwise creates `output/{timestamp}/` and sets `PERF_BENCH_OUT_DIR`
-/// so child processes and BenchLog pick it up.
+/// so child processes and `BenchLog` pick it up.
 pub fn resolve_run_dir(tier: Option<&str>) -> PathBuf {
     if let Ok(dir) = std::env::var("PERF_BENCH_OUT_DIR") {
         let path = PathBuf::from(dir);

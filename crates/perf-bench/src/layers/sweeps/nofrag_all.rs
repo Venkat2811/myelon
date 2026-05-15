@@ -3,7 +3,7 @@
 //! All layers use right-sized ring slots (slot = encoded payload).
 //! Measures the TRUE zero-copy path: serialize -> ring -> access in-place.
 //!
-//! Run: cargo bench -p perf-bench --bench nofrag_all
+//! Run: cargo bench -p perf-bench --bench `nofrag_all`
 
 use crate::cli::sweeps::{self as sweep_specs, BasicSweepSelection};
 use crate::infra::coordination::BenchmarkCoordination;

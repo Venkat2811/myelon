@@ -53,7 +53,7 @@ pub type Event128K = BenchEvent<{ 128 * 1024 - 16 }>;
 ///
 /// Cache-line-aligned header (64 bytes) + payload.
 /// `intended_send_time_ns` enables coordinated omission measurement:
-/// latency = recv_time - intended_send_time (not actual_send_time).
+/// latency = `recv_time` - `intended_send_time` (not `actual_send_time`).
 #[repr(C, align(64))]
 #[derive(Clone, Copy)]
 pub struct PingPongEvent<const SIZE: usize> {

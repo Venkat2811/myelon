@@ -1,15 +1,15 @@
 //! Raw myelon re-export ring benchmark over SHM backend.
 //!
-//! Identical to disruptor_mp/broadcast_shm.rs but uses myelon re-exports.
+//! Identical to `disruptor_mp/broadcast_shm.rs` but uses myelon re-exports.
 //! The point: prove myelon re-export has identical perf to raw disruptor.
 //!
 //! Two benchmark classes:
-//!   --class message  : 144B event, full 128B payload fill + timestamp (matches original ipc_shm)
+//!   --class message  : 144B event, full 128B payload fill + timestamp (matches original `ipc_shm`)
 //!   --class signal   : 64B event, 16B data only (head-to-head vs Alvarez Rosa V5 305M ops/s)
 //!   (default)        : runs both
 //!
-//! Run:   cargo bench -p perf-bench --bench raw_myelon_shm
-//! Signal only: cargo bench -p perf-bench --bench raw_myelon_shm -- --class signal
+//! Run:   cargo bench -p perf-bench --bench `raw_myelon_shm`
+//! Signal only: cargo bench -p perf-bench --bench `raw_myelon_shm` -- --class signal
 
 use crate::cli::raw_ring::{RawRingScenarioSpec, RawRingSelection};
 use crate::infra::coordination::BenchmarkCoordination;
@@ -76,7 +76,7 @@ fn attach_consumer_with_timeout<E: Copy + Default + 'static>(
 // Event types
 // ============================================================
 
-/// Message-class event: matches original ipc_shm.rs BenchmarkEvent.
+/// Message-class event: matches original `ipc_shm.rs` `BenchmarkEvent`.
 /// 144 bytes: 8 (id) + 8 (timestamp) + 128 (payload).
 #[repr(C)]
 #[derive(Clone, Copy)]

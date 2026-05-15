@@ -1,11 +1,11 @@
-//! Test that FramedTransport correctly handles multi-frame (fragmented)
+//! Test that `FramedTransport` correctly handles multi-frame (fragmented)
 //! payloads under sustained multiprocess load with backpressure.
 //!
-//! This is the regression test for the DiscoveryMode::Disabled bug where
-//! FramedTransportProducer had zero backpressure and overwrote unread
+//! This is the regression test for the `DiscoveryMode::Disabled` bug where
+//! `FramedTransportProducer` had zero backpressure and overwrote unread
 //! slots when the consumer fell behind on large payloads.
 //!
-//! Run: cargo test -p myelon --test framed_fragmentation -- --nocapture
+//! Run: cargo test -p myelon --test `framed_fragmentation` -- --nocapture
 
 use myelon::transport::{
     FixedFrame, FramedTransportConsumer, FramedTransportProducer, MyelonWaitStrategy,

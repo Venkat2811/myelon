@@ -6,6 +6,12 @@ pub struct CompetitorBenchmarks {
     pub shmipc_go: HashMap<usize, f64>,
 }
 
+impl Default for CompetitorBenchmarks {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CompetitorBenchmarks {
     pub fn new() -> Self {
         let mut shmipc_rs = HashMap::new();

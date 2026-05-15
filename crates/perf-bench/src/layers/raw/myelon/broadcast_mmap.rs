@@ -1,15 +1,15 @@
 //! Raw myelon re-export ring benchmark over mmap (file-backed) backend.
 //!
-//! Identical to disruptor_mp/broadcast_mmap.rs but uses myelon re-exports.
+//! Identical to `disruptor_mp/broadcast_mmap.rs` but uses myelon re-exports.
 //! The point: prove myelon re-export has identical perf to raw disruptor.
 //!
-//! Two benchmark classes (matching raw_myelon_shm exactly):
+//! Two benchmark classes (matching `raw_myelon_shm` exactly):
 //!   --class message  : 144B event, full 128B payload fill + timestamp
 //!   --class signal   : 64B event, 16B data only
 //!   (default)        : runs both
 //!
-//! Run:   cargo bench -p perf-bench --bench raw_myelon_mmap
-//! Signal only: cargo bench -p perf-bench --bench raw_myelon_mmap -- --class signal
+//! Run:   cargo bench -p perf-bench --bench `raw_myelon_mmap`
+//! Signal only: cargo bench -p perf-bench --bench `raw_myelon_mmap` -- --class signal
 
 use crate::cli::raw_ring::{RawRingScenarioSpec, RawRingSelection};
 use crate::infra::events::nanos_now;

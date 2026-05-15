@@ -1,12 +1,12 @@
-//! FramedTransport benchmark over SHM backend.
+//! `FramedTransport` benchmark over SHM backend.
 //!
 //! Measures the overhead of myelon's FramedTransportProducer/Consumer
 //! (frame headers, message reassembly) vs raw disruptor-mp ring.
 //!
 //! Payload sizes: 1KB (single-frame), 32KB, 64KB (max single-frame), 128KB (fragmented)
 //!
-//! Run: cargo bench -p myelon-bench --bench framed_shm
-//! Single payload: cargo bench -p myelon-bench --bench framed_shm -- --payload 128K
+//! Run: cargo bench -p myelon-bench --bench `framed_shm`
+//! Single payload: cargo bench -p myelon-bench --bench `framed_shm` -- --payload 128K
 
 use crate::cli::framed::{FramedScenarioSpec, FramedSelection};
 use crate::infra::coordination::BenchmarkCoordination;

@@ -1,12 +1,12 @@
 //! Raw disruptor-mp ring benchmark over mmap (file-backed) backend.
 //!
-//! Two benchmark classes (matching raw_ring_shm exactly):
+//! Two benchmark classes (matching `raw_ring_shm` exactly):
 //!   --class message  : 144B event, full 128B payload fill + timestamp
 //!   --class signal   : 64B event, 16B data only
 //!   (default)        : runs both
 //!
-//! Run:   cargo bench -p myelon-bench --bench raw_ring_mmap
-//! Signal only: cargo bench -p myelon-bench --bench raw_ring_mmap -- --class signal
+//! Run:   cargo bench -p myelon-bench --bench `raw_ring_mmap`
+//! Signal only: cargo bench -p myelon-bench --bench `raw_ring_mmap` -- --class signal
 
 use crate::cli::raw_ring::{RawRingScenarioSpec, RawRingSelection};
 use crate::infra::events::nanos_now;

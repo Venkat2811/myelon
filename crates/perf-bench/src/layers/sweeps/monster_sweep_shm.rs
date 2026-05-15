@@ -8,9 +8,9 @@
 //!   data:   64B-1MB slots, full payload fill + consumer checksum — real bandwidth
 //!   multi:  data class with 3 or 12 consumers
 //!
-//! Run:   cargo bench -p myelon-bench --bench monster_sweep_shm
-//! Quick: cargo bench -p myelon-bench --bench monster_sweep_shm -- --quick
-//! Size:  cargo bench -p myelon-bench --bench monster_sweep_shm -- --size 64K
+//! Run:   cargo bench -p myelon-bench --bench `monster_sweep_shm`
+//! Quick: cargo bench -p myelon-bench --bench `monster_sweep_shm` -- --quick
+//! Size:  cargo bench -p myelon-bench --bench `monster_sweep_shm` -- --size 64K
 
 use crate::cli::sweeps::{self as sweep_specs, SweepBackend};
 use crate::infra::coordination::BenchmarkCoordination;
@@ -31,7 +31,7 @@ use std::time::{Duration, Instant};
 // ============================================================
 
 /// Signal event: 64B cache-line-aligned, only 16B of data written.
-/// This is the disruptor signaling ceiling — same as raw_ring_shm signal class.
+/// This is the disruptor signaling ceiling — same as `raw_ring_shm` signal class.
 #[repr(C, align(64))]
 #[derive(Clone, Copy, Default)]
 struct SignalEvent {

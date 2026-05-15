@@ -1,12 +1,12 @@
 //! Raw disruptor-mp ring benchmark over SHM backend.
 //!
 //! Two benchmark classes:
-//!   --class message  : 144B event, full 128B payload fill + timestamp (matches original ipc_shm)
+//!   --class message  : 144B event, full 128B payload fill + timestamp (matches original `ipc_shm`)
 //!   --class signal   : 64B event, 16B data only (head-to-head vs Alvarez Rosa V5 305M ops/s)
 //!   (default)        : runs both
 //!
-//! Run:   cargo bench -p myelon-bench --bench raw_ring_shm
-//! Signal only: cargo bench -p myelon-bench --bench raw_ring_shm -- --class signal
+//! Run:   cargo bench -p myelon-bench --bench `raw_ring_shm`
+//! Signal only: cargo bench -p myelon-bench --bench `raw_ring_shm` -- --class signal
 
 use crate::cli::raw_ring::{RawRingScenarioSpec, RawRingSelection};
 use crate::infra::coordination::BenchmarkCoordination;

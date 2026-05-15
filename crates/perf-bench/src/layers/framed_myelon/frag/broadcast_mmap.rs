@@ -1,4 +1,4 @@
-//! FramedTransport benchmark over mmap backend.
+//! `FramedTransport` benchmark over mmap backend.
 
 use crate::cli::framed::{FramedScenarioSpec, FramedSelection};
 use crate::infra::output::report::BackendKind;

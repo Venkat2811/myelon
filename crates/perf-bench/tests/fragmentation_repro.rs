@@ -1,6 +1,6 @@
 //! Reproduction test for batch=256 codec corruption bug.
 //! Sends a large payload (>64KB, requires fragmentation) through
-//! SHM FramedTransport in a true multiprocess setup and verifies
+//! SHM `FramedTransport` in a true multiprocess setup and verifies
 //! byte-for-byte correctness.
 
 use myelon::transport::{FixedFrame, FramedTransportProducer};
