@@ -134,6 +134,12 @@ cargo run --release -p demos --example <name>
 - **macOS** — supported.
 - **Windows** — experimental.
 
+## Acknowledgements
+
+- **[LMAX Disruptor](https://github.com/LMAX-Exchange/disruptor)** (Java) — Martin Thompson, Mike Barker, Dave Farley, and the LMAX Exchange team — for the original lock-free ring-buffer design and the mechanical-sympathy thinking this whole lineage descends from.
+- **[`disruptor-rs`](https://github.com/nicholassm/disruptor-rs)** — Nicholas Schultz-Møller and contributors — for the single-process Rust port (the [`disruptor`](https://crates.io/crates/disruptor) crate) that `disruptor-mp` extends to cross-process.
+- Bill Dally (NVIDIA Chief Scientist) and Jeff Dean (Google), [_Advancing to AI's Next Frontier_](https://www.youtube.com/watch?v=g8BuAtM3fp4) (GTC 2026) — for framing nanosecond-scale chip-level optimization and the "latency is communication, not computation" insight that motivates `myelon`'s focus on shared-memory transport.
+
 ## License
 
 MIT.
