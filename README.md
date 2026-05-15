@@ -119,6 +119,27 @@ cargo run --release -p demos --example <name>
 - `crates/perf-bench` — broad internal sweep universe across all layers (raw, framed, codec, typed_zc), both backends (`shm`, `mmap`), and three modes (throughput, fixed-rate coordinated-omission-aware, batch-timing). Runs against `disruptor-mp` and `myelon` natively.
 - `crates/competitive-bench` — narrow apples-to-apples transport comparison harness against `crossbar`, `shmipc`, `rusteron`, `iceoryx2`, `zmq`, `iggy`, `redpanda`. Uses `disruptor-mp` + `myelon` raw layers as internal baselines.
 
+### Headline numbers — Apple M3 Max, single laptop
+
+Built `--profile competitive`, measured with `perf-bench-pingpong`, busy-spin wait, single-producer single-consumer, HDR-histogram percentiles. Cross-process round-trip (real `fork()`-style multiprocess, not threaded), one warm-up run discarded.
+
+| Layer              | Backend | Payload | Throughput   | p50    | p99    | Notes                                       |
+| ---                | ---     | ---     | ---          | ---    | ---    | ---                                         |
+| `raw_ring`         | mmap    | 64 B    | **4.84 M ops/s** | **125 ns** | 500 ns | Layer 0 substrate, file-backed              |
+| `raw_ring`         | shm     | 64 B    | 4.69 M ops/s | 167 ns | 250 ns | Layer 0 substrate, POSIX SHM                |
+| `typed_zc` (rkyv)  | shm     | 4 KB    | 113 K ops/s  | 8.0 μs | 13 μs  | Layer 3 zero-copy, **11.7× faster than parse** |
+| `typed_zc` (rkyv)  | shm     | 36 KB   | 66 K ops/s   | 15 μs  | 21 μs  | 2.5 GB/s payload throughput                 |
+| `typed_zc` (rkyv)  | shm     | 146 KB  | 20 K ops/s   | 49 μs  | 71 μs  | 3.0 GB/s payload throughput                 |
+
+Reproduce the top row:
+
+```bash
+cargo run --profile competitive -p perf-bench --bin perf-bench-pingpong -- \
+  --layer raw_ring --backend mmap -n 200000 -w 5000 --tree
+```
+
+The full sweep matrix (layer × backend × codec × payload × mode × consumer-count) is wrapped under `make` targets — see *One-command workflows* below. Comparison against external transports (`zmq`, `iceoryx2`, `crossbar`, `rusteron`, `shmipc`) lives in `crates/competitive-bench`.
+
 ## One-command workflows
 
 - Competitive exact-size smoke: `make -C crates/competitive-bench simple-smoke`
@@ -140,6 +161,24 @@ cargo run --release -p demos --example <name>
 - **[`disruptor-rs`](https://github.com/nicholassm/disruptor-rs)** — Nicholas Schultz-Møller and contributors — for the single-process Rust port (the [`disruptor`](https://crates.io/crates/disruptor) crate) that `disruptor-mp` extends to cross-process.
 - **vLLM** — the [`shm_broadcast.py`](https://github.com/vllm-project/vllm/blob/main/vllm/distributed/device_communicators/shm_broadcast.py) `ShmRingBuffer` (single-producer / multiple-consumer shared-memory ring for cross-worker broadcast) is the same pattern in the same problem space; we're indebted to it for showing the shape of the right answer in Python land.
 - Bill Dally (NVIDIA Chief Scientist) and Jeff Dean (Google), [_Advancing to AI's Next Frontier_](https://www.youtube.com/watch?v=g8BuAtM3fp4) (GTC 2026) — for framing nanosecond-scale chip-level optimization and the "latency is communication, not computation" insight that motivates `myelon`'s focus on shared-memory transport.
+
+## Citation
+
+If you use `myelon` or `disruptor-mp` in research or downstream work, please cite:
+
+```
+Venkat Raman. "myelon: Multiprocess shared-memory transport for inference and other low-latency pipelines". GitHub (2026). https://github.com/Venkat2811/myelon
+```
+
+```bibtex
+@misc{venkat2026myelon,
+  title        = {myelon: Multiprocess shared-memory transport for inference and other low-latency pipelines},
+  author       = {Venkat Raman},
+  year         = {2026},
+  publisher    = {GitHub},
+  url          = {https://github.com/Venkat2811/myelon}
+}
+```
 
 ## License
 
