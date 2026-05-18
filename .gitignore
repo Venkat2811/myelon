@@ -35,9 +35,6 @@ dist/
 # -----------------------------------------------------------------------------
 # Project-generated artifacts
 # -----------------------------------------------------------------------------
-python-surface-archive/run_results/
-python-surface-archive/python/disruptor_rs/_internal.abi3.so
-python-surface-archive/tail
 # myelon-pulse capture output (PNG screenshots + GIF recordings)
 /myelon-pulse-captures/
 
