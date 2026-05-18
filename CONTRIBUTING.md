@@ -112,8 +112,9 @@ trade-offs.
 
 Substantive design changes (new public types, new wire-format envelopes,
 new feature flags, semantic changes to existing public surfaces) should
-go through an RFC. Historical RFC context has been folded into the workspace book and crate-local documentation. New ones follow the
-same format:
+go through an RFC. Historical RFC context has been folded into the
+workspace book and crate-local documentation. New proposals should use
+the same lightweight format:
 
 1. Branch off `main`.
 2. Draft `<NNNN>-<short-name>.md` in your branch and include it in the PR.

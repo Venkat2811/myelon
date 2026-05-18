@@ -48,8 +48,6 @@ python-surface-archive/tail
 .vscode/
 .DS_Store
 Thumbs.db
-artifacts/*_rerun.json
-artifacts/*_rerun/
 output/
 
 # mdBook build output
