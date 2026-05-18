@@ -15,7 +15,7 @@ endef
 	help fmt check build test bench bench-mp bench-matrix bench-matrix-smoke \
 	bench-matrix-raw bench-matrix-framed bench-matrix-codec bench-matrix-wait bench-matrix-competitive bench-matrix-layout \
 	workspace-smoke competitive myelon-sweep all-multi repeatability results \
-	test-rust-fast test-rust-extended test-rust-perf-gate test-rust-manifest \
+	test-rust-fast test-rust-extended test-rust-perf-gate \
 	test-dst test-dst-fuzz test-dst-nightly run-rust-examples run-rust-benches \
 	smoke orchestrate-rust validate-ci-workflows
 
@@ -29,7 +29,7 @@ help:
 	@echo "  make check               - cargo check --workspace --all-targets"
 	@echo "  make build               - cargo build --workspace"
 	@echo "  make test                - cargo test --workspace"
-	@echo "  make bench-mp            - run multiprocess benchmark set"
+	@echo "  make bench-mp            - run raw multiprocess perf-bench subset"
 	@echo "  make bench-matrix        - run perf-bench matrix targets"
 	@echo "  make bench-matrix-smoke  - run perf-bench smoke subset"
 	@echo "  make competitive         - run competitive ping-pong benches"
@@ -38,9 +38,8 @@ help:
 	@echo "  make repeatability       - run repeated canonical perf-bench variance checks"
 	@echo "  make results             - write benchmark JSON/CSV/MD artifacts"
 	@echo "  make test-rust-fast      - canonical disruptor-mp Linux Rust lane"
-	@echo "  make test-rust-extended  - disruptor-mp Linux lane + stress/perf smoke"
-	@echo "  make test-rust-perf-gate - live disruptor-mp Linux perf regression gate"
-	@echo "  make test-rust-manifest  - emit disruptor-mp machine-readable test manifest"
+	@echo "  make test-rust-extended  - disruptor-mp tests + example/bench compile + perf smoke"
+	@echo "  make test-rust-perf-gate - live workspace perf smoke gate"
 	@echo "  make test-dst            - run deterministic DST lanes for disruptor-mp and myelon"
 	@echo "  make test-dst-fuzz       - run 100-seed DST CI fuzz envelopes"
 	@echo "  make test-dst-nightly    - run 1000-seed DST nightly fuzz envelopes"
@@ -63,10 +62,7 @@ bench:
 	@$(CARGO) bench --workspace
 
 bench-mp:
-	@$(CARGO) bench -p disruptor-mp --bench ipc_shm
-	@$(CARGO) bench -p disruptor-mp --bench ipc_shm_high_load
-	@$(CARGO) bench -p disruptor-mp --bench benchmark_all_wait_strategies_auto_rust
-	@$(CARGO) bench -p disruptor-mp --bench competitive_pingpong
+	@$(PERF_BENCH_MAKE) raw
 
 bench-matrix:
 	@$(PERF_BENCH_MAKE) all
@@ -108,16 +104,16 @@ results:
 	@$(PERF_BENCH_MAKE) results
 
 test-rust-fast:
-	@$(MAKE) test-linux
+	@$(CARGO) test -p disruptor-mp --lib --tests
 
 test-rust-extended:
-	@$(MAKE) test-linux-extended
+	@$(CARGO) test -p disruptor-mp --lib --tests
+	@$(CARGO) test -p disruptor-mp --examples --no-run
+	@$(CARGO) test -p disruptor-mp --benches --no-run
+	@$(PERF_BENCH_MAKE) smoke
 
 test-rust-perf-gate:
-	@$(MAKE) test-perf-gate
-
-test-rust-manifest:
-	@$(MAKE) test-manifest-json
+	@$(PERF_BENCH_MAKE) smoke
 
 test-dst:
 	@$(MAKE) test-dst
@@ -139,11 +135,12 @@ test-dst-nightly:
 	@$(CARGO) test -p myelon --features 'dst rkyv flatbuffers' --test dst_codec dst_fuzz_codec_nightly_seed_matrix -- --ignored --nocapture --test-threads=1
 
 run-rust-examples:
-	@$(MAKE) example-all
+	@$(CARGO) test -p disruptor-mp --examples --no-run
 	$(call ROOT_RUN_WITH_TIMEOUT,$(ROOT_EXAMPLE_TIMEOUT),$(CARGO) run -p myelon --example fixed_inference_topology)
 
 run-rust-benches:
-	@$(MAKE) bench-all
+	@$(CARGO) test -p disruptor-mp --benches --no-run
+	@$(CARGO) bench -p perf-bench --no-run
 
 validate-ci-workflows:
 	@bash scripts/validate_ci_workflows.sh
@@ -152,20 +149,15 @@ smoke:
 	@$(PERF_BENCH_MAKE) smoke
 
 workspace-smoke:
-	@$(MAKE) drift-check
-	@$(MAKE) drift-check-shell-matrix
-	@$(MAKE) test-unit
+	@$(CARGO) test -p disruptor-mp --lib --tests
 	@$(CARGO) check -p myelon
 
 orchestrate-rust:
 	@$(CARGO) fmt --all
-	@$(MAKE) drift-check
-	@$(MAKE) drift-check-shell-matrix
 	@$(CARGO) clippy -p disruptor-mp -- -D warnings
 	@$(CARGO) clippy -p myelon -- -D warnings
 	@$(MAKE) test-rust-fast
 	@$(MAKE) test-rust-perf-gate
-	@$(MAKE) test-rust-manifest
 	@$(CARGO) test -p myelon --tests
 	@$(CARGO) test -p myelon --test compile_api
 	@$(CARGO) test -p disruptor-mp --benches --no-run

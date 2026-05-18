@@ -125,8 +125,8 @@
 //! }
 //! ```
 //!
-//! See the README and `examples/` directory for end-to-end programs,
-//! and `the workspace book` for the observability surface.
+//! See the README, the workspace book, and the `examples/` directory for
+//! end-to-end programs and the observability surface.
 
 pub use disruptor_core::{MissingFreeSlots, Producer, RingBufferFull, Sequence};
 

@@ -38,7 +38,7 @@ This is the substrate — Layer 0 of the project's layered model. Higher-level t
 | Coordination | `CoordinationMode::{Immediate, WaitForConsumers, Discovery}` | When does the producer consider its peers attached? |
 | Liveness | `RequiredConsumerLivenessConfig`, `RequiredConsumerFailureAction` | A stalled required consumer is treated as a failure or alert, not silent backpressure. |
 | Naming | `portable_shm_segment_name(name)` | Derive a macOS-safe SHM segment name from an arbitrary label. |
-| Observability | `disruptor_mp::observability::*` (RFC 0040) | Hot-path counters file (`events_published`, `events_consumed`, `producer_full_events`, `consumer_empty_spins`, `consumer_lag_max`) plus optional `metrics`-rs / Prometheus / OTLP exporters. See `the workspace book`. |
+| Observability | `disruptor_mp::observability::*` (RFC 0040) | Hot-path counters file (`events_published`, `events_consumed`, `producer_full_events`, `consumer_empty_spins`, `consumer_lag_max`) plus optional `metrics`-rs / Prometheus / OTLP exporters. See the Layer 0 observability chapter in the workspace book. |
 
 `E` is your event type — anything `Copy + Default + 'static` with a stable layout. The crate stays out of the wire-format business; reach for [`myelon`](../myelon/) when you need framing or serialisation, since `myelon` re-exports everything in this table and adds those layers on top.
 
@@ -50,7 +50,7 @@ This is the substrate — Layer 0 of the project's layered model. Higher-level t
   - `disruptor_mp::backend`
 - The crates.io [`disruptor`](https://crates.io/crates/disruptor) crate owns single-process / threaded APIs (`build_single_producer`, `build_multi_producer`, wait strategies, pollers).
 
-See `the workspace book` for migration details. See `the workspace book` for shared-memory layout versioning rules. See `the workspace book` for Linux CPU affinity controls. See `the workspace book` for current Linux core-to-core optimization measurements. See `the workspace book` for the Aeron-style hot-path counters and optional `metrics`-rs / Prometheus / OpenTelemetry export.
+The workspace book covers the public layered model, backend choices, and Layer 0 observability. This crate's public compatibility promise is the exported API in `disruptor_mp::{...}` plus the README examples here.
 
 ## Dependency Model
 
@@ -162,39 +162,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ## Development
 
 ```bash
-make drift-check
-make test-linux
-make test-linux-extended ITERATIONS=10
-make test-manifest-json \
-  TEST_MANIFEST_OUT=/tmp/disruptor_mp_test_manifest.json
-make test-stress-report-json \
-  ITERATIONS=50 \
-  STRESS_REPORT_OUT=/tmp/disruptor_mp_test_stress.json \
-  STRESS_LOG_DIR=/tmp/disruptor_mp_test_stress_logs
-make test-mmap-stress-report-json \
-  ITERATIONS=5 \
-  STRESS_REPORT_OUT=/tmp/disruptor_mp_mmap_stress.json \
-  STRESS_LOG_DIR=/tmp/disruptor_mp_mmap_stress_logs
-make bench-multiprocess
-make bench-affinity-matrix
-make bench-r10-ab
+cargo test -p disruptor-mp --lib --tests
+cargo test -p disruptor-mp --examples --no-run
+cargo test -p disruptor-mp --benches --no-run
+make -C crates/perf-bench smoke
+make -C crates/competitive-bench simple-smoke
 ```
 
 ## Canonical Test Lanes
 
-- `test-unit`: crate library tests plus doctests
-- `test-integration`: API namespace, DST contract/runtime/profile, layout, and shared-memory lifecycle tests
-- `test-multiprocess`: true child-process producer/consumer and deadlock regression tests
-- `test-stress`: repeated cleanup/lifecycle lane (`ITERATIONS` controls depth)
-- `test-stress-report-json`: same lane, with explicit JSON artifact path via `STRESS_REPORT_OUT`
-- `test-mmap-stress-report-json`: repeated true-multiprocess mmap stress matrix with archived flake logs
-- `test-perf-smoke`: compile example surfaces (no benchmark targets — see `crates/perf-bench`)
-- `test-linux`: default Linux Rust validation gate
-- `test-linux-extended`: Linux gate plus `test-stress` and `test-perf-smoke`
-- `test-macos-smoke`: cross-platform-safe subset while macOS remains unsupported for guarantees
-- `test-manifest-json`: emit the machine-readable lane manifest used by workspace orchestration/CI tooling
-
-`test-manifest-json` writes JSON to `TEST_MANIFEST_OUT` and includes lane budgets, platform scope, expected exclusions, and the exact commands rendered from the current `Makefile`. `test-stress-report-json` writes per-iteration pass/fail data, failure fingerprints, and retained log paths to `STRESS_REPORT_OUT`; failing iterations always keep a log under `STRESS_LOG_DIR`.
+- `cargo test -p disruptor-mp --lib --tests`: core crate coverage, integration tests, and true multiprocess regressions
+- `cargo test -p disruptor-mp --examples --no-run`: keep public examples compiling
+- `cargo test -p disruptor-mp --benches --no-run`: keep bench entry points compiling
+- `make -C crates/perf-bench smoke`: workspace perf smoke lane for the raw / layered transport matrix
+- `make -C crates/competitive-bench simple-smoke`: external-comparison smoke lane for the canonical small payload ladder
 
 ## Benchmarks
 

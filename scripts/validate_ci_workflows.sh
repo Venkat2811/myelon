@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-WORKFLOW_DIR="python-surface-archive/.github/workflows"
+WORKFLOW_DIR=".github/workflows"
 errors=0
 
 if [ ! -d "$WORKFLOW_DIR" ]; then
@@ -17,21 +17,11 @@ while IFS= read -r -d '' workflow_file; do
     errors=1
   fi
 
-  if rg -q "working-directory: .*bindings/python|cd bindings/python|--manifest-path\\s+bindings/python|--directory\\s+bindings/python" "$workflow_file"; then
-    echo "  ✗ stale monorepo path reference found: bindings/python" >&2
-    errors=1
-  fi
-
-  if ! rg -q "python-surface-archive" "$workflow_file"; then
-    echo "  ⚠ monorepo layout path missing in $workflow_file" >&2
+  if rg -q "working-directory: .*bindings/python|cd bindings/python|--manifest-path\\s+bindings/python|--directory\\s+bindings/python|py/[^[:space:]]+|crates/[^[:space:]]+/Makefile" "$workflow_file"; then
+    echo "  ✗ stale internal path reference found" >&2
     errors=1
   fi
 done < <(find "$WORKFLOW_DIR" -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \) -print0)
-
-if rg -q "bindings/python|cd bindings/python" "python-surface-archive/README.md"; then
-  echo "  ✗ stale monorepo path reference found in py README: bindings/python" >&2
-  errors=1
-fi
 
 if [ "$errors" -ne 0 ]; then
   echo "ci-guard: validation failed" >&2

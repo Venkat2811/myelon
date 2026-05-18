@@ -135,7 +135,8 @@
 //! ```
 //!
 //! ### Platform Constraints
-//! See `the workspace book` for detailed naming constraints and recommendations.
+//! Prefer builder-generated names or `portable_shm_segment_name(...)` so
+//! shared-memory segment identifiers stay portable across Linux and macOS.
 //!
 //! This eliminates platform-specific naming constraints and is what
 //! `portable_shm_segment_name` produces by default.
