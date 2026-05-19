@@ -70,7 +70,7 @@ See [`crates/perf-bench/README.md`](../../crates/perf-bench/README.md) for the b
 
 ### `crates/competitive-bench/` — apples-to-apples external comparison
 
-Strict 1p1c ping-pong and 1p4c / 1p8c broadcast against external transports: `crossbar`, `shmipc`, `rusteron` (Aeron client), `iceoryx2`, `zmq`, `iggy`, `redpanda`. Internal `disruptor-mp` and `myelon` raw-ring lanes serve as the baseline.
+Strict 1p1c ping-pong and 1p4c / 1p8c broadcast against external transports: `crossbar`, `shmipc`, `rusteron` (Aeron client), `iceoryx2`, `zeromq`, `boost::interprocess message_queue`, and `ompi`. Internal `disruptor-mp` and `myelon` raw-ring lanes serve as the baseline.
 
 See [`crates/competitive-bench/README.md`](../../crates/competitive-bench/README.md).
 

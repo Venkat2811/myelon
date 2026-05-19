@@ -219,7 +219,7 @@ macro_rules! impl_nofrag_bench {
             let mut checksum = 0u64;
 
             while consumed < messages {
-                if let Some((_, slot)) = consumer.try_consume_next() {
+                if let Some(slot) = consumer.try_consume_next_leased() {
                     let now = nanos_now();
                     if slot.timestamp > 0 {
                         latency.record_delta(slot.timestamp, now);

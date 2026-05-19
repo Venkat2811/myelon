@@ -20,6 +20,14 @@ const BUFFER_SIZE: usize = 64 * 1024;
 const NUM_EVENTS: u64 = 100_000;
 const ELEMENT_SIZE: usize = 128;
 
+fn num_events() -> u64 {
+    std::env::var("PERF_BENCH_WAIT_NUM_EVENTS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(NUM_EVENTS)
+}
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct Event {
@@ -63,14 +71,15 @@ fn producer_process() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let start = Instant::now();
-    for i in 0..NUM_EVENTS {
+    let num_events = num_events();
+    for i in 0..num_events {
         producer.publish(|event| {
             event.sequence = i;
             event.timestamp_ns = start.elapsed().as_nanos() as u64;
         });
     }
     let elapsed = start.elapsed();
-    let output = ProducerOutput::from_elapsed(NUM_EVENTS, elapsed, ELEMENT_SIZE);
+    let output = ProducerOutput::from_elapsed(num_events, elapsed, ELEMENT_SIZE);
     println!("{}", serde_json::to_string(&output)?);
 
     let last_sequence = producer.last_published_sequence();
@@ -108,8 +117,9 @@ fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
     let mut consumed = 0u64;
     let mut checksum = 0u64;
     let deadline = infra::spin_deadline();
-    while consumed < NUM_EVENTS {
-        if let Some((_seq, event)) = consumer.try_consume_next() {
+    let num_events = num_events();
+    while consumed < num_events {
+        if let Some(event) = consumer.try_consume_next_leased() {
             if start.is_none() {
                 start = Some(Instant::now());
             }
@@ -174,7 +184,7 @@ impl IpcBenchmark for Scenario {
     }
 
     fn num_messages(&self) -> u64 {
-        NUM_EVENTS
+        num_events()
     }
 
     fn num_consumers(&self) -> usize {

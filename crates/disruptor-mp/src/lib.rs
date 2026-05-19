@@ -55,8 +55,8 @@
 //!   `metrics`-rs recorder can ingest them.
 //! - `metrics-prometheus`: pull in `metrics-exporter-prometheus`.
 //! - `metrics-otel`: pull in `opentelemetry-otlp` for OTLP export.
-//! - `dst`: enable deterministic-simulation hooks against
-//!   `dst-fixtures` for integration tests.
+//! - `RUSTFLAGS="--cfg dst"`: compile deterministic-simulation hooks
+//!   used by the internal `myelon-dst` harness and DST integration tests.
 //!
 //! # Required-consumer liveness (RFC 0017.5)
 //!

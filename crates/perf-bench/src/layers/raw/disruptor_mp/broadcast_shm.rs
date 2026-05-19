@@ -111,7 +111,7 @@ fn message_producer_sized<const SIZE: usize>() -> Result<(), Box<dyn std::error:
         producer.publish(|event| {
             event.sequence = i;
             event.timestamp_ns = 0;
-            event.payload = [(i % 256) as u8; SIZE];
+            event.payload.fill((i % 256) as u8);
         });
     }
 
@@ -127,7 +127,7 @@ fn message_producer_sized<const SIZE: usize>() -> Result<(), Box<dyn std::error:
             producer.publish(|event| {
                 event.sequence = warmup + i;
                 event.timestamp_ns = intended_ns;
-                event.payload = [((warmup + i) % 256) as u8; SIZE];
+                event.payload.fill(((warmup + i) % 256) as u8);
             });
         }
     } else {
@@ -135,7 +135,7 @@ fn message_producer_sized<const SIZE: usize>() -> Result<(), Box<dyn std::error:
             producer.publish(|event| {
                 event.sequence = warmup + i;
                 event.timestamp_ns = nanos_now();
-                event.payload = [((warmup + i) % 256) as u8; SIZE];
+                event.payload.fill(((warmup + i) % 256) as u8);
             });
         }
     }
@@ -511,7 +511,7 @@ fn multi_message_producer_sized<const SIZE: usize>() -> Result<(), Box<dyn std::
         producer.publish(|event| {
             event.sequence = i;
             event.timestamp_ns = 0;
-            event.payload = [(i % 256) as u8; SIZE];
+            event.payload.fill((i % 256) as u8);
         });
     }
 
@@ -527,7 +527,7 @@ fn multi_message_producer_sized<const SIZE: usize>() -> Result<(), Box<dyn std::
             producer.publish(|event| {
                 event.sequence = warmup + i;
                 event.timestamp_ns = intended_ns;
-                event.payload = [((warmup + i) % 256) as u8; SIZE];
+                event.payload.fill(((warmup + i) % 256) as u8);
             });
         }
     } else {
@@ -535,7 +535,7 @@ fn multi_message_producer_sized<const SIZE: usize>() -> Result<(), Box<dyn std::
             producer.publish(|event| {
                 event.sequence = warmup + i;
                 event.timestamp_ns = nanos_now();
-                event.payload = [((warmup + i) % 256) as u8; SIZE];
+                event.payload.fill(((warmup + i) % 256) as u8);
             });
         }
     }

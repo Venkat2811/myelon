@@ -519,6 +519,7 @@ impl infra::BenchHarness for TypedZeroCopySweep {
                     if !selection.matches_size(spec.tag) {
                         continue;
                     }
+                    let events = selection.events_for(spec.events);
                     let telemetry = *access_telemetry_cache
                         .entry((codec.slug().to_string(), spec.tag))
                         .or_insert_with(|| {
@@ -537,7 +538,7 @@ impl infra::BenchHarness for TypedZeroCopySweep {
                             size_tag: spec.tag,
                             payload_size: spec.payload_bytes,
                             batch_size: spec.batch_size,
-                            events: spec.events,
+                            events,
                             buffer: scaled_buffer(spec.base_buffer, consumers),
                             consumers,
                             prod_role,

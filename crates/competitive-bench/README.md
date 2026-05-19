@@ -11,7 +11,7 @@ Current competitive families:
 - signal
   - internal raw-ring only
   - SHM + mmap
-  - exposed through `simple-smoke`
+  - exposed through `super-tiny`
 - `1p1c` ping-pong
   - max-throughput mode
   - fixed-rate coordinated-omission-aware mode
@@ -36,13 +36,13 @@ Current competitive families:
   - `zeromq-ipc`
   - `zeromq-ipc-abs`
   - `zeromq-tcp`
-  - `iggy-tcp`
-  - `redpanda-kafka`
 
 Size ladders:
 
 - simple-smoke ladder:
   - `32`, `64`, `128`, `1KB`, `2KB`, `4KB`
+- super-tiny fixed-rate lane:
+  - one representative CO-aware rate per scenario: `50K/s`
 - default parity ladder:
   - `64`, `512`, `1024`, `2048`, `2MB`
 - extensive ladder:
@@ -134,21 +134,6 @@ The rest are intentionally not vendored here:
   - built from Cargo crates
 - `zeromq`
   - adapter is our Rust code, transport library comes from system `libzmq`
-- `iggy`
-  - Docker-managed broker peer
-- `redpanda`
-  - Docker-managed broker peer
-
-Broker peers are intentionally minimal:
-
-- sizes:
-  - `64B`
-  - `1KB`
-- modes:
-  - max throughput
-  - fixed-rate CO at `1K/s`, `3K/s`, and `5K/s`
-
-Override `BROKER_RATES` if you explicitly want an overload run instead of the default below-saturation ladder.
 
 Rule:
 
@@ -164,6 +149,7 @@ Typical flow (from `crates/competitive-bench`):
 make help            # show all available targets
 make build-all       # cargo + boost C++ + ompi C
 make simple-smoke    # ultra-quick sanity sweep
+make super-tiny      # broad fast CI lane: signal + pingpong + broadcast
 make quick           # core sizes (64B-2MB), all 14 adapters,
                      # throughput + fixed-rate (CO) + broadcast
 make headon-smoke    # disruptor-shm vs rusteron-aeron-ipc

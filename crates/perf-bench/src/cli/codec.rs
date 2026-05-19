@@ -28,6 +28,7 @@ pub struct CodecSelection {
     codec_filter: Option<String>,
     batch_filter: Option<usize>,
     consumers_filter: Option<usize>,
+    num_messages_override: Option<u64>,
     target_rate: u64,
     pub output_args: ReportOutputArgs,
 }
@@ -78,6 +79,13 @@ impl CodecSelection {
             codec_filter,
             batch_filter,
             consumers_filter,
+            num_messages_override: find_arg_value(args, "--num-messages")
+                .map(|value| {
+                    value
+                        .parse::<u64>()
+                        .map_err(|error| format!("invalid --num-messages value {value}: {error}"))
+                })
+                .transpose()?,
             target_rate: target_rate.unwrap_or(0),
             output_args: ReportOutputArgs::from_args(args),
         })
@@ -102,7 +110,15 @@ impl CodecSelection {
     pub fn scenario_specs(&self, backend: BackendKind) -> Vec<CodecScenarioSpec> {
         base_specs(backend)
             .into_iter()
-            .filter(|spec| self.should_run(spec))
+            .filter_map(|mut spec| {
+                if !self.should_run(&spec) {
+                    return None;
+                }
+                if let Some(messages) = self.num_messages_override {
+                    spec.messages = messages;
+                }
+                Some(spec)
+            })
             .collect()
     }
 
@@ -230,5 +246,19 @@ mod tests {
             .expect("flatbuf 256 batch 12c");
         assert_eq!(spec.buffer, 4096);
         assert_eq!(spec.consumer_role, "codec_consumer");
+    }
+
+    #[test]
+    fn selection_overrides_message_count() {
+        let selection = CodecSelection::parse(&[
+            "bench".to_string(),
+            "--codec".to_string(),
+            "rkyv".to_string(),
+            "--num-messages".to_string(),
+            "1000".to_string(),
+        ])
+        .expect("parse codec selection");
+        let scenarios = selection.scenario_specs(BackendKind::Shm);
+        assert!(scenarios.iter().all(|spec| spec.messages == 1_000));
     }
 }

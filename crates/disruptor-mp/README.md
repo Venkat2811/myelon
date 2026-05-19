@@ -163,7 +163,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ```bash
 cargo test -p disruptor-mp --lib --tests
-cargo test -p disruptor-mp --examples --no-run
+cargo test -p demos --examples --no-run
 cargo test -p disruptor-mp --benches --no-run
 make -C crates/perf-bench smoke
 make -C crates/competitive-bench simple-smoke
@@ -172,7 +172,7 @@ make -C crates/competitive-bench simple-smoke
 ## Canonical Test Lanes
 
 - `cargo test -p disruptor-mp --lib --tests`: core crate coverage, integration tests, and true multiprocess regressions
-- `cargo test -p disruptor-mp --examples --no-run`: keep public examples compiling
+- `cargo test -p demos --examples --no-run`: keep public runnable examples compiling
 - `cargo test -p disruptor-mp --benches --no-run`: keep bench entry points compiling
 - `make -C crates/perf-bench smoke`: workspace perf smoke lane for the raw / layered transport matrix
 - `make -C crates/competitive-bench simple-smoke`: external-comparison smoke lane for the canonical small payload ladder
@@ -182,7 +182,7 @@ make -C crates/competitive-bench simple-smoke
 This crate intentionally does not host its own benchmark scenarios. Performance work lives in the dedicated bench crates so the substrate stays compact:
 
 - **`crates/perf-bench`** — broad sweep across raw / framed / codec / typed-zero-copy layers and `shm` / `mmap` backends. Consolidated into `perf-bench-pingpong`, `perf-bench-broadcast`, `perf-bench-signal`, and `perf-bench-repeatability` binaries.
-- **`crates/competitive-bench`** — apples-to-apples comparison against external transports (`crossbar`, `shmipc`, `iceoryx2`, `rusteron`, `zmq`, `iggy`, `redpanda`).
+- **`crates/competitive-bench`** — apples-to-apples comparison against external transports (`crossbar`, `shmipc`, `iceoryx2`, `rusteron`, `zeromq`, `boost::interprocess message_queue`, `ompi`).
 
 ## License
 

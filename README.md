@@ -4,11 +4,11 @@
 
 # myelon (workspace)
 
-Repo for the [`myelon`](https://crates.io/crates/myelon) and [`disruptor-mp`](https://crates.io/crates/disruptor-mp) crates, plus their internal bench and test-runner support crates.
+Repo for the [`myelon`](https://crates.io/crates/myelon) and [`disruptor-mp`](https://crates.io/crates/disruptor-mp) crates, plus the internal harnesses, benches, and example crates that validate them.
 
 `myelon` is multiprocess shared-memory transport for inference and other low-latency pipelines. It offers **simplified access to `disruptor-mp`'s core capabilities** plus framing, codecs, typed zero-copy, and topology layered on top — all behind one stable public surface.
 
-> **Publishable crates.** `disruptor-mp` (the Layer 0 substrate) and `myelon` (a single façade over `disruptor-mp` + Layers 1–3 + orthogonal concerns). The other four crates in this repo are internal benches and test infrastructure (`publish = false`).
+> **Publishable crates.** `disruptor-mp` (the Layer 0 substrate) and `myelon` (a single façade over `disruptor-mp` + Layers 1–3 + orthogonal concerns). The rest of the workspace is internal benches, DST harnesses, and runnable examples (`publish = false`).
 
 ## The onion
 
@@ -69,8 +69,7 @@ Every row below is reachable from [`myelon`](crates/myelon/); the right-most col
 crates/
 ├── disruptor-mp/        # Publishable. Layer 0: raw cross-process ring buffer.
 ├── myelon/              # Publishable. Layers 1, 2, 3 + topology + observability.
-├── dst-fixtures/        # Internal. Deterministic-simulation test fixtures.
-├── dst-runner/          # Internal. Multiprocess DST harness.
+├── myelon-dst/          # Internal. Multiprocess DST harness, fixtures, oracle, child runner.
 ├── perf-bench/          # Internal. Performance benchmark consolidation.
 └── competitive-bench/   # Internal. Apples-to-apples external transport comparison.
 
@@ -103,7 +102,7 @@ cargo run --release -p demos --example <name>
 | `metrics` (default) | Wire `observability` counters into the `metrics`-rs façade. |
 | `metrics-prometheus` | `metrics-exporter-prometheus`. |
 | `metrics-otel` | `opentelemetry-otlp` for OTLP export. |
-| `dst` | DST hooks against `dst-fixtures`. |
+| `RUSTFLAGS="--cfg dst"` | Compile deterministic-simulation hooks used by the internal `myelon-dst` harness. |
 
 `myelon`:
 
@@ -112,12 +111,12 @@ cargo run --release -p demos --example <name>
 | (default) | Layers 0, 1; Layer 2 with `bincode` only. |
 | `rkyv` | Layer 2/3 with `rkyv`. |
 | `flatbuffers` | Layer 2/3 with `flatbuffers`. |
-| `dst` | Forwards to `disruptor_mp/dst`. |
+| `RUSTFLAGS="--cfg dst"` | Pull in the internal `myelon-dst` dev-dependency for DST-backed test lanes. |
 
 ## Bench harnesses
 
 - `crates/perf-bench` — broad internal sweep universe across all layers (raw, framed, codec, typed_zc), both backends (`shm`, `mmap`), and three modes (throughput, fixed-rate coordinated-omission-aware, batch-timing). Runs against `disruptor-mp` and `myelon` natively.
-- `crates/competitive-bench` — narrow apples-to-apples transport comparison harness against `crossbar`, `shmipc`, `rusteron`, `iceoryx2`, `zmq`, `iggy`, `redpanda`. Uses `disruptor-mp` + `myelon` raw layers as internal baselines.
+- `crates/competitive-bench` — narrow apples-to-apples transport comparison harness against `crossbar`, `shmipc`, `rusteron`, `iceoryx2`, `zeromq`, `boost::interprocess message_queue`, and `ompi`. Uses `disruptor-mp` + `myelon` raw layers as internal baselines.
 
 ### Headline numbers — Apple M3 Max, single laptop
 
@@ -143,7 +142,9 @@ The full sweep matrix (layer × backend × codec × payload × mode × consumer-
 ## One-command workflows
 
 - Competitive exact-size smoke: `make -C crates/competitive-bench simple-smoke`
+- Competitive broad perf gate: `make -C crates/competitive-bench super-tiny`
 - Internal exact-size smoke: `make -C crates/perf-bench simple-smoke`
+- Internal broad perf gate: `make -C crates/perf-bench super-tiny`
 - Fast benchmark smoke (~60s): `make smoke`
 - Workspace wiring + crate boundary checks: `make workspace-smoke`
 - Rust-tier orchestration (format/lint/tests/bench+example compile checks): `make orchestrate-rust`
@@ -151,9 +152,9 @@ The full sweep matrix (layer × backend × codec × payload × mode × consumer-
 
 ## Platform support
 
-- **Linux** — supported.
-- **macOS** — supported.
-- **Windows** — experimental.
+- **Linux** — officially supported.
+- **macOS** — known to work for core multiprocess flows, but currently unsupported for official guarantees.
+- **Windows** — unsupported.
 
 ## Acknowledgements
 

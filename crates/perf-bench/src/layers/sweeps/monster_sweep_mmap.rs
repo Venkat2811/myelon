@@ -131,7 +131,7 @@ fn signal_consumer() -> Result<(), Box<dyn std::error::Error>> {
     let mut wc = 0u64;
     let deadline = infra::spin_deadline();
     while wc < warmup {
-        if consumer.try_consume_next().is_some() {
+        if consumer.try_consume_next_leased().is_some() {
             wc += 1;
         } else {
             infra::check_deadline(deadline, "monster_sweep_mmap signal_consumer warmup");
@@ -142,7 +142,7 @@ fn signal_consumer() -> Result<(), Box<dyn std::error::Error>> {
     let mut consumed = 0u64;
     let mut checksum = 0u64;
     while consumed < events {
-        if let Some((_seq, event)) = consumer.try_consume_next() {
+        if let Some(event) = consumer.try_consume_next_leased() {
             checksum = checksum.wrapping_add(event.data);
             consumed += 1;
         } else {
@@ -257,7 +257,7 @@ macro_rules! sweep_impl {
             let mut wc = 0u64;
             let deadline = infra::spin_deadline();
             while wc < warmup {
-                if consumer.try_consume_next().is_some() {
+                if consumer.try_consume_next_leased().is_some() {
                     wc += 1;
                 } else {
                     infra::check_deadline(deadline, concat!(stringify!($cons_fn), " warmup"));
@@ -269,7 +269,7 @@ macro_rules! sweep_impl {
             let mut consumed = 0u64;
             let mut checksum = 0u64;
             while consumed < events {
-                if let Some((_seq, event)) = consumer.try_consume_next() {
+                if let Some(event) = consumer.try_consume_next_leased() {
                     if event.timestamp_ns > 0 {
                         latency.record_delta(event.timestamp_ns, nanos_now());
                     }
@@ -513,6 +513,10 @@ impl infra::BenchHarness for MonsterSweepMmap {
         let output_args = reporting::ReportOutputArgs::from_args(args);
         let json_mode = output_args.json_mode;
         let quick_mode = output_args.quick_mode;
+        let num_messages_override = args
+            .windows(2)
+            .find(|w| w[0] == "--num-messages")
+            .and_then(|w| w[1].parse::<u64>().ok());
 
         let run_throughput = mode_arg == "all" || mode_arg == "throughput";
         let run_co = mode_arg == "all" || mode_arg == "co";
@@ -535,7 +539,7 @@ impl infra::BenchHarness for MonsterSweepMmap {
                 let sp = SweepPoint {
                     label: spec.label.clone(),
                     size_bytes: spec.size_bytes,
-                    events: spec.events,
+                    events: num_messages_override.unwrap_or(spec.events),
                     buffer: spec.buffer,
                     consumers: spec.consumers,
                     target_rate: spec.target_rate,

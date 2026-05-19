@@ -1,7 +1,7 @@
 [package]
 name        = "competitive-bench"
 version     = "0.1.0"
-description = "Internal IPC benchmark harness comparing disruptor-mp against external transports (crossbar, shmipc, rusteron, iceoryx2, zmq, iggy, redpanda) on a fixed `1p1c` ping-pong and `1p4c`/`1p8c` broadcast contract."
+description = "Internal IPC benchmark harness comparing disruptor-mp against external transports (crossbar, shmipc, rusteron, iceoryx2, zeromq, boost message_queue, ompi) on a fixed `1p1c` ping-pong and `1p4c`/`1p8c` broadcast contract."
 readme      = "README.md"
 publish     = false
 edition.workspace      = true

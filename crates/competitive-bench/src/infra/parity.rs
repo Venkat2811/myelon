@@ -6,7 +6,6 @@ pub struct ParityConfig {
     pub core_sizes: Vec<usize>,
     pub large_sizes: Vec<usize>,
     pub sizes_small: Vec<usize>,
-    pub broker_sizes: Vec<usize>,
     pub extensive_sizes: Vec<usize>,
     pub sizes_extensive: Vec<usize>,
     pub large_size_threshold: usize,
@@ -37,6 +36,7 @@ pub struct ParityConfig {
     pub giant_headon_rate_smoke: u64,
     pub co_warmup: u64,
     pub co_num_messages: u64,
+    pub broadcast_consumers: Vec<usize>,
     pub outdir_expr: String,
     pub headon_dir_expr: String,
     pub ompi_timeout_expr: String,
@@ -101,7 +101,6 @@ fn parse_config(src: &str) -> ParityConfig {
         core_sizes: parse_usize_list(&get("CORE_SIZES")),
         large_sizes: parse_usize_list(&get("LARGE_SIZES")),
         sizes_small: parse_usize_list(&get("SIZES_SMALL")),
-        broker_sizes: parse_usize_list(&get("BROKER_SIZES")),
         extensive_sizes: parse_usize_list(&get("EXTENSIVE_SIZES")),
         sizes_extensive: parse_usize_list(&get("SIZES_EXTENSIVE")),
         large_size_threshold: get("LARGE_SIZE_THRESHOLD")
@@ -154,6 +153,7 @@ fn parse_config(src: &str) -> ParityConfig {
             .expect("GIANT_HEADON_RATE_SMOKE"),
         co_warmup: get("CO_WARMUP").parse().expect("CO_WARMUP"),
         co_num_messages: get("CO_NUM_MESSAGES").parse().expect("CO_NUM_MESSAGES"),
+        broadcast_consumers: parse_usize_list(&get("BROADCAST_CONSUMERS")),
         outdir_expr: get("OUTDIR"),
         headon_dir_expr: get("HEADON_DIR"),
         ompi_timeout_expr: get("OMPI_TIMEOUT_SEC"),
@@ -228,11 +228,10 @@ pub fn tune_for_size(cfg: &ParityConfig, size: usize) -> SizeTuning {
 pub fn sizes_for_tier(cfg: &ParityConfig, tier: &str) -> Vec<usize> {
     match tier {
         "quick" | "smoke" => cfg.sizes_small.clone(),
-        "simple-smoke" => vec![32, 64, 128, 1024, 2048, 4096],
+        "simple-smoke" | "super-tiny" => vec![32, 64, 128, 1024, 2048, 4096],
         "extensive" => cfg.sizes_extensive.clone(),
         "headon-smoke" | "headon-full" => cfg.headon_sizes.clone(),
         "headon-extensive" => cfg.headon_sizes_extensive.clone(),
-        "broker" => cfg.broker_sizes.clone(),
         _ => cfg.sizes_small.clone(),
     }
 }
@@ -261,7 +260,6 @@ mod tests {
         assert_eq!(cfg.core_sizes, vec![64, 512, 1024, 2048]);
         assert_eq!(cfg.large_sizes, vec![2 * 1024 * 1024]);
         assert_eq!(cfg.sizes_small, vec![64, 512, 1024, 2048, 2 * 1024 * 1024]);
-        assert_eq!(cfg.broker_sizes, vec![64, 1024]);
         assert_eq!(cfg.headon_sizes, vec![64, 512, 1024, 2048, 2 * 1024 * 1024]);
         assert_eq!(cfg.large_size_threshold, 512 * 1024);
     }
@@ -340,6 +338,7 @@ mod tests {
         assert_eq!(cfg.giant_warmup, 5);
         assert_eq!(cfg.co_warmup, 500);
         assert_eq!(cfg.co_num_messages, 5_000);
+        assert_eq!(cfg.broadcast_consumers, vec![4, 8]);
         assert_eq!(cfg.large_size_threshold, 512 * 1024);
         assert_eq!(cfg.huge_size_threshold, 8 * 1024 * 1024);
         assert_eq!(cfg.massive_size_threshold, 16 * 1024 * 1024);
@@ -411,9 +410,12 @@ mod tests {
 
         assert_eq!(sizes_for_tier(cfg, "quick"), cfg.sizes_small);
         assert_eq!(sizes_for_tier(cfg, "extensive"), cfg.sizes_extensive);
-        assert_eq!(sizes_for_tier(cfg, "broker"), cfg.broker_sizes);
         assert_eq!(
             sizes_for_tier(cfg, "simple-smoke"),
+            vec![32, 64, 128, 1024, 2048, 4096]
+        );
+        assert_eq!(
+            sizes_for_tier(cfg, "super-tiny"),
             vec![32, 64, 128, 1024, 2048, 4096]
         );
     }

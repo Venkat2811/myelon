@@ -787,7 +787,7 @@ macro_rules! raw_mmap_impl {
             let mut start: Option<Instant> = None;
             let mut checksum = 0u64;
             while consumed < events {
-                if let Some((_, s)) = consumer.try_consume_next() {
+                if let Some(s) = consumer.try_consume_next_leased() {
                     if start.is_none() {
                         start = Some(Instant::now());
                     }
@@ -879,7 +879,7 @@ macro_rules! raw_myelon_mmap_impl {
             let mut start: Option<Instant> = None;
             let mut checksum = 0u64;
             while consumed < events {
-                if let Some((_, s)) = consumer.try_consume_next() {
+                if let Some(s) = consumer.try_consume_next_leased() {
                     if start.is_none() {
                         start = Some(Instant::now());
                     }
@@ -1346,7 +1346,7 @@ macro_rules! rkyv_nofrag_mmap_impl {
             let mut start: Option<Instant> = None;
             let mut checksum = 0u64;
             while consumed < events {
-                if let Some((_, slot)) = consumer.try_consume_next() {
+                if let Some(slot) = consumer.try_consume_next_leased() {
                     if start.is_none() {
                         start = Some(Instant::now());
                     }
@@ -1742,6 +1742,7 @@ impl infra::BenchHarness for MyelonLayersBench {
             if !selection.matches_size(spec.tag) {
                 continue;
             }
+            let events = selection.events_for(spec.events);
             bench_log.event(&format!("size_start: {}", spec.tag));
             if !selection.output_args.json_mode {
                 println!("--- {} ---", spec.tag);
@@ -1773,7 +1774,7 @@ impl infra::BenchHarness for MyelonLayersBench {
                                 spec.payload_bytes,
                                 variant.prod_role,
                                 variant.cons_role,
-                                spec.events,
+                                events,
                                 buffer,
                                 backend,
                             ),
@@ -1784,7 +1785,7 @@ impl infra::BenchHarness for MyelonLayersBench {
                                 spec.payload_bytes,
                                 variant.prod_role,
                                 variant.cons_role,
-                                spec.events,
+                                events,
                                 buffer,
                                 backend,
                             ),
@@ -1793,7 +1794,7 @@ impl infra::BenchHarness for MyelonLayersBench {
                                 variant.segment_prefix,
                                 spec.tag,
                                 spec.payload_bytes,
-                                spec.events,
+                                events,
                                 buffer,
                                 variant.prod_role,
                                 variant.cons_role,
@@ -1804,7 +1805,7 @@ impl infra::BenchHarness for MyelonLayersBench {
                                 include_payload_size,
                             } => {
                                 let mut envs = vec![
-                                    ("BENCH_EVENTS", spec.events.to_string()),
+                                    ("BENCH_EVENTS", events.to_string()),
                                     ("BENCH_BUFFER", buffer.to_string()),
                                     ("BENCH_BATCH_SIZE", spec.batch_size.to_string()),
                                 ];
@@ -1823,7 +1824,7 @@ impl infra::BenchHarness for MyelonLayersBench {
                                     segment_prefix: variant.segment_prefix,
                                     size_tag: spec.tag,
                                     payload_size: spec.payload_bytes,
-                                    events: spec.events,
+                                    events,
                                     buffer,
                                     consumers,
                                     prod_role: variant.prod_role,

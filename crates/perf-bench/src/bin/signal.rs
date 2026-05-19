@@ -125,10 +125,8 @@ fn run_signal(args: &Args) -> Result<(), Box<dyn Error>> {
         args.events.to_string(),
     ];
 
-    if args.consumers != 1 {
-        synthetic.push("--consumers".to_string());
-        synthetic.push(args.consumers.to_string());
-    }
+    synthetic.push("--consumers".to_string());
+    synthetic.push(args.consumers.to_string());
 
     if args.json {
         synthetic.push("--json".to_string());

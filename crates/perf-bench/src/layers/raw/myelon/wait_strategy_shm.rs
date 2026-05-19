@@ -22,6 +22,14 @@ use std::time::{Duration, Instant};
 const BUFFER_SIZE: usize = 64 * 1024;
 const NUM_EVENTS: u64 = 100_000;
 
+fn num_events() -> u64 {
+    std::env::var("PERF_BENCH_WAIT_NUM_EVENTS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(NUM_EVENTS)
+}
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct Event {
@@ -64,18 +72,19 @@ fn producer_process() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let start = Instant::now();
-    for i in 0..NUM_EVENTS {
+    let num_events = num_events();
+    for i in 0..num_events {
         producer.publish(|e| {
             e.sequence = i;
-            e.payload = [(i % 256) as u8; 112];
+            e.payload.fill((i % 256) as u8);
         });
     }
     let elapsed = start.elapsed();
 
     let output =
-        infra::ProducerOutput::from_elapsed(NUM_EVENTS, elapsed, std::mem::size_of::<Event>());
+        infra::ProducerOutput::from_elapsed(num_events, elapsed, std::mem::size_of::<Event>());
     println!("{}", serde_json::to_string(&output)?);
-    coord.signal_producer_done(NUM_EVENTS as i64);
+    coord.signal_producer_done(num_events as i64);
     coord.wait_for_consumers_done(num_consumers, Duration::from_secs(90));
     Ok(())
 }
@@ -103,8 +112,9 @@ fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
     let mut start: Option<Instant> = None;
     let mut checksum = 0u64;
     let deadline = infra::spin_deadline();
+    let num_events = num_events();
 
-    while consumed < NUM_EVENTS {
+    while consumed < num_events {
         consumer.process_available(|e, _s| {
             if start.is_none() {
                 start = Some(Instant::now());
@@ -114,7 +124,7 @@ fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
             checksum = checksum.wrapping_add(payload_sum as u64);
             consumed += 1;
         });
-        if consumed < NUM_EVENTS {
+        if consumed < num_events {
             infra::check_deadline(deadline, "wait_strategy_myelon_shm consumer_process");
             match wait_strategy.as_str() {
                 "BusySpin" => {}
@@ -188,7 +198,7 @@ impl IpcBenchmark for Scenario {
     }
 
     fn num_messages(&self) -> u64 {
-        NUM_EVENTS
+        num_events()
     }
 
     fn num_consumers(&self) -> usize {

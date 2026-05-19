@@ -9,7 +9,7 @@
 | Binary | Scenarios |
 |---|---|
 | `perf-bench-pingpong` | 1p1c ping-pong. All four layers (raw_ring, framed, codec, typed_zc) × both backends (shm, mmap) × three modes (max-throughput, fixed-rate coordinated-omission-aware, low-overhead batch-timing). |
-| `perf-bench-broadcast` | 1pNc broadcast for `1p4c` and `1p8c` over the same layer/backend/mode matrix. |
+| `perf-bench-broadcast` | 1pNc broadcast for `1p4c` and `1p8c` across the raw, framed, codec, wait-strategy, sweep, and layout families. Typed zero-copy is ping-pong only today. |
 | `perf-bench-signal` | Cache-line-sized signal events, no payload variation, raw layer only — pure throughput ceiling for "what can this hardware push through a disruptor ring?". |
 | `perf-bench-repeatability` | Repeat a single configuration N times and emit canonical JSON for run-to-run variance analysis. |
 
@@ -187,6 +187,21 @@ cargo run -p perf-bench --release --bin perf-bench-broadcast -- \
 cargo run -p perf-bench --release --bin perf-bench-signal -- \
     --backend shm --consumers 1 --events 10000000
 ```
+
+## Fast lanes
+
+```bash
+make -C crates/perf-bench simple-smoke
+make -C crates/perf-bench super-tiny
+```
+
+- `simple-smoke`
+  - exact-size sanity lane
+  - signal + raw ping-pong + raw broadcast
+- `super-tiny`
+  - broader OSS/CI gate
+  - `100` warmup + `1000` measured messages/events where the scenario family exposes explicit warmup/message-count controls
+  - covers signal, exact-size raw lanes, representative higher-layer ping-pong, representative higher-layer broadcast, wait-strategy, sweeps, and layout
 
 ## Relationship to other crates
 

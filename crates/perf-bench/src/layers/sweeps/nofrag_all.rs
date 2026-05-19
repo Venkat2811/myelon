@@ -510,7 +510,7 @@ macro_rules! raw_mmap_impl {
             let mut latency = LatencyRecorder::default_range();
             let mut checksum = 0u64;
             while consumed < events {
-                if let Some((_, s)) = consumer.try_consume_next() {
+                if let Some(s) = consumer.try_consume_next_leased() {
                     if start.is_none() {
                         start = Some(Instant::now());
                     }
@@ -637,7 +637,7 @@ macro_rules! mmap_nofrag_impl {
             let mut latency = LatencyRecorder::default_range();
             let mut checksum = 0u64;
             while consumed < events {
-                if let Some((_, slot)) = consumer.try_consume_next() {
+                if let Some(slot) = consumer.try_consume_next_leased() {
                     if start.is_none() {
                         start = Some(Instant::now());
                     }
@@ -1031,6 +1031,7 @@ impl infra::BenchHarness for NofragAllBench {
             if !selection.matches_size(spec.tag) {
                 continue;
             }
+            let events = selection.events_for(spec.events);
             if !selection.output_args.json_mode {
                 println!("--- {} (batch={}) ---", spec.tag, spec.batch_size);
             }
@@ -1064,7 +1065,7 @@ impl infra::BenchHarness for NofragAllBench {
                                 backend: variant.backend.slug(),
                                 prod_role: variant.prod_role,
                                 cons_role: variant.cons_role,
-                                events: spec.events,
+                                events,
                                 buffer: scaled_buffer_depth(spec.buffer_depth, consumers),
                                 batch: spec.batch_size,
                                 size_tag: spec.tag,

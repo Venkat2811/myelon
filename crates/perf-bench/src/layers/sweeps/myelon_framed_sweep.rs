@@ -619,6 +619,8 @@ impl infra::BenchHarness for MyelonFramedSweep {
         let target_rate_arg = find_flag_value(args, "--target-rate")
             .and_then(|value| value.parse::<u64>().ok())
             .unwrap_or(0);
+        let num_messages_override =
+            find_flag_value(args, "--num-messages").and_then(|value| value.parse::<u64>().ok());
         let run_throughput = mode_arg == "throughput" || mode_arg == "all";
         let run_co = mode_arg == "co" || mode_arg == "all";
 
@@ -677,7 +679,7 @@ impl infra::BenchHarness for MyelonFramedSweep {
                             backend,
                             size_tag: size.tag,
                             payload_size: size.payload_bytes,
-                            events: size.events,
+                            events: num_messages_override.unwrap_or(size.events),
                             buffer: scaled_buffer(size.base_buffer, consumers),
                             consumers,
                             target_rate,

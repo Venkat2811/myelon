@@ -40,6 +40,7 @@ pub struct BasicSweepSelection {
     size_filter: Option<String>,
     layer_filter: Option<String>,
     consumers_filter: Option<usize>,
+    num_messages_override: Option<u64>,
     pub output_args: ReportOutputArgs,
 }
 
@@ -60,6 +61,13 @@ impl BasicSweepSelection {
             size_filter,
             layer_filter,
             consumers_filter,
+            num_messages_override: find_flag_value(args, "--num-messages")
+                .map(|value| {
+                    value
+                        .parse::<u64>()
+                        .map_err(|error| format!("invalid --num-messages value {value}: {error}"))
+                })
+                .transpose()?,
             output_args: ReportOutputArgs::from_args(args),
         })
     }
@@ -77,6 +85,10 @@ impl BasicSweepSelection {
     pub fn matches_consumers(&self, consumers: usize) -> bool {
         self.consumers_filter
             .is_none_or(|consumer_filter| consumer_filter == consumers)
+    }
+
+    pub fn events_for(&self, default_events: u64) -> u64 {
+        self.num_messages_override.unwrap_or(default_events)
     }
 }
 
@@ -169,5 +181,16 @@ mod tests {
         assert_eq!(tags, vec!["1KB", "4KB", "16KB", "64KB"]);
         assert_eq!(default_co_target_rate("1KB"), 20_000);
         assert_eq!(default_co_target_rate("64KB"), 1_000);
+    }
+
+    #[test]
+    fn basic_selection_overrides_event_count() {
+        let selection = BasicSweepSelection::parse(&[
+            "bench".to_string(),
+            "--num-messages".to_string(),
+            "1000".to_string(),
+        ])
+        .expect("parse sweep selection");
+        assert_eq!(selection.events_for(50_000), 1_000);
     }
 }

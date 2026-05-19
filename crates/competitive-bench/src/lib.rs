@@ -18,7 +18,7 @@
 //!
 //! External transports compared:
 //! `crossbar`, `shmipc`, `rusteron` (Aeron client), `iceoryx2`,
-//! `zmq`, `iggy`, `redpanda`.
+//! `zeromq`, `boost::interprocess message_queue`, and `ompi`.
 //!
 //! Modules:
 //!

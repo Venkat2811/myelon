@@ -84,7 +84,7 @@ fn message_producer_sized<const SIZE: usize>() -> Result<(), Box<dyn std::error:
         producer.publish(|e| {
             e.sequence = i;
             e.timestamp_ns = 0;
-            e.payload = [(i % 256) as u8; SIZE];
+            e.payload.fill((i % 256) as u8);
         });
     }
 
@@ -100,7 +100,7 @@ fn message_producer_sized<const SIZE: usize>() -> Result<(), Box<dyn std::error:
             producer.publish(|e| {
                 e.sequence = warmup + i;
                 e.timestamp_ns = intended_ns;
-                e.payload = [((warmup + i) % 256) as u8; SIZE];
+                e.payload.fill(((warmup + i) % 256) as u8);
             });
         }
     } else {
@@ -108,7 +108,7 @@ fn message_producer_sized<const SIZE: usize>() -> Result<(), Box<dyn std::error:
             producer.publish(|e| {
                 e.sequence = warmup + i;
                 e.timestamp_ns = nanos_now();
-                e.payload = [((warmup + i) % 256) as u8; SIZE];
+                e.payload.fill(((warmup + i) % 256) as u8);
             });
         }
     }
@@ -132,9 +132,7 @@ fn message_producer_sized<const SIZE: usize>() -> Result<(), Box<dyn std::error:
 
 fn message_producer() -> Result<(), Box<dyn std::error::Error>> {
     let event_bytes = infra::read_env_usize("MMAP_EVENT_SIZE", 144);
-    crate::dispatch_bench_event!(event_bytes, |<SIZE>| {
-        message_producer_sized::<SIZE>()
-    })
+    crate::dispatch_bench_event!(event_bytes, |<SIZE>| message_producer_sized::<SIZE>())
 }
 
 fn message_consumer_sized<const SIZE: usize>() -> Result<(), Box<dyn std::error::Error>> {
@@ -159,7 +157,7 @@ fn message_consumer_sized<const SIZE: usize>() -> Result<(), Box<dyn std::error:
     let warmup_deadline = infra::spin_deadline();
     let mut warmup = 0u64;
     while warmup < warmup_target {
-        if consumer.try_consume_next().is_some() {
+        if consumer.try_consume_next_leased().is_some() {
             warmup += 1;
         } else {
             infra::check_deadline(warmup_deadline, "raw_ring_mmap message_consumer warmup");
@@ -174,7 +172,7 @@ fn message_consumer_sized<const SIZE: usize>() -> Result<(), Box<dyn std::error:
     let mut consumed = 0u64;
     let mut checksum = 0u64;
     while consumed < num_events {
-        if let Some((_seq, event)) = consumer.try_consume_next() {
+        if let Some(event) = consumer.try_consume_next_leased() {
             consumed += 1;
             checksum = checksum.wrapping_add(event.sequence);
             if event.timestamp_ns > 0 {
@@ -211,9 +209,7 @@ fn message_consumer_sized<const SIZE: usize>() -> Result<(), Box<dyn std::error:
 
 fn message_consumer() -> Result<(), Box<dyn std::error::Error>> {
     let event_bytes = infra::read_env_usize("MMAP_EVENT_SIZE", 144);
-    crate::dispatch_bench_event!(event_bytes, |<SIZE>| {
-        message_consumer_sized::<SIZE>()
-    })
+    crate::dispatch_bench_event!(event_bytes, |<SIZE>| message_consumer_sized::<SIZE>())
 }
 
 // ============================================================
@@ -286,7 +282,7 @@ fn signal_consumer() -> Result<(), Box<dyn std::error::Error>> {
     let warmup_deadline = infra::spin_deadline();
     let mut warmup = 0u64;
     while warmup < WARMUP {
-        if consumer.try_consume_next().is_some() {
+        if consumer.try_consume_next_leased().is_some() {
             warmup += 1;
         } else {
             infra::check_deadline(warmup_deadline, "raw_ring_mmap signal_consumer warmup");
@@ -299,7 +295,7 @@ fn signal_consumer() -> Result<(), Box<dyn std::error::Error>> {
     let mut consumed = 0u64;
     let checksum = 0u64; // Signal class: no payload work — measures pure disruptor ceiling
     while consumed < num_events {
-        if let Some((_seq, _event)) = consumer.try_consume_next() {
+        if consumer.try_consume_next_leased().is_some() {
             consumed += 1;
         } else {
             infra::check_deadline(measure_deadline, "raw_ring_mmap signal_consumer measured");
@@ -386,7 +382,7 @@ fn multi_signal_consumer() -> Result<(), Box<dyn std::error::Error>> {
     let warmup_deadline = infra::spin_deadline();
     let mut warmup = 0u64;
     while warmup < WARMUP {
-        if consumer.try_consume_next().is_some() {
+        if consumer.try_consume_next_leased().is_some() {
             warmup += 1;
         } else {
             infra::check_deadline(
@@ -402,7 +398,7 @@ fn multi_signal_consumer() -> Result<(), Box<dyn std::error::Error>> {
     let mut consumed = 0u64;
     let checksum = 0u64;
     while consumed < num_events {
-        if let Some((_seq, _event)) = consumer.try_consume_next() {
+        if consumer.try_consume_next_leased().is_some() {
             consumed += 1;
         } else {
             infra::check_deadline(
@@ -449,7 +445,7 @@ fn multi_message_producer_sized<const SIZE: usize>() -> Result<(), Box<dyn std::
         producer.publish(|e| {
             e.sequence = i;
             e.timestamp_ns = 0;
-            e.payload = [(i % 256) as u8; SIZE];
+            e.payload.fill((i % 256) as u8);
         });
     }
 
@@ -465,7 +461,7 @@ fn multi_message_producer_sized<const SIZE: usize>() -> Result<(), Box<dyn std::
             producer.publish(|e| {
                 e.sequence = warmup + i;
                 e.timestamp_ns = intended_ns;
-                e.payload = [((warmup + i) % 256) as u8; SIZE];
+                e.payload.fill(((warmup + i) % 256) as u8);
             });
         }
     } else {
@@ -473,7 +469,7 @@ fn multi_message_producer_sized<const SIZE: usize>() -> Result<(), Box<dyn std::
             producer.publish(|e| {
                 e.sequence = warmup + i;
                 e.timestamp_ns = nanos_now();
-                e.payload = [((warmup + i) % 256) as u8; SIZE];
+                e.payload.fill(((warmup + i) % 256) as u8);
             });
         }
     }
@@ -497,9 +493,7 @@ fn multi_message_producer_sized<const SIZE: usize>() -> Result<(), Box<dyn std::
 
 fn multi_message_producer() -> Result<(), Box<dyn std::error::Error>> {
     let event_bytes = infra::read_env_usize("MMAP_EVENT_SIZE", 144);
-    crate::dispatch_bench_event!(event_bytes, |<SIZE>| {
-        multi_message_producer_sized::<SIZE>()
-    })
+    crate::dispatch_bench_event!(event_bytes, |<SIZE>| multi_message_producer_sized::<SIZE>())
 }
 
 fn multi_message_consumer_sized<const SIZE: usize>() -> Result<(), Box<dyn std::error::Error>> {
@@ -524,7 +518,7 @@ fn multi_message_consumer_sized<const SIZE: usize>() -> Result<(), Box<dyn std::
     let warmup_deadline = infra::spin_deadline();
     let mut warmup_count = 0u64;
     while warmup_count < warmup_target {
-        if consumer.try_consume_next().is_some() {
+        if consumer.try_consume_next_leased().is_some() {
             warmup_count += 1;
         } else {
             infra::check_deadline(
@@ -545,7 +539,7 @@ fn multi_message_consumer_sized<const SIZE: usize>() -> Result<(), Box<dyn std::
     let mut consumed = 0u64;
     let mut checksum = 0u64;
     while consumed < num_events {
-        if let Some((_seq, event)) = consumer.try_consume_next() {
+        if let Some(event) = consumer.try_consume_next_leased() {
             consumed += 1;
             checksum = checksum.wrapping_add(event.sequence);
             if let Some(ref mut lat) = latency {
@@ -588,9 +582,7 @@ fn multi_message_consumer_sized<const SIZE: usize>() -> Result<(), Box<dyn std::
 
 fn multi_message_consumer() -> Result<(), Box<dyn std::error::Error>> {
     let event_bytes = infra::read_env_usize("MMAP_EVENT_SIZE", 144);
-    crate::dispatch_bench_event!(event_bytes, |<SIZE>| {
-        multi_message_consumer_sized::<SIZE>()
-    })
+    crate::dispatch_bench_event!(event_bytes, |<SIZE>| multi_message_consumer_sized::<SIZE>())
 }
 
 // ============================================================

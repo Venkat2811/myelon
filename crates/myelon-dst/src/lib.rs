@@ -44,8 +44,8 @@ pub mod runner_oracle;
 pub mod runner_report;
 pub mod runner_verify;
 
-// Convenience re-exports — preserves the flat API surface of the
-// former `dst-runner` crate (`BackendKind`, `ChildReport`, etc.).
+// Convenience re-exports preserve the flat DST harness surface
+// (`BackendKind`, `ChildReport`, etc.) for workspace tests.
 pub use runner::{DstRunner, DstRunnerError, RawRingHarness, RequiredConsumerLivenessPolicy};
 pub use runner_config::{BackendKind, CodecKind, DstConfig};
 pub use runner_fault::FaultInjector;

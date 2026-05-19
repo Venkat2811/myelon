@@ -7,7 +7,7 @@ use std::path::PathBuf;
     about = "Unified orchestrator for competitive-bench parity suite"
 )]
 pub struct RunnerCli {
-    /// Tier: quick, smoke, simple-smoke, extensive, headon-smoke, headon-full, headon-extensive
+    /// Tier: quick, smoke, simple-smoke, super-tiny, extensive, headon-smoke, headon-full, headon-extensive
     #[arg(long, default_value = "quick")]
     pub tier: String,
 

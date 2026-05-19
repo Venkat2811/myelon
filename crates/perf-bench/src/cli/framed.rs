@@ -27,6 +27,8 @@ impl FramedScenarioSpec {
 #[derive(Debug, Clone)]
 pub struct FramedSelection {
     payload_filter: Option<String>,
+    consumers_filter: Option<usize>,
+    num_messages_override: Option<u64>,
     pub output_args: ReportOutputArgs,
 }
 
@@ -34,6 +36,11 @@ impl FramedSelection {
     pub fn parse(args: &[String]) -> Self {
         Self {
             payload_filter: find_arg_value(args, "--payload").filter(|value| value != "all"),
+            consumers_filter: find_arg_value(args, "--consumers")
+                .filter(|value| value != "all")
+                .and_then(|value| value.parse::<usize>().ok()),
+            num_messages_override: find_arg_value(args, "--num-messages")
+                .and_then(|value| value.parse::<u64>().ok()),
             output_args: ReportOutputArgs::from_args(args),
         }
     }
@@ -41,7 +48,15 @@ impl FramedSelection {
     pub fn scenario_specs(&self, backend: BackendKind) -> Vec<FramedScenarioSpec> {
         base_specs(backend)
             .into_iter()
-            .filter(|spec| self.should_run(spec))
+            .filter_map(|mut spec| {
+                if !self.should_run(&spec) {
+                    return None;
+                }
+                if let Some(messages) = self.num_messages_override {
+                    spec.messages = messages;
+                }
+                Some(spec)
+            })
             .collect()
     }
 
@@ -49,6 +64,9 @@ impl FramedSelection {
         self.payload_filter
             .as_deref()
             .is_none_or(|payload| payload == spec.payload_tag || payload == spec.selector())
+            && self
+                .consumers_filter
+                .is_none_or(|consumers| consumers == spec.consumers)
     }
 }
 
@@ -149,6 +167,35 @@ mod tests {
     }
 
     #[test]
+    fn selection_respects_consumers_filter() {
+        let args = vec![
+            "bench".to_string(),
+            "--payload".to_string(),
+            "32K".to_string(),
+            "--consumers".to_string(),
+            "4".to_string(),
+        ];
+        let selection = FramedSelection::parse(&args);
+        let matching = FramedScenarioSpec {
+            backend: BackendKind::Shm,
+            payload_label: "32KB",
+            payload_tag: "32K",
+            payload_bytes: 32 * 1024,
+            messages: 50_000,
+            base_buffer: 1024,
+            consumers: 4,
+            producer_role: "framed_producer",
+            consumer_role: "framed_consumer",
+        };
+        let non_matching = FramedScenarioSpec {
+            consumers: 2,
+            ..matching.clone()
+        };
+        assert!(selection.should_run(&matching));
+        assert!(!selection.should_run(&non_matching));
+    }
+
+    #[test]
     fn scenarios_carry_backend_specific_roles() {
         let scenarios =
             FramedSelection::parse(&["bench".to_string()]).scenario_specs(BackendKind::Mmap);
@@ -158,5 +205,18 @@ mod tests {
             .expect("legacy 32K_3c anchor");
         assert_eq!(spec.producer_role, "framed_mmap_producer");
         assert_eq!(spec.consumer_role, "framed_mmap_consumer");
+    }
+
+    #[test]
+    fn selection_overrides_message_count() {
+        let selection = FramedSelection::parse(&[
+            "bench".to_string(),
+            "--payload".to_string(),
+            "1K".to_string(),
+            "--num-messages".to_string(),
+            "1000".to_string(),
+        ]);
+        let scenarios = selection.scenario_specs(BackendKind::Shm);
+        assert!(scenarios.iter().all(|spec| spec.messages == 1_000));
     }
 }

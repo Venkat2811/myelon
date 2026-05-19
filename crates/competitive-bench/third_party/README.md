@@ -31,10 +31,6 @@ Peers currently wired without local source vendoring:
   - built from Cargo
 - `zeromq`
   - Rust adapter in this crate, system `libzmq` underneath
-- `iggy`
-  - Docker-managed broker peer
-- `redpanda`
-  - Docker-managed broker peer
 
 Rule:
 
@@ -50,7 +46,6 @@ Rule:
   - `MMAP`
   - `IPC`
   - `TCP`
-  - `TCP / Brokered`
   - `MPI`
   - `Message Queue`
 - throughput and fixed-rate CO-aware sections render separately

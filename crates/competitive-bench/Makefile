@@ -15,8 +15,11 @@ OMPI_MPICC ?= mpicc
 
 RUNNER = cargo run -p competitive-bench --profile competitive \
 	--manifest-path $(WORKSPACE_MANIFEST) --bin competitive_bench_runner --
+SIGNAL = cargo run -p perf-bench --profile competitive \
+	--manifest-path $(WORKSPACE_MANIFEST) --bin perf-bench-signal --
+SUPER_TINY_OUTDIR := $(CURDIR)/output/super-tiny
 
-.PHONY: build-all quick smoke extensive simple-smoke \
+.PHONY: build-all quick smoke extensive simple-smoke super-tiny \
 	headon-smoke headon-full headon-extensive \
 	kill-pingpong clean help
 
@@ -41,6 +44,15 @@ simple-smoke: build-all
 	@rm -rf $(CURDIR)/output/simple-smoke
 	$(RUNNER) --tier simple-smoke --adapters all --outdir $(CURDIR)/output/simple-smoke --throughput --fixed-rate --broadcast
 	@echo "Results in: $(CURDIR)/output/simple-smoke"
+
+super-tiny: build-all
+	@$(MAKE) kill-pingpong || true
+	@rm -rf $(SUPER_TINY_OUTDIR)
+	@mkdir -p $(SUPER_TINY_OUTDIR)
+	$(RUNNER) --tier super-tiny --adapters all --outdir $(SUPER_TINY_OUTDIR) --msgs 1000 --warmup 100 --throughput --fixed-rate --broadcast --timeout 60
+	$(SIGNAL) --backend shm --consumers 1 --events 1000 --json-out $(SUPER_TINY_OUTDIR)/signal_shm.json
+	$(SIGNAL) --backend mmap --consumers 1 --events 1000 --json-out $(SUPER_TINY_OUTDIR)/signal_mmap.json
+	@echo "Results in: $(SUPER_TINY_OUTDIR)"
 
 # === Headon ===
 headon-smoke: build-all
@@ -93,7 +105,7 @@ kill-pingpong:
 	-@pkill -f 'crossbar_broadcast' 2>/dev/null || true
 
 clean:
-	rm -rf $(OUTDIR) $(HEADON_DIR) $(CURDIR)/output/simple-smoke
+	rm -rf $(OUTDIR) $(HEADON_DIR) $(CURDIR)/output/simple-smoke $(SUPER_TINY_OUTDIR)
 
 help:
 	@echo "competitive-bench (Rust-first orchestration)"
@@ -104,6 +116,7 @@ help:
 	@echo "  make smoke          # smoke sizes, all adapters"
 	@echo "  make extensive      # extensive sizes (16KB-64MB), all adapters"
 	@echo "  make simple-smoke   # ultra-quick smoke"
+	@echo "  make super-tiny     # broad fast gate: signal + ping-pong + broadcast at 100 warmup / 1k msgs"
 	@echo ""
 	@echo "Headon:"
 	@echo "  make headon-smoke       # disruptor vs rusteron smoke"

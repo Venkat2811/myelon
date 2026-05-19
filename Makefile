@@ -1,5 +1,6 @@
 CARGO ?= cargo
 PERF_BENCH_MAKE := $(MAKE) -C crates/perf-bench
+COMPETITIVE_BENCH_MAKE := $(MAKE) -C crates/competitive-bench
 ROOT_TIMEOUT_BIN := $(shell if command -v timeout >/dev/null 2>&1; then printf '%s' timeout; elif command -v gtimeout >/dev/null 2>&1; then printf '%s' gtimeout; fi)
 ROOT_EXAMPLE_TIMEOUT ?= 60
 
@@ -14,7 +15,7 @@ endef
 .PHONY: \
 	help fmt check build test bench bench-mp bench-matrix bench-matrix-smoke \
 	bench-matrix-raw bench-matrix-framed bench-matrix-codec bench-matrix-wait bench-matrix-competitive bench-matrix-layout \
-	workspace-smoke competitive myelon-sweep all-multi repeatability results \
+	workspace-smoke competitive \
 	test-rust-fast test-rust-extended test-rust-perf-gate \
 	test-dst test-dst-fuzz test-dst-nightly run-rust-examples run-rust-benches \
 	smoke orchestrate-rust validate-ci-workflows
@@ -32,14 +33,10 @@ help:
 	@echo "  make bench-mp            - run raw multiprocess perf-bench subset"
 	@echo "  make bench-matrix        - run perf-bench matrix targets"
 	@echo "  make bench-matrix-smoke  - run perf-bench smoke subset"
-	@echo "  make competitive         - run competitive ping-pong benches"
-	@echo "  make myelon-sweep        - run framed + zero-copy myelon sweeps"
-	@echo "  make all-multi           - run multi-consumer coverage benches"
-	@echo "  make repeatability       - run repeated canonical perf-bench variance checks"
-	@echo "  make results             - write benchmark JSON/CSV/MD artifacts"
+	@echo "  make competitive         - run competitive-bench quick parity tier"
 	@echo "  make test-rust-fast      - canonical disruptor-mp Linux Rust lane"
 	@echo "  make test-rust-extended  - disruptor-mp tests + example/bench compile + perf smoke"
-	@echo "  make test-rust-perf-gate - live workspace perf smoke gate"
+	@echo "  make test-rust-perf-gate - live workspace perf gate (perf-bench + competitive-bench super-tiny)"
 	@echo "  make test-dst            - run deterministic DST lanes for disruptor-mp and myelon"
 	@echo "  make test-dst-fuzz       - run 100-seed DST CI fuzz envelopes"
 	@echo "  make test-dst-nightly    - run 1000-seed DST nightly fuzz envelopes"
@@ -65,7 +62,7 @@ bench-mp:
 	@$(PERF_BENCH_MAKE) raw
 
 bench-matrix:
-	@$(PERF_BENCH_MAKE) all
+	@$(PERF_BENCH_MAKE) extensive
 
 bench-matrix-raw:
 	@$(PERF_BENCH_MAKE) raw
@@ -80,7 +77,7 @@ bench-matrix-wait:
 	@$(PERF_BENCH_MAKE) wait
 
 bench-matrix-competitive:
-	@$(PERF_BENCH_MAKE) competitive
+	@$(COMPETITIVE_BENCH_MAKE) quick
 
 bench-matrix-layout:
 	@$(PERF_BENCH_MAKE) layout
@@ -89,54 +86,42 @@ bench-matrix-smoke:
 	@$(PERF_BENCH_MAKE) smoke
 
 competitive:
-	@$(PERF_BENCH_MAKE) competitive
-
-myelon-sweep:
-	@$(PERF_BENCH_MAKE) myelon-sweep
-
-all-multi:
-	@$(PERF_BENCH_MAKE) all-multi
-
-repeatability:
-	@$(PERF_BENCH_MAKE) repeatability
-
-results:
-	@$(PERF_BENCH_MAKE) results
+	@$(COMPETITIVE_BENCH_MAKE) quick
 
 test-rust-fast:
 	@$(CARGO) test -p disruptor-mp --lib --tests
 
 test-rust-extended:
 	@$(CARGO) test -p disruptor-mp --lib --tests
-	@$(CARGO) test -p disruptor-mp --examples --no-run
+	@$(CARGO) test -p demos --examples --no-run
 	@$(CARGO) test -p disruptor-mp --benches --no-run
 	@$(PERF_BENCH_MAKE) smoke
 
 test-rust-perf-gate:
-	@$(PERF_BENCH_MAKE) smoke
+	@$(PERF_BENCH_MAKE) super-tiny
+	@$(COMPETITIVE_BENCH_MAKE) super-tiny
 
 test-dst:
-	@$(MAKE) test-dst
-	@$(CARGO) test -p dst-runner --features dst -- --test-threads=1
-	@$(CARGO) test -p myelon --features dst --test dst_framed -- --test-threads=1
-	@$(CARGO) test -p myelon --features 'dst rkyv flatbuffers' --test dst_codec -- --test-threads=1
-	@$(CARGO) test -p myelon --test dst_contract -- --test-threads=1
-	@$(CARGO) test -p myelon --test dst_profiles -- --test-threads=1
-	@$(CARGO) test -p myelon --test dst_runtime -- --test-threads=1
+	@RUSTFLAGS="--cfg dst" $(CARGO) test -p myelon-dst --features _runner_bin -- --test-threads=1
+	@RUSTFLAGS="--cfg dst" $(CARGO) test -p myelon --test dst_framed -- --test-threads=1
+	@RUSTFLAGS="--cfg dst" $(CARGO) test -p myelon --features 'rkyv flatbuffers' --test dst_codec -- --test-threads=1
+	@RUSTFLAGS="--cfg dst" $(CARGO) test -p myelon --test dst_contract -- --test-threads=1
+	@RUSTFLAGS="--cfg dst" $(CARGO) test -p myelon --test dst_profiles -- --test-threads=1
+	@RUSTFLAGS="--cfg dst" $(CARGO) test -p myelon --test dst_runtime -- --test-threads=1
 
 test-dst-fuzz:
-	@$(CARGO) test -p dst-runner --features dst dst_fuzz_raw_ring_ci_seed_matrix -- --ignored --nocapture --test-threads=1
-	@$(CARGO) test -p myelon --features dst --test dst_framed dst_fuzz_framed_ci_seed_matrix -- --ignored --nocapture --test-threads=1
-	@$(CARGO) test -p myelon --features 'dst rkyv flatbuffers' --test dst_codec dst_fuzz_codec_ci_seed_matrix -- --ignored --nocapture --test-threads=1
+	@RUSTFLAGS="--cfg dst" $(CARGO) test -p myelon-dst --features _runner_bin dst_fuzz_raw_ring_ci_seed_matrix -- --ignored --nocapture --test-threads=1
+	@RUSTFLAGS="--cfg dst" $(CARGO) test -p myelon --test dst_framed dst_fuzz_framed_ci_seed_matrix -- --ignored --nocapture --test-threads=1
+	@RUSTFLAGS="--cfg dst" $(CARGO) test -p myelon --features 'rkyv flatbuffers' --test dst_codec dst_fuzz_codec_ci_seed_matrix -- --ignored --nocapture --test-threads=1
 
 test-dst-nightly:
-	@$(CARGO) test -p dst-runner --features dst dst_fuzz_raw_ring_nightly_seed_matrix -- --ignored --nocapture --test-threads=1
-	@$(CARGO) test -p myelon --features dst --test dst_framed dst_fuzz_framed_nightly_seed_matrix -- --ignored --nocapture --test-threads=1
-	@$(CARGO) test -p myelon --features 'dst rkyv flatbuffers' --test dst_codec dst_fuzz_codec_nightly_seed_matrix -- --ignored --nocapture --test-threads=1
+	@RUSTFLAGS="--cfg dst" $(CARGO) test -p myelon-dst --features _runner_bin dst_fuzz_raw_ring_nightly_seed_matrix -- --ignored --nocapture --test-threads=1
+	@RUSTFLAGS="--cfg dst" $(CARGO) test -p myelon --test dst_framed dst_fuzz_framed_nightly_seed_matrix -- --ignored --nocapture --test-threads=1
+	@RUSTFLAGS="--cfg dst" $(CARGO) test -p myelon --features 'rkyv flatbuffers' --test dst_codec dst_fuzz_codec_nightly_seed_matrix -- --ignored --nocapture --test-threads=1
 
 run-rust-examples:
-	@$(CARGO) test -p disruptor-mp --examples --no-run
-	$(call ROOT_RUN_WITH_TIMEOUT,$(ROOT_EXAMPLE_TIMEOUT),$(CARGO) run -p myelon --example fixed_inference_topology)
+	@$(CARGO) test -p demos --examples --no-run
+	$(call ROOT_RUN_WITH_TIMEOUT,$(ROOT_EXAMPLE_TIMEOUT),$(CARGO) run -p demos --example fixed_inference_topology)
 
 run-rust-benches:
 	@$(CARGO) test -p disruptor-mp --benches --no-run
@@ -161,4 +146,4 @@ orchestrate-rust:
 	@$(CARGO) test -p myelon --tests
 	@$(CARGO) test -p myelon --test compile_api
 	@$(CARGO) test -p disruptor-mp --benches --no-run
-	@$(CARGO) test -p disruptor-mp --examples --no-run
+	@$(CARGO) test -p demos --examples --no-run

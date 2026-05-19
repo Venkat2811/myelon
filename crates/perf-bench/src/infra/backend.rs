@@ -144,18 +144,6 @@ pub enum ConsumerHandle<E: Copy + Default + Send + 'static> {
 }
 
 impl<E: Copy + Default + Send + 'static> ConsumerHandle<E> {
-    /// Try to consume the next event (copied).
-    ///
-    /// Uses copy-based consume for backend uniformity. The copy cost is
-    /// negligible compared to the IPC transit being measured.
-    #[inline]
-    pub fn try_consume_next(&mut self) -> Option<(disruptor_mp::Sequence, E)> {
-        match self {
-            Self::Shm(c) => c.try_consume_next(),
-            Self::Mmap(c) => c.try_consume_next(),
-        }
-    }
-
     /// Signal readiness to the producer.
     pub fn signal_readiness(&self) {
         match self {

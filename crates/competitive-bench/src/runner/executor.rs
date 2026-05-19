@@ -4,9 +4,12 @@ use crate::runner::cli::RunnerCli;
 use crate::runner::dispatch::{strategy_for, ExecutionStrategy};
 use crate::runner::platform::PlatformInfo;
 use std::fs;
+use std::fs::File;
+use std::io;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::time::Duration;
+use std::process::{Child, Command, ExitStatus, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
 
 #[derive(Debug)]
 pub struct RunOutcome {
@@ -81,7 +84,7 @@ pub fn execute_tier(cli: &RunnerCli) -> Vec<RunOutcome> {
 
     // --- Broadcast topology ---
     if cli.broadcast {
-        let broadcast_consumers = vec![4, 8]; // from parity config
+        let broadcast_consumers = cfg.broadcast_consumers.clone();
         let broadcast_adapters: Vec<(&str, &str)> = vec![
             ("disruptor-shm", "internal_broadcast"),
             ("disruptor-mmap", "internal_broadcast"),
@@ -516,55 +519,102 @@ fn run_and_capture(
     output_path: &Path,
     timeout_secs: u64,
 ) -> bool {
+    if let Some(parent) = output_path.parent() {
+        fs::create_dir_all(parent).ok();
+    }
+    let tmp_output_path = output_path.with_extension("tmp");
+    let stdout_file = match File::create(&tmp_output_path) {
+        Ok(file) => file,
+        Err(e) => {
+            eprintln!(
+                "    failed to create temp output {}: {e}",
+                tmp_output_path.display()
+            );
+            return false;
+        }
+    };
+
     let mut cmd = Command::new(program);
     cmd.args(args)
         .envs(env.iter().cloned())
-        .stderr(Stdio::inherit());
+        .stderr(Stdio::inherit())
+        .stdout(Stdio::from(stdout_file));
 
-    let output = if timeout_secs > 0 {
-        // Use stdout capture with timeout
-        cmd.stdout(Stdio::piped());
-        match cmd.spawn() {
-            Ok(child) => match child.wait_with_output() {
-                Ok(o) => o,
-                Err(e) => {
-                    eprintln!("    failed to wait for {program}: {e}");
-                    return false;
-                }
-            },
+    let mut child = match cmd.spawn() {
+        Ok(child) => child,
+        Err(e) => {
+            eprintln!("    failed to spawn {program}: {e}");
+            let _ = fs::remove_file(&tmp_output_path);
+            return false;
+        }
+    };
+
+    let status = if timeout_secs > 0 {
+        match wait_for_child(&mut child, Duration::from_secs(timeout_secs)) {
+            Ok(WaitOutcome::Exited(status)) => status,
+            Ok(WaitOutcome::TimedOut) => {
+                eprintln!("    {program} timed out after {timeout_secs}s");
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = fs::remove_file(&tmp_output_path);
+                return false;
+            }
             Err(e) => {
-                eprintln!("    failed to spawn {program}: {e}");
+                eprintln!("    failed to wait for {program}: {e}");
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = fs::remove_file(&tmp_output_path);
                 return false;
             }
         }
     } else {
-        cmd.stdout(Stdio::piped());
-        match cmd.output() {
-            Ok(o) => o,
+        match child.wait() {
+            Ok(status) => status,
             Err(e) => {
-                eprintln!("    failed to run {program}: {e}");
+                eprintln!("    failed to wait for {program}: {e}");
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = fs::remove_file(&tmp_output_path);
                 return false;
             }
         }
     };
 
-    if !output.status.success() {
-        eprintln!(
-            "    {program} exited with {}",
-            output.status.code().unwrap_or(-1)
-        );
+    if !status.success() {
+        eprintln!("    {program} exited with {}", status.code().unwrap_or(-1));
+        let _ = fs::remove_file(&tmp_output_path);
         return false;
     }
 
-    if let Some(parent) = output_path.parent() {
-        fs::create_dir_all(parent).ok();
-    }
-    if let Err(e) = fs::write(output_path, &output.stdout) {
-        eprintln!("    failed to write {}: {e}", output_path.display());
+    if let Err(e) = fs::rename(&tmp_output_path, output_path) {
+        eprintln!(
+            "    failed to finalize {} from {}: {e}",
+            output_path.display(),
+            tmp_output_path.display()
+        );
+        let _ = fs::remove_file(&tmp_output_path);
         return false;
     }
 
     true
+}
+
+enum WaitOutcome {
+    Exited(ExitStatus),
+    TimedOut,
+}
+
+fn wait_for_child(child: &mut Child, timeout: Duration) -> io::Result<WaitOutcome> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Ok(WaitOutcome::Exited(status));
+        }
+        if Instant::now() >= deadline {
+            return Ok(WaitOutcome::TimedOut);
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
 }
 
 fn output_file_path(
@@ -631,11 +681,84 @@ fn find_target_dir(cli: &RunnerCli) -> PathBuf {
 }
 
 fn override_tuning(cli: &RunnerCli, base: &SizeTuning) -> SizeTuning {
+    let rates = if cli.tier == "super-tiny" {
+        vec![50_000]
+    } else {
+        base.rates.clone()
+    };
     SizeTuning {
         num_messages: cli.msgs.unwrap_or(base.num_messages),
         warmup: cli.warmup.unwrap_or(base.warmup),
-        rates: base.rates.clone(),
+        rates,
         headon_rate_smoke: base.headon_rate_smoke,
         stack_kb: base.stack_kb,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{override_tuning, wait_for_child, WaitOutcome};
+    use crate::infra::parity::SizeTuning;
+    use crate::runner::cli::RunnerCli;
+    use std::path::PathBuf;
+    use std::process::Command;
+    use std::time::Duration;
+
+    #[test]
+    fn wait_for_child_detects_successful_exit() {
+        let mut child = Command::new("sh")
+            .arg("-c")
+            .arg("exit 0")
+            .spawn()
+            .expect("spawn short-lived shell");
+
+        let outcome = wait_for_child(&mut child, Duration::from_secs(1)).expect("wait");
+        assert!(matches!(outcome, WaitOutcome::Exited(status) if status.success()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn wait_for_child_reports_timeout() {
+        let mut child = Command::new("sh")
+            .arg("-c")
+            .arg("sleep 2")
+            .spawn()
+            .expect("spawn sleeper");
+
+        let outcome = wait_for_child(&mut child, Duration::from_millis(100)).expect("wait");
+        assert!(matches!(outcome, WaitOutcome::TimedOut));
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
+    #[test]
+    fn super_tiny_collapses_fixed_rate_ladder_to_single_ci_rate() {
+        let cli = RunnerCli {
+            tier: "super-tiny".to_string(),
+            adapters: "all".to_string(),
+            outdir: PathBuf::from("output"),
+            sizes: None,
+            msgs: Some(1000),
+            warmup: Some(100),
+            throughput: true,
+            fixed_rate: true,
+            broadcast: true,
+            timeout: 60,
+            dry_run: false,
+            manifest_path: None,
+            profile: "competitive".to_string(),
+        };
+        let base = SizeTuning {
+            num_messages: 123,
+            warmup: 45,
+            rates: vec![200_000, 400_000, 600_000],
+            headon_rate_smoke: 200_000,
+            stack_kb: 16_384,
+        };
+
+        let tuned = override_tuning(&cli, &base);
+        assert_eq!(tuned.num_messages, 1000);
+        assert_eq!(tuned.warmup, 100);
+        assert_eq!(tuned.rates, vec![50_000]);
     }
 }

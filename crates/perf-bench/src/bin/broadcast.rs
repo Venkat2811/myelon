@@ -16,7 +16,7 @@ use std::error::Error;
 )]
 struct Args {
     /// Transport layer / benchmark to run
-    #[arg(long, value_parser = ["raw_ring", "raw_myelon", "framed", "codec", "typed_zc",
+    #[arg(long, value_parser = ["raw_ring", "raw_myelon", "framed", "codec",
                                  "wait_strategy", "myelon_layers", "monster_sweep",
                                  "framed_sweep", "typed_zc_sweep", "nofrag", "layout"])]
     layer: String,
@@ -67,6 +67,10 @@ struct Args {
     #[arg(long, default_value_t = 300)]
     timeout: u64,
 
+    /// Quick-mode hint for sweep families that expose a reduced subset.
+    #[arg(long)]
+    quick: bool,
+
     // --- Signal-specific (raw_ring) ---
     /// Event class filter for `raw_ring`: signal, message, or all
     #[arg(long, value_parser = ["signal", "message", "all"], default_value = "all")]
@@ -111,10 +115,9 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     match args.layer.as_str() {
         "raw_ring" => run_raw_ring(&args),
-        "raw_myelon" => run_raw_ring(&args), // raw_myelon uses same raw_ring executor path
+        "raw_myelon" => run_raw_myelon(&args),
         "framed" => run_framed(&args),
         "codec" => run_codec(&args),
-        "typed_zc" => run_typed_zc(&args),
         "wait_strategy" => run_wait_strategy(&args),
         "myelon_layers" => run_myelon_layers(&args),
         "monster_sweep" => run_monster_sweep(&args),
@@ -147,6 +150,12 @@ fn dispatch_bench_harness_child(args: &[String]) -> Result<(), Box<dyn Error>> {
         }
         "raw_ring_mmap" => {
             Some(&perf_bench::layers::raw::disruptor_mp::broadcast_mmap::RawRingMmapBench)
+        }
+        "raw_myelon_shm" => {
+            Some(&perf_bench::layers::raw::myelon::broadcast_shm::RawMyelonShmBench)
+        }
+        "raw_myelon_mmap" => {
+            Some(&perf_bench::layers::raw::myelon::broadcast_mmap::RawMyelonMmapBench)
         }
         "framed_shm" => {
             Some(&perf_bench::layers::framed_myelon::frag::broadcast_shm::FramedShmBench)
@@ -190,6 +199,8 @@ fn dispatch_bench_harness_child(args: &[String]) -> Result<(), Box<dyn Error>> {
     let all_harnesses: &[&dyn BenchHarness] = &[
         &perf_bench::layers::raw::disruptor_mp::broadcast_shm::RawRingShmBench,
         &perf_bench::layers::raw::disruptor_mp::broadcast_mmap::RawRingMmapBench,
+        &perf_bench::layers::raw::myelon::broadcast_shm::RawMyelonShmBench,
+        &perf_bench::layers::raw::myelon::broadcast_mmap::RawMyelonMmapBench,
         &perf_bench::layers::framed_myelon::frag::broadcast_shm::FramedShmBench,
         &perf_bench::layers::framed_myelon::frag::broadcast_mmap::FramedMmapBench,
         &perf_bench::layers::raw::disruptor_mp::wait_strategy_shm::WaitStrategyShmBench,
@@ -231,6 +242,33 @@ fn append_output_args(v: &mut Vec<String>, args: &Args) {
         v.push("--json-out".to_string());
         v.push(path.clone());
     }
+    if args.quick {
+        v.push("--quick".to_string());
+    }
+}
+
+fn sweep_size_tag(size: usize) -> Option<&'static str> {
+    match size {
+        1024 => Some("1KB"),
+        4096 => Some("4KB"),
+        16384 => Some("16KB"),
+        65536 => Some("64KB"),
+        131072 => Some("128KB"),
+        262144 => Some("256KB"),
+        524288 => Some("512KB"),
+        1048576 => Some("1MB"),
+        _ => None,
+    }
+}
+
+fn framed_payload_tag(size: usize) -> Option<&'static str> {
+    match size {
+        1024 => Some("1K"),
+        32768 => Some("32K"),
+        65536 => Some("64K"),
+        131072 => Some("128K"),
+        _ => None,
+    }
 }
 
 /// Build args for `raw_ring` / `raw_myelon` broadcast scenarios.
@@ -246,10 +284,8 @@ fn build_raw_ring_args(args: &Args) -> Vec<String> {
     v.push("--mode".to_string());
     v.push(args.mode.clone());
 
-    if args.consumers != 1 {
-        v.push("--consumers".to_string());
-        v.push(args.consumers.to_string());
-    }
+    v.push("--consumers".to_string());
+    v.push(args.consumers.to_string());
 
     if let Some(rate) = args.target_rate {
         v.push("--target-rate".to_string());
@@ -283,12 +319,25 @@ fn build_raw_ring_args(args: &Args) -> Vec<String> {
 /// Build args for framed broadcast scenarios.
 ///
 /// These use `FramedSelection::parse` which expects:
-///   --mode, --json, --tree, --json-out
+///   --mode, --payload, --consumers, --num-messages, --json, --tree, --json-out
 fn build_framed_args(args: &Args) -> Vec<String> {
     let mut v = vec!["perf-bench-broadcast".to_string()];
 
     v.push("--mode".to_string());
     v.push(args.mode.clone());
+
+    if let Some(size) = args.size.and_then(framed_payload_tag) {
+        v.push("--payload".to_string());
+        v.push(size.to_string());
+    }
+
+    v.push("--consumers".to_string());
+    v.push(args.consumers.to_string());
+
+    if args.num_messages != 100000 {
+        v.push("--num-messages".to_string());
+        v.push(args.num_messages.to_string());
+    }
 
     append_output_args(&mut v, args);
     v
@@ -297,7 +346,7 @@ fn build_framed_args(args: &Args) -> Vec<String> {
 /// Build args for codec broadcast scenarios.
 ///
 /// These use `CodecSelection::parse` which expects:
-///   --mode, --codec, --json, --tree, --json-out
+///   --mode, --codec, --consumers, --batch, --num-messages, --target-rate, --json, --tree, --json-out
 fn build_codec_args(args: &Args) -> Vec<String> {
     let mut v = vec!["perf-bench-broadcast".to_string()];
 
@@ -309,6 +358,22 @@ fn build_codec_args(args: &Args) -> Vec<String> {
         v.push(codec.clone());
     }
 
+    v.push("--consumers".to_string());
+    v.push(args.consumers.to_string());
+
+    v.push("--batch".to_string());
+    v.push(args.batch_size.to_string());
+
+    if args.num_messages != 100000 {
+        v.push("--num-messages".to_string());
+        v.push(args.num_messages.to_string());
+    }
+
+    if let Some(rate) = args.target_rate {
+        v.push("--target-rate".to_string());
+        v.push(rate.to_string());
+    }
+
     append_output_args(&mut v, args);
     v
 }
@@ -316,16 +381,37 @@ fn build_codec_args(args: &Args) -> Vec<String> {
 /// Build args for sweep scenarios.
 ///
 /// These use `BasicSweepSelection::parse` or `ReportOutputArgs::from_args` which expect:
-///   --mode, --size, --json, --tree, --json-out
+///   --mode, --backend, --size, --consumers, --num-messages, --target-rate, --json, --tree, --json-out
 fn build_sweep_args(args: &Args) -> Vec<String> {
     let mut v = vec!["perf-bench-broadcast".to_string()];
 
     v.push("--mode".to_string());
     v.push(args.mode.clone());
 
-    if let Some(size) = args.size {
+    v.push("--backend".to_string());
+    v.push(args.backend.clone());
+
+    if let Some(size) = args.size.and_then(sweep_size_tag) {
         v.push("--size".to_string());
         v.push(size.to_string());
+    }
+
+    v.push("--consumers".to_string());
+    v.push(args.consumers.to_string());
+
+    if args.num_messages != 100000 {
+        v.push("--num-messages".to_string());
+        v.push(args.num_messages.to_string());
+    }
+
+    if let Some(ref codec) = args.codec {
+        v.push("--codec".to_string());
+        v.push(codec.clone());
+    }
+
+    if let Some(rate) = args.target_rate {
+        v.push("--target-rate".to_string());
+        v.push(rate.to_string());
     }
 
     append_output_args(&mut v, args);
@@ -353,6 +439,32 @@ fn run_raw_ring(args: &Args) -> Result<(), Box<dyn Error>> {
         }
         "mmap" => {
             let bench = perf_bench::layers::raw::disruptor_mp::broadcast_mmap::RawRingMmapBench;
+            bench.run_orchestrator(&synthetic)?;
+            Ok(())
+        }
+        _ => Err(format!("unknown backend: {}", args.backend).into()),
+    }
+}
+
+fn run_raw_myelon(args: &Args) -> Result<(), Box<dyn Error>> {
+    use perf_bench::infra::BenchHarness;
+
+    if args.timeout != 300 {
+        std::env::set_var("PERF_BENCH_TIMEOUT", args.timeout.to_string());
+    }
+
+    let synthetic = build_raw_ring_args(args);
+
+    match args.backend.as_str() {
+        "shm" => {
+            std::env::set_var("PERF_BENCH_BROADCAST_HARNESS", "raw_myelon_shm");
+            let bench = perf_bench::layers::raw::myelon::broadcast_shm::RawMyelonShmBench;
+            bench.run_orchestrator(&synthetic)?;
+            Ok(())
+        }
+        "mmap" => {
+            std::env::set_var("PERF_BENCH_BROADCAST_HARNESS", "raw_myelon_mmap");
+            let bench = perf_bench::layers::raw::myelon::broadcast_mmap::RawMyelonMmapBench;
             bench.run_orchestrator(&synthetic)?;
             Ok(())
         }
@@ -405,32 +517,6 @@ fn run_codec(args: &Args) -> Result<(), Box<dyn Error>> {
         "mmap" => {
             std::env::set_var("PERF_BENCH_BROADCAST_HARNESS", "codec_mmap");
             let bench = perf_bench::layers::framed_myelon::codec::mmap::CodecE2eMmapBench;
-            bench.run_orchestrator(&synthetic)?;
-            Ok(())
-        }
-        _ => Err(format!("unknown backend: {}", args.backend).into()),
-    }
-}
-
-fn run_typed_zc(args: &Args) -> Result<(), Box<dyn Error>> {
-    use perf_bench::infra::BenchHarness;
-
-    if args.timeout != 300 {
-        std::env::set_var("PERF_BENCH_TIMEOUT", args.timeout.to_string());
-    }
-
-    let synthetic = build_codec_args(args);
-
-    match args.backend.as_str() {
-        "shm" => {
-            std::env::set_var("PERF_BENCH_BROADCAST_HARNESS", "nofrag_shm");
-            let bench = perf_bench::layers::framed_myelon::codec::nofrag_shm::CodecNoFragShmBench;
-            bench.run_orchestrator(&synthetic)?;
-            Ok(())
-        }
-        "mmap" => {
-            std::env::set_var("PERF_BENCH_BROADCAST_HARNESS", "nofrag_mmap");
-            let bench = perf_bench::layers::framed_myelon::codec::nofrag_mmap::CodecNoFragMmapBench;
             bench.run_orchestrator(&synthetic)?;
             Ok(())
         }
@@ -545,4 +631,92 @@ fn run_nofrag(args: &Args) -> Result<(), Box<dyn Error>> {
 fn run_layout(_args: &Args) -> Result<(), Box<dyn Error>> {
     perf_bench::layers::layout::run_main();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_args() -> Args {
+        Args {
+            layer: "nofrag".to_string(),
+            backend: "mmap".to_string(),
+            size: Some(1024),
+            mode: "co".to_string(),
+            target_rate: Some(20_000),
+            wait_strategy: "busyspin".to_string(),
+            codec: Some("rkyv".to_string()),
+            consumers: 4,
+            batch_size: 8,
+            num_messages: 1_000,
+            warmup: 100,
+            timeout: 120,
+            quick: true,
+            class: "message".to_string(),
+            events: Some(1_000),
+            json: false,
+            tree: true,
+            json_out: Some("out.json".to_string()),
+        }
+    }
+
+    #[test]
+    fn build_framed_args_maps_size_and_consumers() {
+        let mut args = sample_args();
+        args.layer = "framed".to_string();
+        args.size = Some(32 * 1024);
+        let built = build_framed_args(&args);
+        assert!(built.windows(2).any(|pair| pair == ["--payload", "32K"]));
+        assert!(built.windows(2).any(|pair| pair == ["--consumers", "4"]));
+        assert!(built
+            .windows(2)
+            .any(|pair| pair == ["--num-messages", "1000"]));
+    }
+
+    #[test]
+    fn build_codec_args_preserves_codec_batch_and_rate() {
+        let args = sample_args();
+        let built = build_codec_args(&args);
+        assert!(built.windows(2).any(|pair| pair == ["--codec", "rkyv"]));
+        assert!(built.windows(2).any(|pair| pair == ["--batch", "8"]));
+        assert!(built
+            .windows(2)
+            .any(|pair| pair == ["--num-messages", "1000"]));
+        assert!(built
+            .windows(2)
+            .any(|pair| pair == ["--target-rate", "20000"]));
+        assert!(built.windows(2).any(|pair| pair == ["--consumers", "4"]));
+    }
+
+    #[test]
+    fn build_sweep_args_preserves_backend_size_consumers_and_quick() {
+        let args = sample_args();
+        let built = build_sweep_args(&args);
+        assert!(built.windows(2).any(|pair| pair == ["--backend", "mmap"]));
+        assert!(built.windows(2).any(|pair| pair == ["--size", "1KB"]));
+        assert!(built.windows(2).any(|pair| pair == ["--consumers", "4"]));
+        assert!(built
+            .windows(2)
+            .any(|pair| pair == ["--num-messages", "1000"]));
+        assert!(built.windows(2).any(|pair| pair == ["--codec", "rkyv"]));
+        assert!(built
+            .windows(2)
+            .any(|pair| pair == ["--target-rate", "20000"]));
+        assert!(built.iter().any(|arg| arg == "--quick"));
+    }
+
+    #[test]
+    fn typed_zero_copy_is_not_advertised_as_a_broadcast_layer() {
+        let err = Args::try_parse_from([
+            "perf-bench-broadcast",
+            "--layer",
+            "typed_zc",
+            "--backend",
+            "mmap",
+        ])
+        .expect_err("typed_zc broadcast should be rejected");
+        let rendered = err.to_string();
+        assert!(rendered.contains("typed_zc"));
+        assert!(rendered.contains("possible values"));
+    }
 }

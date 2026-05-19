@@ -667,6 +667,10 @@ impl infra::BenchHarness for MonsterSweepShm {
         let output_args = reporting::ReportOutputArgs::from_args(args);
         let json_mode = output_args.json_mode;
         let quick_mode = output_args.quick_mode;
+        let num_messages_override = args
+            .windows(2)
+            .find(|w| w[0] == "--num-messages")
+            .and_then(|w| w[1].parse::<u64>().ok());
 
         let mode_arg = args
             .windows(2)
@@ -698,7 +702,7 @@ impl infra::BenchHarness for MonsterSweepShm {
                 let sp = SweepPoint {
                     label: spec.label.clone(),
                     size_bytes: spec.size_bytes,
-                    events: spec.events,
+                    events: num_messages_override.unwrap_or(spec.events),
                     buffer: spec.buffer,
                     consumers: spec.consumers,
                     target_rate: spec.target_rate,

@@ -180,10 +180,11 @@ impl RawRingSelection {
             RawRingScenarioKind::Message => self.run_message(),
             RawRingScenarioKind::Signal => self.run_signal(),
         };
-        let consumer_matches = self
-            .consumer_filter
-            .is_none_or(|consumers| consumers == scenario.consumers);
-        kind_allowed && (scenario.consumers == 1 || consumer_matches)
+        let consumer_matches = match self.consumer_filter {
+            Some(consumers) => consumers == scenario.consumers,
+            None => true,
+        };
+        kind_allowed && consumer_matches
     }
 
     fn apply_overrides(&self, scenario: &mut RawRingScenarioSpec) {
@@ -554,12 +555,10 @@ mod tests {
         assert_eq!(selection.target_rate(), 20_000);
 
         let scenarios = selection.scenario_specs(BackendKind::Shm, 10_000_000);
-        assert_eq!(scenarios.len(), 2);
-        assert_eq!(scenarios[0].label, "message_1p1c_144B");
-        assert_eq!(scenarios[1].label, "message_1p2c_144B");
+        assert_eq!(scenarios.len(), 1);
+        assert_eq!(scenarios[0].label, "message_1p2c_144B");
         assert_eq!(scenarios[0].target_rate, 20_000);
-        assert_eq!(scenarios[1].target_rate, 20_000);
-        assert_eq!(scenarios[1].producer_role, "msg_multi_producer");
+        assert_eq!(scenarios[0].producer_role, "msg_multi_producer");
     }
 
     #[test]
@@ -595,14 +594,10 @@ mod tests {
         assert_eq!(selection.event_bytes(), 2048);
 
         let scenarios = selection.scenario_specs(BackendKind::Shm, 10_000_000);
-        // Should have 1p1c + 1p4c (consumer_filter=4 passes 1c and 4c)
-        assert_eq!(scenarios.len(), 2);
+        assert_eq!(scenarios.len(), 1);
         for scenario in &scenarios {
             assert_eq!(scenario.event_bytes, 2048);
-            assert_eq!(
-                scenario.label,
-                format!("message_1p{}c_2KB", scenario.consumers)
-            );
+            assert_eq!(scenario.label, "message_1p4c_2KB");
         }
         // 2048B => default_buffer_size(2048) = 2048
         assert_eq!(scenarios[0].buffer, pingpong::default_buffer_size(2048));

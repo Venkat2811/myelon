@@ -14,6 +14,7 @@
 use crate::cli::raw_ring::{RawRingScenarioSpec, RawRingSelection};
 use crate::infra::coordination::BenchmarkCoordination;
 use crate::infra::events::nanos_now;
+use crate::infra::events::BenchEvent;
 use crate::infra::latency::LatencyRecorder;
 use crate::infra::output::report::BackendKind;
 use crate::infra::output::reporting::{self, BenchReport};
@@ -76,26 +77,6 @@ fn attach_consumer_with_timeout<E: Copy + Default + 'static>(
 // Event types
 // ============================================================
 
-/// Message-class event: matches original `ipc_shm.rs` `BenchmarkEvent`.
-/// 144 bytes: 8 (id) + 8 (timestamp) + 128 (payload).
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct MessageEvent {
-    id: u64,
-    timestamp: u64,
-    payload: [u8; 128],
-}
-
-impl Default for MessageEvent {
-    fn default() -> Self {
-        Self {
-            id: 0,
-            timestamp: 0,
-            payload: [0u8; 128],
-        }
-    }
-}
-
 /// Signal-class event: cache-line aligned, 16 bytes of data.
 /// Head-to-head with Alvarez Rosa V5 (305M) and Intel (452M) articles.
 /// 64 bytes total (16 data + 48 padding from alignment).
@@ -110,17 +91,17 @@ struct SignalEvent {
 // Message-class: producer (matches original ipc_shm exactly)
 // ============================================================
 
-fn message_producer() -> Result<(), Box<dyn std::error::Error>> {
+fn message_producer_sized<const SIZE: usize>() -> Result<(), Box<dyn std::error::Error>> {
     let segment = infra::segment_from_env("BENCHMARK_SEGMENT_NAME");
     let target_rate = infra::read_env_u64("BENCH_TARGET_RATE", 0);
-    const BUFFER: usize = 1024;
-    const EVENTS: u64 = 100_000;
-    const WARMUP: u64 = 1_000;
+    let buffer = infra::read_env_usize("BENCH_BUFFER", 1024);
+    let events = infra::read_env_u64("BENCH_EVENTS", 100_000);
+    let warmup = infra::read_env_u64("BENCH_WARMUP", 1_000);
 
-    let mut producer = build_shared_single_producer::<MessageEvent>(&segment, BUFFER)
+    let mut producer = build_shared_single_producer::<BenchEvent<SIZE>>(&segment, buffer)
         .enable_discovery(1)
         .with_coordination(CoordinationMode::Immediate)
-        .build_producer(MessageEvent::default)?;
+        .build_producer(BenchEvent::<SIZE>::default)?;
 
     let coord = BenchmarkCoordination::create(&segment)?;
 
@@ -131,11 +112,11 @@ fn message_producer() -> Result<(), Box<dyn std::error::Error>> {
     warm_discovery_scans(|| producer.min_gating_sequence(), discovery_scan_rounds(1));
 
     // Warmup — full payload fill, matching original
-    for i in 0..WARMUP {
+    for i in 0..warmup {
         producer.publish(|event| {
-            event.id = i;
-            event.timestamp = 0;
-            event.payload = [(i % 256) as u8; 128];
+            event.sequence = i;
+            event.timestamp_ns = 0;
+            event.payload.fill((i % 256) as u8);
         });
     }
 
@@ -144,58 +125,68 @@ fn message_producer() -> Result<(), Box<dyn std::error::Error>> {
     if target_rate > 0 {
         let interval_ns = 1_000_000_000u64 / target_rate;
         let base_ns = nanos_now();
-        for i in 0..EVENTS {
+        for i in 0..events {
             let intended_ns = base_ns.saturating_add(i.saturating_mul(interval_ns));
             while nanos_now() < intended_ns {
                 std::hint::spin_loop();
             }
             producer.publish(|event| {
-                event.id = WARMUP + i;
-                event.timestamp = intended_ns;
-                event.payload = [((WARMUP + i) % 256) as u8; 128];
+                event.sequence = warmup + i;
+                event.timestamp_ns = intended_ns;
+                event.payload.fill(((warmup + i) % 256) as u8);
             });
         }
     } else {
-        for i in 0..EVENTS {
+        for i in 0..events {
             producer.publish(|event| {
-                event.id = WARMUP + i;
-                event.timestamp = nanos_now();
-                event.payload = [((WARMUP + i) % 256) as u8; 128];
+                event.sequence = warmup + i;
+                event.timestamp_ns = nanos_now();
+                event.payload.fill(((warmup + i) % 256) as u8);
             });
         }
     }
     let elapsed = start.elapsed();
 
-    let output =
-        infra::ProducerOutput::from_elapsed(EVENTS, elapsed, std::mem::size_of::<MessageEvent>());
+    let output = infra::ProducerOutput::from_elapsed(
+        events,
+        elapsed,
+        std::mem::size_of::<BenchEvent<SIZE>>(),
+    );
     println!("{}", serde_json::to_string(&output)?);
 
-    coord.signal_producer_done(EVENTS as i64);
+    coord.signal_producer_done(events as i64);
     coord.wait_for_consumers_done(1, Duration::from_secs(30));
     Ok(())
 }
 
-fn message_consumer() -> Result<(), Box<dyn std::error::Error>> {
+fn message_producer() -> Result<(), Box<dyn std::error::Error>> {
+    let event_bytes = infra::read_env_usize("BENCH_EVENT_SIZE", 144);
+    crate::dispatch_bench_event!(event_bytes, |<SIZE>| {
+        message_producer_sized::<SIZE>()
+    })
+}
+
+fn message_consumer_sized<const SIZE: usize>() -> Result<(), Box<dyn std::error::Error>> {
     let segment = infra::segment_from_env("BENCHMARK_SEGMENT_NAME");
     let consumer_id = infra::read_env_usize("BENCH_CONSUMER_ID", 0);
-    const BUFFER: usize = 1024;
-    const WARMUP: u64 = 1_000;
+    let buffer = infra::read_env_usize("BENCH_BUFFER", 1024);
+    let warmup_target = infra::read_env_u64("BENCH_WARMUP", 1_000);
 
     let coord = BenchmarkCoordination::attach_with_timeout(&segment, Duration::from_secs(30))?;
 
     let config = SharedMemoryConfig {
         name: segment.clone(),
-        buffer_size: BUFFER,
-        element_size: std::mem::size_of::<MessageEvent>(),
+        buffer_size: buffer,
+        element_size: std::mem::size_of::<BenchEvent<SIZE>>(),
         create: false,
     };
-    let mut consumer = SharedDisruptorBuilder::<MessageEvent>::new(config).build_consumer()?;
+    let mut consumer = SharedDisruptorBuilder::<BenchEvent<SIZE>>::new(config).build_consumer()?;
     coord.signal_consumer_ready();
 
     // Warmup
     let warmup_deadline = infra::spin_deadline();
     let mut warmup = 0u64;
-    while warmup < WARMUP {
+    while warmup < warmup_target {
         let before = warmup;
         consumer.process_available(|_e, _s| {
             warmup += 1;
@@ -216,9 +207,9 @@ fn message_consumer() -> Result<(), Box<dyn std::error::Error>> {
         let before = consumed;
         consumer.process_available(|event, _seq| {
             consumed += 1;
-            checksum = checksum.wrapping_add(event.id);
-            if event.timestamp > 0 {
-                latency.record_delta(event.timestamp, nanos_now());
+            checksum = checksum.wrapping_add(event.sequence);
+            if event.timestamp_ns > 0 {
+                latency.record_delta(event.timestamp_ns, nanos_now());
             }
         });
         if coord.is_producer_done() && consumed >= coord.events_produced() as u64 {
@@ -236,7 +227,7 @@ fn message_consumer() -> Result<(), Box<dyn std::error::Error>> {
             consumer_id,
             consumed,
             elapsed,
-            std::mem::size_of::<MessageEvent>(),
+            std::mem::size_of::<BenchEvent<SIZE>>(),
             checksum,
         )
         .with_latency(stats)
@@ -245,13 +236,20 @@ fn message_consumer() -> Result<(), Box<dyn std::error::Error>> {
             consumer_id,
             consumed,
             elapsed,
-            std::mem::size_of::<MessageEvent>(),
+            std::mem::size_of::<BenchEvent<SIZE>>(),
             checksum,
         )
     };
     println!("{}", serde_json::to_string(&output)?);
     coord.signal_consumer_done(consumed as i64);
     Ok(())
+}
+
+fn message_consumer() -> Result<(), Box<dyn std::error::Error>> {
+    let event_bytes = infra::read_env_usize("BENCH_EVENT_SIZE", 144);
+    crate::dispatch_bench_event!(event_bytes, |<SIZE>| {
+        message_consumer_sized::<SIZE>()
+    })
 }
 
 // ============================================================
@@ -496,7 +494,7 @@ fn multi_signal_consumer() -> Result<(), Box<dyn std::error::Error>> {
 // Multi-consumer message class (1p3c, 1p8c, 1p12c)
 // ============================================================
 
-fn multi_message_producer() -> Result<(), Box<dyn std::error::Error>> {
+fn multi_message_producer_sized<const SIZE: usize>() -> Result<(), Box<dyn std::error::Error>> {
     let segment = infra::segment_from_env("BENCHMARK_SEGMENT_NAME");
     let num_consumers = infra::read_env_usize("BENCH_NUM_CONSUMERS", 3);
     let buffer = infra::read_env_usize("BENCH_BUFFER", 4096);
@@ -504,14 +502,14 @@ fn multi_message_producer() -> Result<(), Box<dyn std::error::Error>> {
     let warmup = infra::read_env_u64("BENCH_WARMUP", 1_000);
     let target_rate = infra::read_env_u64("BENCH_TARGET_RATE", 0);
 
-    let mut producer = build_shared_single_producer::<MessageEvent>(&segment, buffer)
+    let mut producer = build_shared_single_producer::<BenchEvent<SIZE>>(&segment, buffer)
         .discover_consumer_with_prefix_and_interval(
             num_consumers,
             MULTI_CONSUMER_PREFIX,
             DISCOVERY_SCAN_SLEEP,
         )
         .wait_for_consumers(num_consumers as i64, Duration::from_secs(60))
-        .build_producer(MessageEvent::default)?;
+        .build_producer(BenchEvent::<SIZE>::default)?;
 
     // Warmup discovery scans — more iterations for more consumers
     warm_discovery_scans(
@@ -521,9 +519,9 @@ fn multi_message_producer() -> Result<(), Box<dyn std::error::Error>> {
 
     for i in 0..warmup {
         producer.publish(|event| {
-            event.id = i;
-            event.timestamp = 0;
-            event.payload = [(i % 256) as u8; 128];
+            event.sequence = i;
+            event.timestamp_ns = 0;
+            event.payload.fill((i % 256) as u8);
         });
     }
 
@@ -537,24 +535,27 @@ fn multi_message_producer() -> Result<(), Box<dyn std::error::Error>> {
                 std::hint::spin_loop();
             }
             producer.publish(|event| {
-                event.id = warmup + i;
-                event.timestamp = intended_ns;
-                event.payload = [((warmup + i) % 256) as u8; 128];
+                event.sequence = warmup + i;
+                event.timestamp_ns = intended_ns;
+                event.payload.fill(((warmup + i) % 256) as u8);
             });
         }
     } else {
         for i in 0..events {
             producer.publish(|event| {
-                event.id = warmup + i;
-                event.timestamp = nanos_now();
-                event.payload = [((warmup + i) % 256) as u8; 128];
+                event.sequence = warmup + i;
+                event.timestamp_ns = nanos_now();
+                event.payload.fill(((warmup + i) % 256) as u8);
             });
         }
     }
     let elapsed = start.elapsed();
 
-    let output =
-        infra::ProducerOutput::from_elapsed(events, elapsed, std::mem::size_of::<MessageEvent>());
+    let output = infra::ProducerOutput::from_elapsed(
+        events,
+        elapsed,
+        std::mem::size_of::<BenchEvent<SIZE>>(),
+    );
     println!("{}", serde_json::to_string(&output)?);
 
     let last_seq = (warmup + events - 1) as i64;
@@ -566,7 +567,14 @@ fn multi_message_producer() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn multi_message_consumer() -> Result<(), Box<dyn std::error::Error>> {
+fn multi_message_producer() -> Result<(), Box<dyn std::error::Error>> {
+    let event_bytes = infra::read_env_usize("BENCH_EVENT_SIZE", 144);
+    crate::dispatch_bench_event!(event_bytes, |<SIZE>| {
+        multi_message_producer_sized::<SIZE>()
+    })
+}
+
+fn multi_message_consumer_sized<const SIZE: usize>() -> Result<(), Box<dyn std::error::Error>> {
     let segment = infra::segment_from_env("BENCHMARK_SEGMENT_NAME");
     let consumer_id = infra::read_env_usize("BENCH_CONSUMER_ID", 0);
     let buffer = infra::read_env_usize("BENCH_BUFFER", 4096);
@@ -575,7 +583,7 @@ fn multi_message_consumer() -> Result<(), Box<dyn std::error::Error>> {
     let record_latency = infra::read_env_usize("BENCH_RECORD_LATENCY", 0) == 1;
 
     let consumer_name = multi_consumer_id(consumer_id);
-    let mut consumer = attach_consumer_with_timeout::<MessageEvent>(
+    let mut consumer = attach_consumer_with_timeout::<BenchEvent<SIZE>>(
         &segment,
         buffer,
         &consumer_name,
@@ -596,17 +604,17 @@ fn multi_message_consumer() -> Result<(), Box<dyn std::error::Error>> {
     loop {
         let before_progress = warmup_count + consumed;
         consumer.process_available(|event, _seq| {
-            if event.id < warmup {
+            if event.sequence < warmup {
                 warmup_count += 1;
             } else {
                 if start.is_none() {
                     start = Some(Instant::now());
                 }
                 consumed += 1;
-                checksum = checksum.wrapping_add(event.id);
+                checksum = checksum.wrapping_add(event.sequence);
                 if let Some(ref mut lat) = latency {
-                    if event.timestamp > 0 {
-                        lat.record_delta(event.timestamp, nanos_now());
+                    if event.timestamp_ns > 0 {
+                        lat.record_delta(event.timestamp_ns, nanos_now());
                     }
                 }
             }
@@ -629,12 +637,12 @@ fn multi_message_consumer() -> Result<(), Box<dyn std::error::Error>> {
     while consumed < events {
         let before = consumed;
         consumer.process_available(|event, _seq| {
-            if event.id >= warmup {
+            if event.sequence >= warmup {
                 consumed += 1;
-                checksum = checksum.wrapping_add(event.id);
+                checksum = checksum.wrapping_add(event.sequence);
                 if let Some(ref mut lat) = latency {
-                    if event.timestamp > 0 {
-                        lat.record_delta(event.timestamp, nanos_now());
+                    if event.timestamp_ns > 0 {
+                        lat.record_delta(event.timestamp_ns, nanos_now());
                     }
                 }
             }
@@ -655,7 +663,7 @@ fn multi_message_consumer() -> Result<(), Box<dyn std::error::Error>> {
             consumer_id,
             consumed,
             elapsed,
-            std::mem::size_of::<MessageEvent>(),
+            std::mem::size_of::<BenchEvent<SIZE>>(),
             checksum,
         )
         .with_latency(stats)
@@ -664,12 +672,19 @@ fn multi_message_consumer() -> Result<(), Box<dyn std::error::Error>> {
             consumer_id,
             consumed,
             elapsed,
-            std::mem::size_of::<MessageEvent>(),
+            std::mem::size_of::<BenchEvent<SIZE>>(),
             checksum,
         )
     };
     println!("{}", serde_json::to_string(&output)?);
     Ok(())
+}
+
+fn multi_message_consumer() -> Result<(), Box<dyn std::error::Error>> {
+    let event_bytes = infra::read_env_usize("BENCH_EVENT_SIZE", 144);
+    crate::dispatch_bench_event!(event_bytes, |<SIZE>| {
+        multi_message_consumer_sized::<SIZE>()
+    })
 }
 
 // ============================================================
@@ -767,6 +782,7 @@ impl IpcBenchmark for Scenario {
         let mut envs: Vec<(&str, String)> = vec![
             ("BENCHMARK_SEGMENT_NAME", segment.clone()),
             ("BENCH_NUM_CONSUMERS", self.consumers.to_string()),
+            ("BENCH_EVENT_SIZE", self.event_bytes.to_string()),
             ("BENCH_BUFFER", self.buffer.to_string()),
             ("BENCH_EVENTS", self.events.to_string()),
             ("BENCH_WARMUP", self.warmup.to_string()),
@@ -849,9 +865,10 @@ impl infra::BenchHarness for RawMyelonShmBench {
                 }
             }
             if selection.run_message() {
+                let eb = selection.event_bytes();
                 println!(
-                    "Message class: {}B event, full 128B payload fill + timestamp",
-                    std::mem::size_of::<MessageEvent>()
+                    "Message class: {eb}B event, full {}B payload fill + timestamp",
+                    eb.saturating_sub(16),
                 );
             }
             if selection.run_signal() {
@@ -884,10 +901,24 @@ impl infra::BenchHarness for RawMyelonShmBench {
 
 impl Scenario {
     fn from_spec(spec: &RawRingScenarioSpec) -> Self {
+        let (producer_role, consumer_role) = match (spec.kind, spec.consumers > 1) {
+            (crate::cli::raw_ring::RawRingScenarioKind::Message, true) => {
+                ("my_msg_multi_producer", "my_msg_multi_consumer")
+            }
+            (crate::cli::raw_ring::RawRingScenarioKind::Message, false) => {
+                ("my_msg_producer", "my_msg_consumer")
+            }
+            (crate::cli::raw_ring::RawRingScenarioKind::Signal, true) => {
+                ("my_sig_multi_producer", "my_sig_multi_consumer")
+            }
+            (crate::cli::raw_ring::RawRingScenarioKind::Signal, false) => {
+                ("my_sig_producer", "my_sig_consumer")
+            }
+        };
         Self {
             label: spec.label.clone(),
-            producer_role: spec.producer_role,
-            consumer_role: spec.consumer_role,
+            producer_role,
+            consumer_role,
             event_bytes: spec.event_bytes,
             events: spec.events,
             buffer: spec.buffer,

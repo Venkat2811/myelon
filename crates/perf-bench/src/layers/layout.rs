@@ -24,6 +24,14 @@ static NEXT_LAYOUT_ID: AtomicU64 = AtomicU64::new(0);
 type Event = BenchEvent<128>;
 type Frame = FixedFrame<{ 64 * 1024 - 12 }>;
 
+fn layout_iterations() -> usize {
+    std::env::var("PERF_BENCH_LAYOUT_ITERATIONS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(ITERATIONS)
+}
+
 fn measure_avg_ns<F: FnMut()>(mut f: F, iterations: usize) -> u64 {
     let start = Instant::now();
     for _ in 0..iterations {
@@ -65,6 +73,7 @@ pub fn run_main() {
     let _log = crate::infra::output::log::BenchLog::default_capacity("layout_validation");
     let mut all_pass = true;
     let mut targets: Vec<LayoutTargetMeasurement> = Vec::new();
+    let iterations = layout_iterations();
 
     macro_rules! record {
         ($spec:expr, $avg:expr) => {{
@@ -86,7 +95,7 @@ pub fn run_main() {
                     .build_producer(Event::default)
                     .expect("create shm ring");
             },
-            ITERATIONS,
+            iterations,
         );
 
         record!(layout::SHM_RING_PRODUCER_CREATE, avg_ns);
@@ -107,7 +116,7 @@ pub fn run_main() {
                     .build_consumer()
                     .expect("attach");
             },
-            ITERATIONS,
+            iterations,
         );
 
         record!(layout::SHM_RING_ATTACH, avg_ns);
@@ -122,7 +131,7 @@ pub fn run_main() {
             || {
                 let _attached = SharedCursor::attach(&name).expect("attach shm cursor");
             },
-            ITERATIONS,
+            iterations,
         );
 
         record!(layout::SHM_CURSOR_ATTACH, avg_ns);
@@ -139,7 +148,7 @@ pub fn run_main() {
                 }
                 let _ = std::fs::remove_dir_all(&root);
             },
-            ITERATIONS,
+            iterations,
         );
 
         record!(layout::MMAP_RING_PRODUCER_CREATE, avg_ns);
@@ -159,7 +168,7 @@ pub fn run_main() {
                 let _consumer =
                     MmapConsumer::<Event>::attach(layout.clone(), 1024, &cid).expect("attach mmap");
             },
-            ITERATIONS,
+            iterations,
         );
 
         record!(layout::MMAP_RING_ATTACH, avg_ns);
@@ -180,7 +189,7 @@ pub fn run_main() {
                 let _attached = MmapCursor::attach(layout.readiness_cursor_config(false))
                     .expect("attach mmap cursor");
             },
-            ITERATIONS,
+            iterations,
         );
 
         record!(layout::MMAP_CURSOR_ATTACH, avg_ns);
@@ -196,7 +205,7 @@ pub fn run_main() {
                 let _producer = FramedTransportProducer::<Frame>::create(&segment, 64)
                     .expect("create framed shm producer");
             },
-            ITERATIONS,
+            iterations,
         );
 
         record!(layout::FRAMED_SHM_PRODUCER_CREATE, avg_ns);
@@ -217,7 +226,7 @@ pub fn run_main() {
                 )
                 .expect("attach framed");
             },
-            ITERATIONS,
+            iterations,
         );
 
         record!(layout::FRAMED_SHM_CONSUMER_ATTACH, avg_ns);
@@ -234,7 +243,7 @@ pub fn run_main() {
                 }
                 let _ = std::fs::remove_dir_all(&root);
             },
-            ITERATIONS,
+            iterations,
         );
 
         record!(layout::FRAMED_MMAP_PRODUCER_CREATE, avg_ns);
@@ -257,7 +266,7 @@ pub fn run_main() {
                 )
                 .expect("attach framed mmap");
             },
-            ITERATIONS,
+            iterations,
         );
 
         record!(layout::FRAMED_MMAP_CONSUMER_ATTACH, avg_ns);
@@ -273,7 +282,7 @@ pub fn run_main() {
                 let _producer = TypedProducer::<Frame>::create(&segment, 64)
                     .expect("create typed shm producer");
             },
-            ITERATIONS,
+            iterations,
         );
 
         record!(layout::TYPED_SHM_PRODUCER_CREATE, avg_ns);
@@ -291,7 +300,7 @@ pub fn run_main() {
                     TypedConsumer::<Frame>::attach(&segment, 64, MyelonWaitStrategy::BusySpin)
                         .expect("attach typed shm");
             },
-            ITERATIONS,
+            iterations,
         );
 
         record!(layout::TYPED_SHM_CONSUMER_ATTACH, avg_ns);
@@ -308,7 +317,7 @@ pub fn run_main() {
                 }
                 let _ = std::fs::remove_dir_all(&root);
             },
-            ITERATIONS,
+            iterations,
         );
 
         record!(layout::TYPED_MMAP_PRODUCER_CREATE, avg_ns);
@@ -331,7 +340,7 @@ pub fn run_main() {
                 )
                 .expect("attach typed mmap");
             },
-            ITERATIONS,
+            iterations,
         );
 
         record!(layout::TYPED_MMAP_CONSUMER_ATTACH, avg_ns);
@@ -340,7 +349,7 @@ pub fn run_main() {
     }
 
     let report =
-        report::ReportBundle::from_layout_targets("layout_validation", ITERATIONS, &targets);
+        report::ReportBundle::from_layout_targets("layout_validation", iterations, &targets);
     report::emit_report(
         &report,
         &output_args,

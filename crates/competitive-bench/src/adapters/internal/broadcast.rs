@@ -170,6 +170,23 @@ fn debug_enabled() -> bool {
     std::env::var("COMP_BENCH_DEBUG").ok().as_deref() == Some("1")
 }
 
+fn env_duration_ms(key: &str, default: Duration) -> Duration {
+    std::env::var(key)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .map(Duration::from_millis)
+        .unwrap_or(default)
+}
+
+fn attach_timeout() -> Duration {
+    env_duration_ms("COMP_BENCH_ATTACH_TIMEOUT_MS", ATTACH_TIMEOUT)
+}
+
+fn coordination_timeout() -> Duration {
+    env_duration_ms("COMP_BENCH_COORD_TIMEOUT_MS", COORD_TIMEOUT)
+}
+
 fn append_debug_line(message: &str) {
     use std::io::Write;
 
@@ -383,7 +400,7 @@ fn attach_shm_consumer<const SIZE: usize>(
     buffer_size: usize,
     consumer_id: &str,
 ) -> Result<SharedConsumer<BenchmarkEvent<SIZE>>, Box<dyn std::error::Error>> {
-    let deadline = Instant::now() + ATTACH_TIMEOUT;
+    let deadline = Instant::now() + attach_timeout();
     loop {
         let attempt = match adapter {
             AdapterKind::DisruptorShm => {
@@ -445,7 +462,7 @@ fn run_controller_shm<const SIZE: usize>(
     let mut producer = build_shm_producer::<SIZE>(adapter, &segment, buffer_size)?;
     debug_log!("shm controller: producer built segment={segment} buffer={buffer_size}");
 
-    if !coord.wait_for_consumers(args.consumers, COORD_TIMEOUT) {
+    if !coord.wait_for_consumers(args.consumers, coordination_timeout()) {
         return Err("timeout waiting for broadcast coordination consumers".into());
     }
     debug_log!(
@@ -455,7 +472,7 @@ fn run_controller_shm<const SIZE: usize>(
     let consumer_names: Vec<String> = (0..args.consumers)
         .map(|consumer_id| format!("{CONSUMER_PREFIX}_{consumer_id}"))
         .collect();
-    let deadline = Instant::now() + COORD_TIMEOUT;
+    let deadline = Instant::now() + coordination_timeout();
     let mut discovered = vec![false; consumer_names.len()];
     while discovered.iter().any(|ready| !ready) {
         for (idx, consumer_name) in consumer_names.iter().enumerate() {
@@ -495,7 +512,7 @@ fn run_controller_shm<const SIZE: usize>(
         args.num_messages
     );
 
-    if !coord.wait_for_consumers_done(args.consumers, COORD_TIMEOUT) {
+    if !coord.wait_for_consumers_done(args.consumers, coordination_timeout()) {
         return Err("timeout waiting for broadcast consumers to finish".into());
     }
     debug_log!("shm controller: all consumers done");
@@ -539,12 +556,12 @@ fn run_controller_mmap<const SIZE: usize>(
             buffer_size,
             BenchmarkEvent::default,
         )?;
-        if !producer.wait_for_consumers_ready(args.consumers as i64, COORD_TIMEOUT) {
+        if !producer.wait_for_consumers_ready(args.consumers as i64, coordination_timeout()) {
             return Err::<(), Box<dyn std::error::Error>>(
                 "timeout waiting for mmap broadcast consumers".into(),
             );
         }
-        if !coord.wait_for_consumers(args.consumers, COORD_TIMEOUT) {
+        if !coord.wait_for_consumers(args.consumers, coordination_timeout()) {
             return Err::<(), Box<dyn std::error::Error>>(
                 "timeout waiting for mmap coordination consumers".into(),
             );
@@ -565,7 +582,7 @@ fn run_controller_mmap<const SIZE: usize>(
         );
         coord.signal_producer_done(args.num_messages as i64);
 
-        if !coord.wait_for_consumers_done(args.consumers, COORD_TIMEOUT) {
+        if !coord.wait_for_consumers_done(args.consumers, coordination_timeout()) {
             return Err::<(), Box<dyn std::error::Error>>(
                 "timeout waiting for mmap broadcast consumers to finish".into(),
             );
@@ -610,7 +627,7 @@ fn consumer<const SIZE: usize>(
     });
     let coord = BenchmarkCoordination::attach_with_timeout(
         &coordination_prefix(&args.base),
-        COORD_TIMEOUT,
+        coordination_timeout(),
     )?;
 
     let stats = if adapter.is_shm() {
@@ -692,7 +709,7 @@ fn consume_mmap<const SIZE: usize>(
     let root = mmap_root(&args.base);
     let layout = MmapTransportLayout::new(root, mmap_segment(&args.base))?;
     let consumer_name = format!("{CONSUMER_PREFIX}_{consumer_id}");
-    let deadline = Instant::now() + ATTACH_TIMEOUT;
+    let deadline = Instant::now() + attach_timeout();
     let mut consumer = loop {
         match MmapConsumer::<BenchmarkEvent<SIZE>>::attach(
             layout.clone(),
