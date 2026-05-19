@@ -203,6 +203,8 @@ make -C crates/perf-bench super-tiny
 - `simple-smoke`
   - exact-size sanity lane
   - signal + raw ping-pong + raw broadcast
+  - raw ping-pong starts at `64B` total event size because the ping-pong event layout carries a `64B` structural header
+  - raw broadcast `--size` is the logical event request; reports expose the physical aligned slot bytes separately when `32B` or `144B` round up
 - `super-tiny`
   - broader OSS/CI gate
   - `100` warmup + `1000` measured messages/events where the scenario family exposes explicit warmup/message-count controls

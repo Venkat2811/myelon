@@ -14,6 +14,8 @@ pub mod launch;
 pub mod naming;
 pub mod output;
 pub mod process;
+pub mod signal_counters;
+pub mod signal_latency;
 
 // Re-export commonly used types
 pub use bench::{BenchHarness, IpcBenchmark, ScenarioChildren};

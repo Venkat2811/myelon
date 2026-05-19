@@ -41,10 +41,121 @@ impl PingPongBackend {
     }
 }
 
+pub const PINGPONG_HEADER_BYTES: usize = 64;
+pub const SUPPORTED_MESSAGE_SIZES_DISPLAY: &str =
+    "64, 128, 512, 1024, 2048, 4096, 16384, 32768, 65536, 131072, 524288, 1048576, 2097152, 8388608, 16777216, 33554432, 67108864";
+
+pub const fn payload_bytes_for_message_size(message_size: usize) -> Option<usize> {
+    match message_size {
+        64 => Some(0),
+        128 => Some(64),
+        512 => Some(448),
+        1024 => Some(960),
+        2048 => Some(1984),
+        4096 => Some(4032),
+        16384 => Some(16320),
+        32768 => Some(32704),
+        65536 => Some(65472),
+        131072 => Some(131008),
+        524288 => Some(524224),
+        1048576 => Some(1048512),
+        2097152 => Some(2097088),
+        8388608 => Some(8388544),
+        16777216 => Some(16777152),
+        33554432 => Some(33554368),
+        67108864 => Some(67108800),
+        _ => None,
+    }
+}
+
+pub fn supported_message_size_error(message_size: usize) -> String {
+    format!(
+        "unsupported message size: {} (expected {})",
+        message_size, SUPPORTED_MESSAGE_SIZES_DISPLAY
+    )
+}
+
+#[macro_export]
+macro_rules! dispatch_pingpong_event {
+    ($message_size:expr, |<$N:ident>| $body:expr) => {
+        match $message_size {
+            64 => {
+                const $N: usize = 0;
+                $body
+            }
+            128 => {
+                const $N: usize = 64;
+                $body
+            }
+            512 => {
+                const $N: usize = 448;
+                $body
+            }
+            1024 => {
+                const $N: usize = 960;
+                $body
+            }
+            2048 => {
+                const $N: usize = 1984;
+                $body
+            }
+            4096 => {
+                const $N: usize = 4032;
+                $body
+            }
+            16384 => {
+                const $N: usize = 16320;
+                $body
+            }
+            32768 => {
+                const $N: usize = 32704;
+                $body
+            }
+            65536 => {
+                const $N: usize = 65472;
+                $body
+            }
+            131072 => {
+                const $N: usize = 131008;
+                $body
+            }
+            524288 => {
+                const $N: usize = 524224;
+                $body
+            }
+            1048576 => {
+                const $N: usize = 1048512;
+                $body
+            }
+            2097152 => {
+                const $N: usize = 2097088;
+                $body
+            }
+            8388608 => {
+                const $N: usize = 8388544;
+                $body
+            }
+            16777216 => {
+                const $N: usize = 16777152;
+                $body
+            }
+            33554432 => {
+                const $N: usize = 33554368;
+                $body
+            }
+            67108864 => {
+                const $N: usize = 67108800;
+                $body
+            }
+            _ => Err($crate::cli::pingpong::supported_message_size_error($message_size).into()),
+        }
+    };
+}
+
 #[derive(Parser, Debug, Clone)]
 #[command(author, version, about, long_about = None)]
 pub struct PingPongArgs {
-    /// Message size in bytes
+    /// Total event size in bytes (includes the 64B ping-pong header)
     #[arg(short = 's', long, default_value = "64")]
     pub message_size: usize,
 
@@ -221,7 +332,8 @@ pub fn build_report(
             .with_zero_copy(false)
             .with_framing("none"),
         message_size_bytes: args.message_size,
-        payload_bytes: args.message_size,
+        payload_bytes: payload_bytes_for_message_size(args.message_size)
+            .unwrap_or(args.message_size.saturating_sub(PINGPONG_HEADER_BYTES)),
         buffer_depth: buffer_size,
         num_messages: args.num_messages,
         warmup_messages: args.warmup,
@@ -315,6 +427,9 @@ pub fn validate_args(args: &PingPongArgs) -> Result<(), String> {
     if args.consumers == 0 {
         return Err("--consumers must be greater than zero".into());
     }
+    if payload_bytes_for_message_size(args.message_size).is_none() {
+        return Err(supported_message_size_error(args.message_size));
+    }
     Ok(())
 }
 
@@ -371,12 +486,27 @@ mod tests {
             validate_args(&args).unwrap_err(),
             "--batch-size must be greater than zero"
         );
+
+        let args = PingPongArgs::parse_from(["bench", "--message-size", "32"]);
+        assert_eq!(
+            validate_args(&args).unwrap_err(),
+            supported_message_size_error(32)
+        );
     }
 
     #[test]
     fn scenario_label_tracks_size_and_consumers() {
         let args = PingPongArgs::parse_from(["bench", "--consumers", "4", "-s", "65536"]);
         assert_eq!(scenario_label(&args), "pingpong_1p4c_64KB");
+    }
+
+    #[test]
+    fn payload_size_contract_uses_total_event_bytes() {
+        assert_eq!(payload_bytes_for_message_size(64), Some(0));
+        assert_eq!(payload_bytes_for_message_size(128), Some(64));
+        assert_eq!(payload_bytes_for_message_size(1024), Some(960));
+        assert_eq!(payload_bytes_for_message_size(4096), Some(4032));
+        assert_eq!(payload_bytes_for_message_size(32), None);
     }
 
     #[test]

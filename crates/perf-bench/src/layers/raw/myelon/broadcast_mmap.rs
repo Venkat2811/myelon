@@ -4,14 +4,16 @@
 //! The point: prove myelon re-export has identical perf to raw disruptor.
 //!
 //! Two benchmark classes (matching `raw_myelon_shm` exactly):
-//!   --class message  : 144B event, full 128B payload fill + timestamp
+//!   --class message  : 144B logical event request, 192B physical slot, full 128B payload fill + timestamp
 //!   --class signal   : 64B event, 16B data only
 //!   (default)        : runs both
 //!
 //! Run:   cargo bench -p perf-bench --bench `raw_myelon_mmap`
 //! Signal only: cargo bench -p perf-bench --bench `raw_myelon_mmap` -- --class signal
 
-use crate::cli::raw_ring::{RawRingScenarioSpec, RawRingSelection};
+use crate::cli::raw_ring::{
+    aligned_slot_bytes, raw_payload_bytes, RawRingScenarioSpec, RawRingSelection,
+};
 use crate::infra::events::nanos_now;
 use crate::infra::events::BenchEvent;
 use crate::infra::latency::LatencyRecorder;
@@ -642,7 +644,11 @@ impl IpcBenchmark for Scenario {
     }
 
     fn message_size_bytes(&self) -> usize {
-        self.event_bytes
+        aligned_slot_bytes(self.event_bytes)
+    }
+
+    fn payload_bytes(&self) -> usize {
+        raw_payload_bytes(self.event_bytes)
     }
 
     fn buffer_depth(&self) -> usize {
@@ -789,9 +795,10 @@ impl infra::BenchHarness for RawMyelonMmapBench {
             }
             if selection.run_message() {
                 let eb = selection.event_bytes();
+                let slot = aligned_slot_bytes(eb);
+                let payload = raw_payload_bytes(eb);
                 println!(
-                    "Message class: {eb}B event, full {}B payload fill + timestamp",
-                    eb.saturating_sub(16),
+                    "Message class: request {eb}B, physical slot {slot}B, full {payload}B payload fill + timestamp",
                 );
             }
             if selection.run_signal() {

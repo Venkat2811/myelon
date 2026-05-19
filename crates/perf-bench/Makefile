@@ -47,7 +47,8 @@ SIMPLE_BC_CONSUMERS = 4
 # ============================================================
 # Tier -1: simple-smoke (~30-60s)
 # Exact-size sanity lane for code paths that honor the explicit size ladder.
-# Sizes: 32B, 64B, 128B, 1KB, 2KB, 4KB | Consumers: 1 (pp), 4 (bc)
+# Raw ping-pong sizes: 64B, 128B, 1KB, 2KB, 4KB (64B event header minimum)
+# Raw broadcast sizes: 32B, 64B, 128B, 1KB, 2KB, 4KB | Consumers: 1 (pp), 4 (bc)
 # ============================================================
 simple-smoke:
 	@echo "=== SIMPLE-SMOKE (signal + exact-size raw lanes, ~30-60s) ==="
@@ -55,7 +56,7 @@ simple-smoke:
 	$(SG) --backend shm --consumers 1 --events $(SIMPLE_SIGNAL_EVENTS) --tree
 	$(SG) --backend mmap --consumers 1 --events $(SIMPLE_SIGNAL_EVENTS) --tree
 	@# Pingpong: raw_ring + raw_myelon × {shm,mmap} × exact sizes × {throughput,CO}
-	@for sz in 32 64 128 1024 2048 4096; do \
+	@for sz in 64 128 1024 2048 4096; do \
 		for layer in raw_ring raw_myelon; do \
 			$(PP) --layer $$layer --backend shm  --size $$sz -n $(SIMPLE_MSGS) -w $(SIMPLE_WARMUP) --tree; \
 			$(PP) --layer $$layer --backend mmap --size $$sz -n $(SIMPLE_MSGS) -w $(SIMPLE_WARMUP) --tree; \
@@ -82,8 +83,8 @@ super-tiny:
 	@# Signal
 	$(SG) --backend shm --consumers 1 --events $(SIMPLE_MSGS)
 	$(SG) --backend mmap --consumers 1 --events $(SIMPLE_MSGS)
-	@# Exact-size raw ping-pong
-	@for sz in 32 64 128 1024 2048 4096; do \
+	@# Exact-size raw ping-pong (minimum honest total slot size is 64B)
+	@for sz in 64 128 1024 2048 4096; do \
 		for layer in raw_ring raw_myelon; do \
 			$(PP) --layer $$layer --backend shm  --size $$sz -n $(SIMPLE_MSGS) -w $(SIMPLE_WARMUP); \
 			$(PP) --layer $$layer --backend mmap --size $$sz -n $(SIMPLE_MSGS) -w $(SIMPLE_WARMUP); \
@@ -177,15 +178,15 @@ quick:
 # ============================================================
 # Tier 1: smoke (~5-10 min)
 # Same layers as quick but 4 sizes
-# Sizes: 32B, 64B, 1KB, 4KB | Wait: busyspin
+# Raw ping-pong sizes: 64B, 1KB, 4KB | Wait: busyspin
 # ============================================================
 smoke:
-	@echo "=== SMOKE (endpoints, 32B-4KB, ~5-10 min) ==="
+	@echo "=== SMOKE (endpoints, 64B-4KB raw ping-pong, ~5-10 min) ==="
 	@# Signal
 	$(SG) --backend shm --consumers 1 --events 1000000 --tree
 	$(SG) --backend mmap --consumers 1 --events 1000000 --tree
 	@# Pingpong: raw_ring + raw_myelon × {shm,mmap} × 4 sizes × {throughput,CO}
-	@for sz in 32 64 1024 4096; do \
+	@for sz in 64 1024 4096; do \
 		for layer in raw_ring raw_myelon; do \
 			$(PP) --layer $$layer --backend shm  --size $$sz -n $(CORE_MSGS) -w $(CORE_WARMUP) --tree; \
 			$(PP) --layer $$layer --backend mmap --size $$sz -n $(CORE_MSGS) -w $(CORE_WARMUP) --tree; \
@@ -204,7 +205,7 @@ smoke:
 	@echo ""
 	@echo "=== SMOKE: release profile (baseline comparison) ==="
 	$(SG_REL) --backend shm --consumers 1 --events 1000000 --tree
-	@for sz in 32 64 1024 4096; do \
+	@for sz in 64 1024 4096; do \
 		$(PP_REL) --layer raw_ring --backend shm --size $$sz -n $(CORE_MSGS) -w $(CORE_WARMUP) --tree; \
 	done
 	$(PP_REL) --layer typed_zc --backend shm --codec rkyv -n $(CORE_MSGS) -w $(CORE_WARMUP) --tree

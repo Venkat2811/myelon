@@ -3,6 +3,43 @@ use crate::infra::output::reporting::ReportOutputArgs;
 
 use super::pingpong;
 
+pub const RAW_EVENT_HEADER_BYTES: usize = 16;
+pub const RAW_EVENT_SLOT_ALIGNMENT_BYTES: usize = 64;
+
+pub const fn raw_payload_bytes(event_bytes: usize) -> usize {
+    event_bytes.saturating_sub(RAW_EVENT_HEADER_BYTES)
+}
+
+pub const fn aligned_slot_bytes(event_bytes: usize) -> usize {
+    if event_bytes == 0 {
+        return 0;
+    }
+    let rem = event_bytes % RAW_EVENT_SLOT_ALIGNMENT_BYTES;
+    if rem == 0 {
+        event_bytes
+    } else {
+        event_bytes + (RAW_EVENT_SLOT_ALIGNMENT_BYTES - rem)
+    }
+}
+
+pub fn message_label(consumers: usize, event_bytes: usize) -> String {
+    let slot_bytes = aligned_slot_bytes(event_bytes);
+    if slot_bytes == event_bytes {
+        format!(
+            "message_1p{}c_{}",
+            consumers,
+            pingpong::human_size(event_bytes)
+        )
+    } else {
+        format!(
+            "message_1p{}c_{}req_{}slot",
+            consumers,
+            pingpong::human_size(event_bytes),
+            pingpong::human_size(slot_bytes)
+        )
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RawRingClass {
     All,
@@ -48,6 +85,7 @@ pub struct RawRingSelection {
     num_messages_override: Option<u64>,
     warmup_override: Option<u64>,
     size_override: Option<usize>,
+    buffer_override: Option<usize>,
     pub output_args: ReportOutputArgs,
 }
 
@@ -110,6 +148,14 @@ impl RawRingSelection {
                     .map_err(|error| format!("invalid --size value {value}: {error}"))
             })
             .transpose()?;
+        let buffer_override = find_arg_value(args, "--buffer-size")
+            .or_else(|| find_arg_value(args, "--buffer"))
+            .map(|value| {
+                value
+                    .parse::<usize>()
+                    .map_err(|error| format!("invalid --buffer-size value {value}: {error}"))
+            })
+            .transpose()?;
 
         if mode == RawRingMode::Co && target_rate.is_none() {
             return Err("--mode co requires --target-rate".into());
@@ -130,6 +176,7 @@ impl RawRingSelection {
             num_messages_override,
             warmup_override,
             size_override,
+            buffer_override,
             output_args: ReportOutputArgs::from_args(args),
         })
     }
@@ -192,11 +239,7 @@ impl RawRingSelection {
             if let Some(size) = self.size_override {
                 scenario.event_bytes = size;
                 scenario.buffer = pingpong::default_buffer_size(size);
-                scenario.label = format!(
-                    "message_1p{}c_{}",
-                    scenario.consumers,
-                    pingpong::human_size(size),
-                );
+                scenario.label = message_label(scenario.consumers, size);
             }
             if let Some(n) = self.num_messages_override {
                 scenario.events = n;
@@ -204,11 +247,23 @@ impl RawRingSelection {
             if let Some(w) = self.warmup_override {
                 scenario.warmup = w;
             }
+            if let Some(buffer) = self.buffer_override {
+                scenario.buffer = buffer;
+            }
             return;
         }
         if let Some(signal_events) = self.signal_events_override {
             scenario.events = signal_events;
-            scenario.warmup = (signal_events / 100).clamp(100_000, 1_000_000);
+            scenario.warmup = if let Some(warmup) = self.warmup_override {
+                warmup
+            } else {
+                (signal_events / 100).clamp(100_000, 1_000_000)
+            };
+        } else if let Some(warmup) = self.warmup_override {
+            scenario.warmup = warmup;
+        }
+        if let Some(buffer) = self.buffer_override {
+            scenario.buffer = buffer;
         }
         // Allow the signal binary (or any caller) to force latency recording
         // for signal scenarios via env var.
@@ -226,7 +281,7 @@ fn base_specs(backend: BackendKind, signal_multi_events: u64) -> Vec<RawRingScen
     vec![
         message_spec(
             backend.clone(),
-            "message_1p1c_144B",
+            &message_label(1, 144),
             100_000,
             1024,
             1_000,
@@ -235,7 +290,7 @@ fn base_specs(backend: BackendKind, signal_multi_events: u64) -> Vec<RawRingScen
         ),
         message_spec(
             backend.clone(),
-            "message_1p2c_144B",
+            &message_label(2, 144),
             100_000,
             1024,
             1_000,
@@ -244,7 +299,7 @@ fn base_specs(backend: BackendKind, signal_multi_events: u64) -> Vec<RawRingScen
         ),
         message_spec(
             backend.clone(),
-            "message_1p3c_144B",
+            &message_label(3, 144),
             100_000,
             1024,
             1_000,
@@ -253,7 +308,7 @@ fn base_specs(backend: BackendKind, signal_multi_events: u64) -> Vec<RawRingScen
         ),
         message_spec(
             backend.clone(),
-            "message_1p4c_144B",
+            &message_label(4, 144),
             100_000,
             2048,
             1_000,
@@ -262,7 +317,7 @@ fn base_specs(backend: BackendKind, signal_multi_events: u64) -> Vec<RawRingScen
         ),
         message_spec(
             backend.clone(),
-            "message_1p6c_144B",
+            &message_label(6, 144),
             100_000,
             4096,
             1_000,
@@ -271,7 +326,7 @@ fn base_specs(backend: BackendKind, signal_multi_events: u64) -> Vec<RawRingScen
         ),
         message_spec(
             backend.clone(),
-            "message_1p8c_144B",
+            &message_label(8, 144),
             100_000,
             4096,
             1_000,
@@ -280,7 +335,7 @@ fn base_specs(backend: BackendKind, signal_multi_events: u64) -> Vec<RawRingScen
         ),
         message_spec(
             backend.clone(),
-            "message_1p12c_144B",
+            &message_label(12, 144),
             100_000,
             4096,
             1_000,
@@ -537,6 +592,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn aligned_slot_bytes_rounds_up_to_cache_line() {
+        assert_eq!(aligned_slot_bytes(32), 64);
+        assert_eq!(aligned_slot_bytes(64), 64);
+        assert_eq!(aligned_slot_bytes(144), 192);
+        assert_eq!(aligned_slot_bytes(2048), 2048);
+    }
+
+    #[test]
+    fn message_label_marks_non_exact_slot_sizes() {
+        assert_eq!(message_label(4, 32), "message_1p4c_32Breq_64Bslot");
+        assert_eq!(message_label(2, 144), "message_1p2c_144Breq_192Bslot");
+        assert_eq!(message_label(8, 2048), "message_1p8c_2KB");
+    }
+
+    #[test]
     fn selection_parses_co_mode_and_filters() {
         let args = vec![
             "bench".to_string(),
@@ -556,7 +626,7 @@ mod tests {
 
         let scenarios = selection.scenario_specs(BackendKind::Shm, 10_000_000);
         assert_eq!(scenarios.len(), 1);
-        assert_eq!(scenarios[0].label, "message_1p2c_144B");
+        assert_eq!(scenarios[0].label, "message_1p2c_144Breq_192Bslot");
         assert_eq!(scenarios[0].target_rate, 20_000);
         assert_eq!(scenarios[0].producer_role, "msg_multi_producer");
     }
@@ -577,6 +647,22 @@ mod tests {
         assert_eq!(scenario.events, 50_000_000);
         assert_eq!(scenario.warmup, 500_000);
         assert_eq!(scenario.producer_role, "mmap_sig_producer");
+    }
+
+    #[test]
+    fn signal_warmup_override_applies_without_events_override() {
+        let args = vec![
+            "bench".to_string(),
+            "--warmup".to_string(),
+            "250".to_string(),
+        ];
+        let selection = RawRingSelection::parse(&args).expect("parse selection");
+        let scenarios = selection.scenario_specs(BackendKind::Shm, 10_000_000);
+        let scenario = scenarios
+            .into_iter()
+            .find(|entry| entry.label == "signal_1p1c_64B")
+            .expect("signal scenario");
+        assert_eq!(scenario.warmup, 250);
     }
 
     #[test]

@@ -40,6 +40,37 @@ pub struct ConsumerCounters {
     pub consumer_lag_max: Option<crate::observability::CounterHandle>,
 }
 
+/// Select which consumer-side counters are attached to a shared counters file.
+///
+/// The full set is appropriate for normal observability. Targeted microbenchmarks can
+/// deliberately narrow the set to reduce hot-path perturbation while still exposing the
+/// counters required for a specific experiment.
+#[derive(Clone, Copy, Debug)]
+pub struct ConsumerCounterSelection {
+    /// Attach the monotonic `events_consumed` counter.
+    pub events_consumed: bool,
+    /// Attach the `consumer_empty_spins` counter.
+    pub consumer_empty_spins: bool,
+    /// Attach the `consumer_lag_max` high-water-mark counter.
+    pub consumer_lag_max: bool,
+}
+
+impl ConsumerCounterSelection {
+    /// Full RFC-0040 consumer counter set.
+    pub const FULL: Self = Self {
+        events_consumed: true,
+        consumer_empty_spins: true,
+        consumer_lag_max: true,
+    };
+
+    /// Minimal consumer counter set for experiments that only need consumption progress.
+    pub const LITE: Self = Self {
+        events_consumed: true,
+        consumer_empty_spins: false,
+        consumer_lag_max: false,
+    };
+}
+
 pub struct SharedConsumerLease<'a, E>
 where
     E: Copy + Default,
@@ -158,22 +189,43 @@ where
     /// `try_consume_next` operations record into the file with one
     /// relaxed atomic increment per event. RFC 0040 §Counters.
     pub fn attach_counters(&mut self, file: &crate::observability::CountersFile) {
+        self.attach_counters_selected(file, ConsumerCounterSelection::FULL);
+    }
+
+    /// Register a selected subset of consumer counters in the supplied counters file.
+    pub fn attach_counters_selected(
+        &mut self,
+        file: &crate::observability::CountersFile,
+        selection: ConsumerCounterSelection,
+    ) {
         use crate::observability::{ids, COUNTER_FLAG_CONSUMER};
-        self.counters.events_consumed = file.register(
-            ids::EVENTS_CONSUMED,
-            COUNTER_FLAG_CONSUMER,
-            "events_consumed",
-        );
-        self.counters.consumer_empty_spins = file.register(
-            ids::CONSUMER_EMPTY_SPINS,
-            COUNTER_FLAG_CONSUMER,
-            "consumer_empty_spins",
-        );
-        self.counters.consumer_lag_max = file.register(
-            ids::CONSUMER_LAG_MAX,
-            COUNTER_FLAG_CONSUMER,
-            "consumer_lag_max",
-        );
+        self.counters.events_consumed = if selection.events_consumed {
+            file.register(
+                ids::EVENTS_CONSUMED,
+                COUNTER_FLAG_CONSUMER,
+                "events_consumed",
+            )
+        } else {
+            None
+        };
+        self.counters.consumer_empty_spins = if selection.consumer_empty_spins {
+            file.register(
+                ids::CONSUMER_EMPTY_SPINS,
+                COUNTER_FLAG_CONSUMER,
+                "consumer_empty_spins",
+            )
+        } else {
+            None
+        };
+        self.counters.consumer_lag_max = if selection.consumer_lag_max {
+            file.register(
+                ids::CONSUMER_LAG_MAX,
+                COUNTER_FLAG_CONSUMER,
+                "consumer_lag_max",
+            )
+        } else {
+            None
+        };
     }
 
     /// Read-only access to the consumer's attached counters.
@@ -296,6 +348,10 @@ where
         F: FnMut(&E, Sequence),
     {
         let mut processed = 0usize;
+        if let Some(h) = &self.counters.consumer_lag_max {
+            let lag = (upper - lower).max(0) as u64;
+            h.record_max(lag);
+        }
 
         for sequence in lower..=upper {
             let event_ptr = self.ring_buffer.get(sequence);
@@ -305,6 +361,9 @@ where
         }
 
         self.publish_consumed_sequence(upper);
+        if let Some(h) = &self.counters.events_consumed {
+            h.add(processed as u64);
+        }
         processed
     }
 
@@ -319,6 +378,10 @@ where
         F: FnMut(&E, Sequence, bool),
     {
         let mut processed = 0usize;
+        if let Some(h) = &self.counters.consumer_lag_max {
+            let lag = (upper - lower).max(0) as u64;
+            h.record_max(lag);
+        }
 
         for sequence in lower..=upper {
             let event_ptr = self.ring_buffer.get(sequence);
@@ -329,6 +392,9 @@ where
         }
 
         self.publish_consumed_sequence(upper);
+        if let Some(h) = &self.counters.events_consumed {
+            h.add(processed as u64);
+        }
         processed
     }
 
@@ -472,9 +538,17 @@ where
         }
 
         let mut processed = 0usize;
+        let mut observed_batch = false;
 
         while let Some((lower, upper)) = self.available_batch_bounds() {
+            observed_batch = true;
             processed += self.process_snapshot_batch(lower, upper, &mut processor);
+        }
+
+        if !observed_batch {
+            if let Some(h) = &self.counters.consumer_empty_spins {
+                h.inc();
+            }
         }
 
         processed

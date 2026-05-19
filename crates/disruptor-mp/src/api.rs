@@ -292,10 +292,10 @@ pub use builder::{
     attach_shared_consumer, build_shared_single_producer, AutoConsumer, AutoWaitStrategy,
     SharedDisruptorBuilder,
 };
-pub use consumer::SharedConsumer;
+pub use consumer::{ConsumerCounterSelection, SharedConsumer};
 pub use consumer_barrier::{ConsumerBarrier, DiscoveryMode, SharedConsumerBarrier};
 pub use cursor::{SharedCursor, SharedCursorTrait};
-pub use producer::{CoordinationMode, SharedProducer};
+pub use producer::{CoordinationMode, ProducerCounterSelection, SharedProducer};
 pub use ringbuffer::SharedRingBuffer;
 pub use shared_memory::ShmRingBuffer;
 

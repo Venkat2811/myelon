@@ -1,18 +1,25 @@
 //! Raw disruptor-mp ring benchmark over mmap (file-backed) backend.
 //!
 //! Two benchmark classes (matching `raw_ring_shm` exactly):
-//!   --class message  : 144B event, full 128B payload fill + timestamp
+//!   --class message  : 144B logical event request, 192B physical slot, full 128B payload fill + timestamp
 //!   --class signal   : 64B event, 16B data only
 //!   (default)        : runs both
 //!
 //! Run:   cargo bench -p myelon-bench --bench `raw_ring_mmap`
 //! Signal only: cargo bench -p myelon-bench --bench `raw_ring_mmap` -- --class signal
 
-use crate::cli::raw_ring::{RawRingScenarioSpec, RawRingSelection};
+use crate::cli::raw_ring::{
+    aligned_slot_bytes, raw_payload_bytes, RawRingScenarioSpec, RawRingSelection,
+};
 use crate::infra::events::nanos_now;
 use crate::infra::latency::LatencyRecorder;
 use crate::infra::output::report::BackendKind;
 use crate::infra::output::reporting::{self, BenchReport};
+use crate::infra::signal_latency::{
+    mmap_sidecar_path_from_env, read_stamp, sample_capacity, sample_every_from_env, sampled_delta,
+    should_sample, MmapTimestampSidecar, OfflineSignalSamples, SignalEvent, SignalLatencyMode,
+    TimestampSidecar, TscCalibration,
+};
 use crate::infra::{self, IpcBenchmark, ScenarioChildren};
 use disruptor_mp::{AutoWaitStrategy, MmapConsumer, MmapProducer, MmapTransportLayout};
 use std::env;
@@ -21,18 +28,7 @@ use std::time::{Duration, Instant};
 
 const SIGNAL_MULTI_EVENTS: u64 = 1_000_000;
 
-// ============================================================
-// Event types
-// ============================================================
-
 use crate::infra::events::BenchEvent;
-
-#[repr(C, align(64))]
-#[derive(Clone, Copy, Default)]
-struct SignalEvent {
-    sequence: u64,
-    data: u64,
-}
 
 // ============================================================
 // Helpers
@@ -59,6 +55,47 @@ fn spawn_mmap_child_with_env(
     ];
     envs.extend(extra_env.iter().map(|(key, value)| (*key, value.clone())));
     infra::spawn_child(exe, role, &envs)
+}
+
+fn mmap_signal_mode() -> Result<SignalLatencyMode, Box<dyn std::error::Error>> {
+    SignalLatencyMode::from_env().map_err(Into::into)
+}
+
+#[inline]
+fn record_signal_latency(
+    recorder: &mut LatencyRecorder,
+    mode: SignalLatencyMode,
+    send_stamp: u64,
+    tsc: Option<&TscCalibration>,
+) {
+    if send_stamp == 0 {
+        return;
+    }
+    let recv_stamp = read_stamp(mode);
+    if let Some(raw_delta) = sampled_delta(mode, send_stamp, recv_stamp) {
+        if mode.uses_rdtsc() {
+            if let Some(calibration) = tsc {
+                recorder.record(calibration.delta_to_ns(0, raw_delta));
+            }
+        } else {
+            recorder.record(raw_delta);
+        }
+    }
+}
+
+#[inline]
+fn collect_signal_latency_offline(
+    samples: &mut OfflineSignalSamples,
+    mode: SignalLatencyMode,
+    send_stamp: u64,
+) {
+    if send_stamp == 0 {
+        return;
+    }
+    let recv_stamp = read_stamp(mode);
+    if let Some(raw_delta) = sampled_delta(mode, send_stamp, recv_stamp) {
+        samples.record(raw_delta);
+    }
 }
 
 // ============================================================
@@ -220,29 +257,135 @@ fn signal_producer() -> Result<(), Box<dyn std::error::Error>> {
     let layout = child_layout();
     let buffer_size: usize = env::var("MMAP_BUFFER_SIZE")?.parse()?;
     let num_events: u64 = env::var("MMAP_EVENTS")?.parse()?;
-    const WARMUP: u64 = 100_000;
+    let warmup: u64 = infra::read_env_u64("MMAP_WARMUP", 100_000);
+    let target_rate = infra::read_env_u64("PERF_BENCH_SIGNAL_TARGET_RATE", 0);
+    let latency_mode = mmap_signal_mode()?;
+
+    if matches!(latency_mode, SignalLatencyMode::None) {
+        layout.ensure_directories()?;
+        let mut producer =
+            MmapProducer::<SignalEvent>::create(layout, buffer_size, SignalEvent::default)?;
+
+        if !producer.wait_for_consumers_ready(1, Duration::from_secs(30)) {
+            return Err("Timeout waiting for consumer".into());
+        }
+
+        for i in 0..warmup {
+            producer.publish(|s| {
+                s.sequence = i;
+                s.data = i.wrapping_mul(0x9E3779B97F4A7C15);
+            });
+        }
+
+        let start = Instant::now();
+        if target_rate > 0 {
+            let interval_ns = 1_000_000_000u64 / target_rate;
+            let base_ns = nanos_now();
+            for i in 0..num_events {
+                let intended_ns = base_ns.saturating_add(i.saturating_mul(interval_ns));
+                while nanos_now() < intended_ns {
+                    std::hint::spin_loop();
+                }
+                let sequence = warmup + i;
+                producer.publish(|s| {
+                    s.sequence = sequence;
+                    s.data = sequence.wrapping_mul(0x9E3779B97F4A7C15);
+                });
+            }
+        } else {
+            for i in 0..num_events {
+                let sequence = warmup + i;
+                producer.publish(|s| {
+                    s.sequence = sequence;
+                    s.data = sequence.wrapping_mul(0x9E3779B97F4A7C15);
+                });
+            }
+        }
+        let elapsed = start.elapsed();
+
+        let output = infra::ProducerOutput::from_elapsed(
+            num_events,
+            elapsed,
+            std::mem::size_of::<SignalEvent>(),
+        );
+        println!("{}", serde_json::to_string(&output)?);
+
+        let last_seq = (warmup + num_events - 1) as i64;
+        producer.wait_until_consumed_with_strategy(
+            last_seq,
+            Duration::from_secs(30),
+            AutoWaitStrategy::BusySpin,
+        );
+        return Ok(());
+    }
+
+    let sample_every = sample_every_from_env();
 
     layout.ensure_directories()?;
     let mut producer =
         MmapProducer::<SignalEvent>::create(layout, buffer_size, SignalEvent::default)?;
+    let mut sidecar = if latency_mode.uses_sidecar() {
+        Some(MmapTimestampSidecar::create(
+            &mmap_sidecar_path_from_env()?,
+            buffer_size,
+        )?)
+    } else {
+        None
+    };
 
     if !producer.wait_for_consumers_ready(1, Duration::from_secs(30)) {
         return Err("Timeout waiting for consumer".into());
     }
 
-    for i in 0..WARMUP {
+    for i in 0..warmup {
         producer.publish(|s| {
             s.sequence = i;
             s.data = i.wrapping_mul(0x9E3779B97F4A7C15);
+            s.stamp = 0;
         });
     }
 
     let start = Instant::now();
-    for i in 0..num_events {
-        producer.publish(|s| {
-            s.sequence = WARMUP + i;
-            s.data = (WARMUP + i).wrapping_mul(0x9E3779B97F4A7C15);
-        });
+    if target_rate > 0 {
+        let interval_ns = 1_000_000_000u64 / target_rate;
+        let base_ns = nanos_now();
+        for i in 0..num_events {
+            let intended_ns = base_ns.saturating_add(i.saturating_mul(interval_ns));
+            while nanos_now() < intended_ns {
+                std::hint::spin_loop();
+            }
+            let sequence = warmup + i;
+            let stamp = if latency_mode.records_latency() && should_sample(sequence, sample_every) {
+                read_stamp(latency_mode)
+            } else {
+                0
+            };
+            if let Some(sidecar) = sidecar.as_mut() {
+                sidecar.store(sequence, stamp);
+            }
+            producer.publish(|s| {
+                s.sequence = sequence;
+                s.data = sequence.wrapping_mul(0x9E3779B97F4A7C15);
+                s.stamp = if latency_mode.is_inline() { stamp } else { 0 };
+            });
+        }
+    } else {
+        for i in 0..num_events {
+            let sequence = warmup + i;
+            let stamp = if latency_mode.records_latency() && should_sample(sequence, sample_every) {
+                read_stamp(latency_mode)
+            } else {
+                0
+            };
+            if let Some(sidecar) = sidecar.as_mut() {
+                sidecar.store(sequence, stamp);
+            }
+            producer.publish(|s| {
+                s.sequence = sequence;
+                s.data = sequence.wrapping_mul(0x9E3779B97F4A7C15);
+                s.stamp = if latency_mode.is_inline() { stamp } else { 0 };
+            });
+        }
     }
     let elapsed = start.elapsed();
 
@@ -253,7 +396,7 @@ fn signal_producer() -> Result<(), Box<dyn std::error::Error>> {
     );
     println!("{}", serde_json::to_string(&output)?);
 
-    let last_seq = (WARMUP + num_events - 1) as i64;
+    let last_seq = (warmup + num_events - 1) as i64;
     producer.wait_until_consumed_with_strategy(
         last_seq,
         Duration::from_secs(30),
@@ -268,7 +411,22 @@ fn signal_consumer() -> Result<(), Box<dyn std::error::Error>> {
     let num_events: u64 = env::var("MMAP_EVENTS")?.parse()?;
     let consumer_id = infra::read_env_usize("MMAP_CONSUMER_ID", 0);
     let consumer_name = format!("c{}", consumer_id);
-    const WARMUP: u64 = 100_000;
+    let warmup_target: u64 = infra::read_env_u64("MMAP_WARMUP", 100_000);
+    let latency_mode = mmap_signal_mode()?;
+    let sidecar = if latency_mode.uses_sidecar() {
+        Some(MmapTimestampSidecar::open_with_timeout(
+            &mmap_sidecar_path_from_env()?,
+            buffer_size,
+            Duration::from_secs(15),
+        )?)
+    } else {
+        None
+    };
+    let tsc = if latency_mode.uses_rdtsc() {
+        TscCalibration::calibrate()
+    } else {
+        None
+    };
 
     let deadline = Instant::now() + Duration::from_secs(15);
     let mut consumer = loop {
@@ -279,24 +437,127 @@ fn signal_consumer() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
+    if matches!(latency_mode, SignalLatencyMode::None) {
+        let warmup_deadline = infra::spin_deadline();
+        let mut warmup_count = 0u64;
+        let mut consumed = 0u64;
+        let mut start = None;
+        loop {
+            if let Some(event) = consumer.try_consume_next_leased() {
+                if event.sequence < warmup_target {
+                    warmup_count += 1;
+                } else {
+                    start = Some(Instant::now());
+                    consumed = 1;
+                    break;
+                }
+            } else {
+                infra::check_deadline(warmup_deadline, "raw_ring_mmap signal_consumer warmup");
+                std::hint::spin_loop();
+            }
+            if warmup_count >= warmup_target {
+                break;
+            }
+        }
+
+        let measure_deadline = infra::spin_deadline();
+        let start = start.unwrap_or_else(Instant::now);
+        let checksum = 0u64;
+        while consumed < num_events {
+            if consumer.try_consume_next_leased().is_some() {
+                consumed += 1;
+            } else {
+                infra::check_deadline(measure_deadline, "raw_ring_mmap signal_consumer measured");
+                std::hint::spin_loop();
+            }
+        }
+        let elapsed = start.elapsed();
+
+        let output = infra::ConsumerOutput::from_elapsed(
+            consumer_id,
+            consumed,
+            elapsed,
+            std::mem::size_of::<SignalEvent>(),
+            checksum,
+        );
+        println!("{}", serde_json::to_string(&output)?);
+        return Ok(());
+    }
+
+    let mut latency = if latency_mode.records_latency() && !latency_mode.uses_offline_samples() {
+        Some(LatencyRecorder::default_range())
+    } else {
+        None
+    };
+    let mut offline_samples = if latency_mode.uses_offline_samples() {
+        Some(OfflineSignalSamples::new(sample_capacity(
+            num_events,
+            sample_every_from_env(),
+        )))
+    } else {
+        None
+    };
     let warmup_deadline = infra::spin_deadline();
-    let mut warmup = 0u64;
-    while warmup < WARMUP {
-        if consumer.try_consume_next_leased().is_some() {
-            warmup += 1;
+    let mut warmup_count = 0u64;
+    let mut consumed = 0u64;
+    let mut start = None;
+    loop {
+        let before_progress = warmup_count + consumed;
+        if let Some(event) = consumer.try_consume_next_leased() {
+            if event.sequence < warmup_target {
+                warmup_count += 1;
+            } else {
+                if start.is_none() {
+                    start = Some(Instant::now());
+                }
+                consumed += 1;
+                let send_stamp = if latency_mode.uses_sidecar() {
+                    sidecar
+                        .as_ref()
+                        .map(|timestamps| timestamps.load(event.sequence))
+                        .unwrap_or(0)
+                } else {
+                    event.stamp
+                };
+                if let Some(recorder) = latency.as_mut() {
+                    record_signal_latency(recorder, latency_mode, send_stamp, tsc.as_ref());
+                } else if let Some(samples) = offline_samples.as_mut() {
+                    collect_signal_latency_offline(samples, latency_mode, send_stamp);
+                }
+            }
         } else {
             infra::check_deadline(warmup_deadline, "raw_ring_mmap signal_consumer warmup");
+            std::hint::spin_loop();
+        }
+        if consumed > 0 || warmup_count >= warmup_target {
+            break;
+        }
+        if warmup_count + consumed == before_progress {
             std::hint::spin_loop();
         }
     }
 
     let measure_deadline = infra::spin_deadline();
-    let start = Instant::now();
-    let mut consumed = 0u64;
+    let start = start.unwrap_or_else(Instant::now);
     let checksum = 0u64; // Signal class: no payload work — measures pure disruptor ceiling
     while consumed < num_events {
-        if consumer.try_consume_next_leased().is_some() {
-            consumed += 1;
+        if let Some(event) = consumer.try_consume_next_leased() {
+            if event.sequence >= warmup_target {
+                consumed += 1;
+                let send_stamp = if latency_mode.uses_sidecar() {
+                    sidecar
+                        .as_ref()
+                        .map(|timestamps| timestamps.load(event.sequence))
+                        .unwrap_or(0)
+                } else {
+                    event.stamp
+                };
+                if let Some(recorder) = latency.as_mut() {
+                    record_signal_latency(recorder, latency_mode, send_stamp, tsc.as_ref());
+                } else if let Some(samples) = offline_samples.as_mut() {
+                    collect_signal_latency_offline(samples, latency_mode, send_stamp);
+                }
+            }
         } else {
             infra::check_deadline(measure_deadline, "raw_ring_mmap signal_consumer measured");
             std::hint::spin_loop();
@@ -304,13 +565,29 @@ fn signal_consumer() -> Result<(), Box<dyn std::error::Error>> {
     }
     let elapsed = start.elapsed();
 
-    let output = infra::ConsumerOutput::from_elapsed(
-        consumer_id,
-        consumed,
-        elapsed,
-        std::mem::size_of::<SignalEvent>(),
-        checksum,
-    );
+    let latency_stats = if let Some(samples) = offline_samples {
+        samples.into_latency_stats(latency_mode, tsc.as_ref())
+    } else {
+        latency.and_then(|recorder| recorder.stats())
+    };
+    let output = if let Some(stats) = latency_stats {
+        infra::ConsumerOutput::from_elapsed(
+            consumer_id,
+            consumed,
+            elapsed,
+            std::mem::size_of::<SignalEvent>(),
+            checksum,
+        )
+        .with_latency(stats)
+    } else {
+        infra::ConsumerOutput::from_elapsed(
+            consumer_id,
+            consumed,
+            elapsed,
+            std::mem::size_of::<SignalEvent>(),
+            checksum,
+        )
+    };
     println!("{}", serde_json::to_string(&output)?);
     Ok(())
 }
@@ -320,29 +597,135 @@ fn multi_signal_producer() -> Result<(), Box<dyn std::error::Error>> {
     let buffer_size: usize = env::var("MMAP_BUFFER_SIZE")?.parse()?;
     let num_events: u64 = env::var("MMAP_EVENTS")?.parse()?;
     let num_consumers = infra::read_env_usize("MMAP_NUM_CONSUMERS", 2);
-    const WARMUP: u64 = 100_000;
+    let warmup: u64 = infra::read_env_u64("MMAP_WARMUP", 100_000);
+    let target_rate = infra::read_env_u64("PERF_BENCH_SIGNAL_TARGET_RATE", 0);
+    let latency_mode = mmap_signal_mode()?;
+
+    if matches!(latency_mode, SignalLatencyMode::None) {
+        layout.ensure_directories()?;
+        let mut producer =
+            MmapProducer::<SignalEvent>::create(layout, buffer_size, SignalEvent::default)?;
+
+        if !producer.wait_for_consumers_ready(num_consumers as i64, Duration::from_secs(60)) {
+            return Err(format!("Timeout waiting for {num_consumers} consumers").into());
+        }
+
+        for i in 0..warmup {
+            producer.publish(|s| {
+                s.sequence = i;
+                s.data = i.wrapping_mul(0x9E3779B97F4A7C15);
+            });
+        }
+
+        let start = Instant::now();
+        if target_rate > 0 {
+            let interval_ns = 1_000_000_000u64 / target_rate;
+            let base_ns = nanos_now();
+            for i in 0..num_events {
+                let intended_ns = base_ns.saturating_add(i.saturating_mul(interval_ns));
+                while nanos_now() < intended_ns {
+                    std::hint::spin_loop();
+                }
+                let sequence = warmup + i;
+                producer.publish(|s| {
+                    s.sequence = sequence;
+                    s.data = sequence.wrapping_mul(0x9E3779B97F4A7C15);
+                });
+            }
+        } else {
+            for i in 0..num_events {
+                let sequence = warmup + i;
+                producer.publish(|s| {
+                    s.sequence = sequence;
+                    s.data = sequence.wrapping_mul(0x9E3779B97F4A7C15);
+                });
+            }
+        }
+        let elapsed = start.elapsed();
+
+        let output = infra::ProducerOutput::from_elapsed(
+            num_events,
+            elapsed,
+            std::mem::size_of::<SignalEvent>(),
+        );
+        println!("{}", serde_json::to_string(&output)?);
+
+        let last_seq = (warmup + num_events - 1) as i64;
+        producer.wait_until_consumed_with_strategy(
+            last_seq,
+            Duration::from_secs(90),
+            AutoWaitStrategy::BusySpin,
+        );
+        return Ok(());
+    }
+
+    let sample_every = sample_every_from_env();
 
     layout.ensure_directories()?;
     let mut producer =
         MmapProducer::<SignalEvent>::create(layout, buffer_size, SignalEvent::default)?;
+    let mut sidecar = if latency_mode.uses_sidecar() {
+        Some(MmapTimestampSidecar::create(
+            &mmap_sidecar_path_from_env()?,
+            buffer_size,
+        )?)
+    } else {
+        None
+    };
 
     if !producer.wait_for_consumers_ready(num_consumers as i64, Duration::from_secs(60)) {
         return Err(format!("Timeout waiting for {num_consumers} consumers").into());
     }
 
-    for i in 0..WARMUP {
+    for i in 0..warmup {
         producer.publish(|s| {
             s.sequence = i;
             s.data = i.wrapping_mul(0x9E3779B97F4A7C15);
+            s.stamp = 0;
         });
     }
 
     let start = Instant::now();
-    for i in 0..num_events {
-        producer.publish(|s| {
-            s.sequence = WARMUP + i;
-            s.data = (WARMUP + i).wrapping_mul(0x9E3779B97F4A7C15);
-        });
+    if target_rate > 0 {
+        let interval_ns = 1_000_000_000u64 / target_rate;
+        let base_ns = nanos_now();
+        for i in 0..num_events {
+            let intended_ns = base_ns.saturating_add(i.saturating_mul(interval_ns));
+            while nanos_now() < intended_ns {
+                std::hint::spin_loop();
+            }
+            let sequence = warmup + i;
+            let stamp = if latency_mode.records_latency() && should_sample(sequence, sample_every) {
+                read_stamp(latency_mode)
+            } else {
+                0
+            };
+            if let Some(sidecar) = sidecar.as_mut() {
+                sidecar.store(sequence, stamp);
+            }
+            producer.publish(|s| {
+                s.sequence = sequence;
+                s.data = sequence.wrapping_mul(0x9E3779B97F4A7C15);
+                s.stamp = if latency_mode.is_inline() { stamp } else { 0 };
+            });
+        }
+    } else {
+        for i in 0..num_events {
+            let sequence = warmup + i;
+            let stamp = if latency_mode.records_latency() && should_sample(sequence, sample_every) {
+                read_stamp(latency_mode)
+            } else {
+                0
+            };
+            if let Some(sidecar) = sidecar.as_mut() {
+                sidecar.store(sequence, stamp);
+            }
+            producer.publish(|s| {
+                s.sequence = sequence;
+                s.data = sequence.wrapping_mul(0x9E3779B97F4A7C15);
+                s.stamp = if latency_mode.is_inline() { stamp } else { 0 };
+            });
+        }
     }
     let elapsed = start.elapsed();
 
@@ -353,7 +736,7 @@ fn multi_signal_producer() -> Result<(), Box<dyn std::error::Error>> {
     );
     println!("{}", serde_json::to_string(&output)?);
 
-    let last_seq = (WARMUP + num_events - 1) as i64;
+    let last_seq = (warmup + num_events - 1) as i64;
     producer.wait_until_consumed_with_strategy(
         last_seq,
         Duration::from_secs(90),
@@ -368,7 +751,22 @@ fn multi_signal_consumer() -> Result<(), Box<dyn std::error::Error>> {
     let num_events: u64 = env::var("MMAP_EVENTS")?.parse()?;
     let consumer_id = infra::read_env_usize("MMAP_CONSUMER_ID", 0);
     let consumer_name = format!("c{}", consumer_id);
-    const WARMUP: u64 = 100_000;
+    let warmup: u64 = infra::read_env_u64("MMAP_WARMUP", 100_000);
+    let latency_mode = mmap_signal_mode()?;
+    let sidecar = if latency_mode.uses_sidecar() {
+        Some(MmapTimestampSidecar::open_with_timeout(
+            &mmap_sidecar_path_from_env()?,
+            buffer_size,
+            Duration::from_secs(15),
+        )?)
+    } else {
+        None
+    };
+    let tsc = if latency_mode.uses_rdtsc() {
+        TscCalibration::calibrate()
+    } else {
+        None
+    };
 
     let deadline = Instant::now() + Duration::from_secs(15);
     let mut consumer = loop {
@@ -379,11 +777,99 @@ fn multi_signal_consumer() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
+    if matches!(latency_mode, SignalLatencyMode::None) {
+        let mut warmup_count = 0u64;
+        let mut consumed = 0u64;
+        let mut start = None;
+        let warmup_deadline = infra::spin_deadline();
+        loop {
+            if let Some(event) = consumer.try_consume_next_leased() {
+                if event.sequence < warmup {
+                    warmup_count += 1;
+                } else {
+                    start = Some(Instant::now());
+                    consumed = 1;
+                    break;
+                }
+            } else {
+                infra::check_deadline(
+                    warmup_deadline,
+                    "raw_ring_mmap multi_signal_consumer warmup",
+                );
+                std::hint::spin_loop();
+            }
+            if warmup_count >= warmup {
+                break;
+            }
+        }
+        let measure_deadline = infra::spin_deadline();
+        let start = start.unwrap_or_else(Instant::now);
+        let checksum = 0u64;
+        while consumed < num_events {
+            if consumer.try_consume_next_leased().is_some() {
+                consumed += 1;
+            } else {
+                infra::check_deadline(
+                    measure_deadline,
+                    "raw_ring_mmap multi_signal_consumer measured",
+                );
+                std::hint::spin_loop();
+            }
+        }
+        let elapsed = start.elapsed();
+
+        let output = infra::ConsumerOutput::from_elapsed(
+            consumer_id,
+            consumed,
+            elapsed,
+            std::mem::size_of::<SignalEvent>(),
+            checksum,
+        );
+        println!("{}", serde_json::to_string(&output)?);
+        return Ok(());
+    }
+
+    let mut latency = if latency_mode.records_latency() && !latency_mode.uses_offline_samples() {
+        Some(LatencyRecorder::default_range())
+    } else {
+        None
+    };
+    let mut offline_samples = if latency_mode.uses_offline_samples() {
+        Some(OfflineSignalSamples::new(sample_capacity(
+            num_events,
+            sample_every_from_env(),
+        )))
+    } else {
+        None
+    };
+    let mut warmup_count = 0u64;
+    let mut consumed = 0u64;
+    let mut start = None;
     let warmup_deadline = infra::spin_deadline();
-    let mut warmup = 0u64;
-    while warmup < WARMUP {
-        if consumer.try_consume_next_leased().is_some() {
-            warmup += 1;
+    loop {
+        let before_progress = warmup_count + consumed;
+        if let Some(event) = consumer.try_consume_next_leased() {
+            if event.sequence < warmup {
+                warmup_count += 1;
+            } else {
+                if start.is_none() {
+                    start = Some(Instant::now());
+                }
+                consumed += 1;
+                let send_stamp = if latency_mode.uses_sidecar() {
+                    sidecar
+                        .as_ref()
+                        .map(|timestamps| timestamps.load(event.sequence))
+                        .unwrap_or(0)
+                } else {
+                    event.stamp
+                };
+                if let Some(recorder) = latency.as_mut() {
+                    record_signal_latency(recorder, latency_mode, send_stamp, tsc.as_ref());
+                } else if let Some(samples) = offline_samples.as_mut() {
+                    collect_signal_latency_offline(samples, latency_mode, send_stamp);
+                }
+            }
         } else {
             infra::check_deadline(
                 warmup_deadline,
@@ -391,15 +877,34 @@ fn multi_signal_consumer() -> Result<(), Box<dyn std::error::Error>> {
             );
             std::hint::spin_loop();
         }
+        if consumed > 0 || warmup_count >= warmup {
+            break;
+        }
+        if warmup_count + consumed == before_progress {
+            std::hint::spin_loop();
+        }
     }
-
     let measure_deadline = infra::spin_deadline();
-    let start = Instant::now();
-    let mut consumed = 0u64;
+    let start = start.unwrap_or_else(Instant::now);
     let checksum = 0u64;
     while consumed < num_events {
-        if consumer.try_consume_next_leased().is_some() {
-            consumed += 1;
+        if let Some(event) = consumer.try_consume_next_leased() {
+            if event.sequence >= warmup {
+                consumed += 1;
+                let send_stamp = if latency_mode.uses_sidecar() {
+                    sidecar
+                        .as_ref()
+                        .map(|timestamps| timestamps.load(event.sequence))
+                        .unwrap_or(0)
+                } else {
+                    event.stamp
+                };
+                if let Some(recorder) = latency.as_mut() {
+                    record_signal_latency(recorder, latency_mode, send_stamp, tsc.as_ref());
+                } else if let Some(samples) = offline_samples.as_mut() {
+                    collect_signal_latency_offline(samples, latency_mode, send_stamp);
+                }
+            }
         } else {
             infra::check_deadline(
                 measure_deadline,
@@ -410,13 +915,29 @@ fn multi_signal_consumer() -> Result<(), Box<dyn std::error::Error>> {
     }
     let elapsed = start.elapsed();
 
-    let output = infra::ConsumerOutput::from_elapsed(
-        consumer_id,
-        consumed,
-        elapsed,
-        std::mem::size_of::<SignalEvent>(),
-        checksum,
-    );
+    let latency_stats = if let Some(samples) = offline_samples {
+        samples.into_latency_stats(latency_mode, tsc.as_ref())
+    } else {
+        latency.and_then(|recorder| recorder.stats())
+    };
+    let output = if let Some(stats) = latency_stats {
+        infra::ConsumerOutput::from_elapsed(
+            consumer_id,
+            consumed,
+            elapsed,
+            std::mem::size_of::<SignalEvent>(),
+            checksum,
+        )
+        .with_latency(stats)
+    } else {
+        infra::ConsumerOutput::from_elapsed(
+            consumer_id,
+            consumed,
+            elapsed,
+            std::mem::size_of::<SignalEvent>(),
+            checksum,
+        )
+    };
     println!("{}", serde_json::to_string(&output)?);
     Ok(())
 }
@@ -635,7 +1156,11 @@ impl IpcBenchmark for Scenario {
     }
 
     fn message_size_bytes(&self) -> usize {
-        self.event_bytes
+        aligned_slot_bytes(self.event_bytes)
+    }
+
+    fn payload_bytes(&self) -> usize {
+        raw_payload_bytes(self.event_bytes)
     }
 
     fn buffer_depth(&self) -> usize {
@@ -682,12 +1207,31 @@ impl IpcBenchmark for Scenario {
             infra::unique_mmap_segment(&self.label)
         };
         let root_str = root.display().to_string();
+        let signal_mode = SignalLatencyMode::from_env()?;
+        let signal_sample_every = sample_every_from_env();
         let extra_env: Vec<(&str, String)> = {
             let mut envs = vec![
                 ("MMAP_NUM_CONSUMERS", self.consumers.to_string()),
                 ("MMAP_EVENT_SIZE", self.event_bytes.to_string()),
                 ("MMAP_WARMUP", self.warmup.to_string()),
             ];
+            if matches!(self.label.as_str(), label if label.starts_with("signal_"))
+                && signal_mode.uses_sidecar()
+            {
+                let sidecar_path = root.join(format!("{segment}.signal_timestamps"));
+                envs.push((
+                    "PERF_BENCH_SIGNAL_SIDECAR_MMAP_PATH",
+                    sidecar_path.display().to_string(),
+                ));
+            }
+            envs.push((
+                "PERF_BENCH_SIGNAL_LATENCY_MODE",
+                signal_mode.as_str().to_string(),
+            ));
+            envs.push((
+                "PERF_BENCH_SIGNAL_SAMPLE_EVERY",
+                signal_sample_every.to_string(),
+            ));
             if self.target_rate > 0 {
                 envs.push(("MMAP_TARGET_RATE", self.target_rate.to_string()));
             }
@@ -782,9 +1326,10 @@ impl infra::BenchHarness for RawRingMmapBench {
             }
             if selection.run_message() {
                 let eb = selection.event_bytes();
+                let slot = aligned_slot_bytes(eb);
+                let payload = raw_payload_bytes(eb);
                 println!(
-                    "Message class: {eb}B event, full {}B payload fill + timestamp",
-                    eb.saturating_sub(16),
+                    "Message class: request {eb}B, physical slot {slot}B, full {payload}B payload fill + timestamp",
                 );
             }
             if selection.run_signal() {

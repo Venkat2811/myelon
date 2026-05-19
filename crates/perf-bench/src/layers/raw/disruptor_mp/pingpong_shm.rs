@@ -8,11 +8,12 @@ use crate::bench_support::{common, table};
 use crate::cli::pingpong::{self, PingPongArgs as Args, PingPongBackend};
 use crate::infra;
 use crate::infra::coordination::UnifiedCoordination;
+use crate::infra::events::PingPongEvent as BenchmarkEvent;
 use crate::infra::latency::{self, LatencyRecorder};
 use crate::infra::liveness::{liveness_config, liveness_enabled};
 use crate::infra::output::reporting::{self, BenchReport};
 use clap::Parser;
-use common::{calculate_data_rate_gbps, format_throughput, BenchmarkEvent};
+use common::{calculate_data_rate_gbps, format_throughput};
 use disruptor_mp::{
     attach_shared_consumer, build_shared_single_producer, portable_shm_segment_name,
     CoordinationMode, SharedConsumer, SharedProducer,
@@ -686,7 +687,7 @@ fn run_benchmark<const SIZE: usize>(
             &pong_segment,
             &coordination_name,
             buffer_size,
-            SIZE,
+            args.message_size,
         )?;
 
         if !coordination.wait_for_echo_ready(timeout) {
@@ -788,31 +789,9 @@ fn run_process_one(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         args.message_size,
         "pingpong-shm-process-one",
         move || {
-            match args.message_size {
-            32 => run_benchmark::<32>(args, buffer_size),
-            64 => run_benchmark::<64>(args, buffer_size),
-            128 => run_benchmark::<128>(args, buffer_size),
-            512 => run_benchmark::<512>(args, buffer_size),
-            1024 => run_benchmark::<1024>(args, buffer_size),
-            2048 => run_benchmark::<2048>(args, buffer_size),
-            4096 => run_benchmark::<4096>(args, buffer_size),
-            16384 => run_benchmark::<16384>(args, buffer_size),
-            32768 => run_benchmark::<32768>(args, buffer_size),
-            65536 => run_benchmark::<65536>(args, buffer_size),
-            131072 => run_benchmark::<131072>(args, buffer_size),
-            524288 => run_benchmark::<524288>(args, buffer_size),
-            1048576 => run_benchmark::<1048576>(args, buffer_size),
-            2097152 => run_benchmark::<2097152>(args, buffer_size),
-            8388608 => run_benchmark::<8388608>(args, buffer_size),
-            16777216 => run_benchmark::<16777216>(args, buffer_size),
-            33554432 => run_benchmark::<33554432>(args, buffer_size),
-            67108864 => run_benchmark::<67108864>(args, buffer_size),
-            _ => Err(format!(
-                "unsupported message size: {} (expected 32, 64, 128, 512, 1024, 2048, 4096, 16384, 32768, 65536, 131072, 524288, 1048576, 2097152, 8388608, 16777216, 33554432, 67108864)",
-                args.message_size
-            )
-            .into()),
-        }
+            crate::dispatch_pingpong_event!(args.message_size, |<SIZE>| {
+                run_benchmark::<SIZE>(args, buffer_size)
+            })
         },
     )
 }
@@ -832,135 +811,15 @@ fn run_process_two() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     pingpong::run_with_large_stack_if_needed(message_size, "pingpong-shm-process-two", move || {
-        match message_size {
-            32 => echo_server::<32>(
+        crate::dispatch_pingpong_event!(message_size, |<SIZE>| {
+            echo_server::<SIZE>(
                 &ping_segment,
                 &pong_segment,
                 &coordination,
                 buffer_size,
                 &wait_strategy,
-            ),
-            64 => echo_server::<64>(
-                &ping_segment,
-                &pong_segment,
-                &coordination,
-                buffer_size,
-                &wait_strategy,
-            ),
-            128 => echo_server::<128>(
-                &ping_segment,
-                &pong_segment,
-                &coordination,
-                buffer_size,
-                &wait_strategy,
-            ),
-            512 => echo_server::<512>(
-                &ping_segment,
-                &pong_segment,
-                &coordination,
-                buffer_size,
-                &wait_strategy,
-            ),
-            1024 => echo_server::<1024>(
-                &ping_segment,
-                &pong_segment,
-                &coordination,
-                buffer_size,
-                &wait_strategy,
-            ),
-            2048 => echo_server::<2048>(
-                &ping_segment,
-                &pong_segment,
-                &coordination,
-                buffer_size,
-                &wait_strategy,
-            ),
-            4096 => echo_server::<4096>(
-                &ping_segment,
-                &pong_segment,
-                &coordination,
-                buffer_size,
-                &wait_strategy,
-            ),
-            16384 => echo_server::<16384>(
-                &ping_segment,
-                &pong_segment,
-                &coordination,
-                buffer_size,
-                &wait_strategy,
-            ),
-            32768 => echo_server::<32768>(
-                &ping_segment,
-                &pong_segment,
-                &coordination,
-                buffer_size,
-                &wait_strategy,
-            ),
-            65536 => echo_server::<65536>(
-                &ping_segment,
-                &pong_segment,
-                &coordination,
-                buffer_size,
-                &wait_strategy,
-            ),
-            131072 => echo_server::<131072>(
-                &ping_segment,
-                &pong_segment,
-                &coordination,
-                buffer_size,
-                &wait_strategy,
-            ),
-            524288 => echo_server::<524288>(
-                &ping_segment,
-                &pong_segment,
-                &coordination,
-                buffer_size,
-                &wait_strategy,
-            ),
-            1048576 => echo_server::<1048576>(
-                &ping_segment,
-                &pong_segment,
-                &coordination,
-                buffer_size,
-                &wait_strategy,
-            ),
-            2097152 => echo_server::<2097152>(
-                &ping_segment,
-                &pong_segment,
-                &coordination,
-                buffer_size,
-                &wait_strategy,
-            ),
-            8388608 => echo_server::<8388608>(
-                &ping_segment,
-                &pong_segment,
-                &coordination,
-                buffer_size,
-                &wait_strategy,
-            ),
-            16777216 => echo_server::<16777216>(
-                &ping_segment,
-                &pong_segment,
-                &coordination,
-                buffer_size,
-                &wait_strategy,
-            ),
-            33554432 => echo_server::<33554432>(
-                &ping_segment,
-                &pong_segment,
-                &coordination,
-                buffer_size,
-                &wait_strategy,
-            ),
-            67108864 => echo_server::<67108864>(
-                &ping_segment,
-                &pong_segment,
-                &coordination,
-                buffer_size,
-                &wait_strategy,
-            ),
-            _ => Err(format!("unsupported child message size: {message_size}").into()),
-        }
+            )
+        })
     })
 }
 

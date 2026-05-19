@@ -90,6 +90,33 @@ pub struct ProducerCounters {
     pub producer_full_events: Option<crate::observability::CounterHandle>,
 }
 
+/// Select which producer-side counters are attached to a shared counters file.
+///
+/// The full set is appropriate for normal observability. Targeted microbenchmarks can
+/// deliberately narrow the set to reduce hot-path perturbation while still exposing the
+/// counters required for a specific experiment.
+#[derive(Clone, Copy, Debug)]
+pub struct ProducerCounterSelection {
+    /// Attach the monotonic `events_published` counter.
+    pub events_published: bool,
+    /// Attach the `producer_full_events` backpressure counter.
+    pub producer_full_events: bool,
+}
+
+impl ProducerCounterSelection {
+    /// Full RFC-0040 producer counter set.
+    pub const FULL: Self = Self {
+        events_published: true,
+        producer_full_events: true,
+    };
+
+    /// Minimal producer counter set for experiments that only need publish progress.
+    pub const LITE: Self = Self {
+        events_published: true,
+        producer_full_events: false,
+    };
+}
+
 impl<E> SharedProducer<E>
 where
     E: Copy + Default,
@@ -149,17 +176,34 @@ where
     /// `publish` / `try_publish` operations record into the file with
     /// one relaxed atomic increment per event. RFC 0040 §Counters.
     pub fn attach_counters(&mut self, file: &crate::observability::CountersFile) {
+        self.attach_counters_selected(file, ProducerCounterSelection::FULL);
+    }
+
+    /// Register a selected subset of producer counters in the supplied counters file.
+    pub fn attach_counters_selected(
+        &mut self,
+        file: &crate::observability::CountersFile,
+        selection: ProducerCounterSelection,
+    ) {
         use crate::observability::{ids, COUNTER_FLAG_PRODUCER};
-        self.counters.events_published = file.register(
-            ids::EVENTS_PUBLISHED,
-            COUNTER_FLAG_PRODUCER,
-            "events_published",
-        );
-        self.counters.producer_full_events = file.register(
-            ids::PRODUCER_FULL_EVENTS,
-            COUNTER_FLAG_PRODUCER,
-            "producer_full_events",
-        );
+        self.counters.events_published = if selection.events_published {
+            file.register(
+                ids::EVENTS_PUBLISHED,
+                COUNTER_FLAG_PRODUCER,
+                "events_published",
+            )
+        } else {
+            None
+        };
+        self.counters.producer_full_events = if selection.producer_full_events {
+            file.register(
+                ids::PRODUCER_FULL_EVENTS,
+                COUNTER_FLAG_PRODUCER,
+                "producer_full_events",
+            )
+        } else {
+            None
+        };
     }
 
     /// Read-only access to the producer's attached counters. Useful for

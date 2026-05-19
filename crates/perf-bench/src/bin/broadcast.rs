@@ -25,8 +25,9 @@ struct Args {
     #[arg(long, value_parser = ["shm", "mmap"], default_value = "shm")]
     backend: String,
 
-    /// Message size in bytes (total event size including 16B header).
+    /// Message size in bytes (logical event size including 16B header).
     /// For `raw_ring`: overrides the default 144B message events (e.g. --size 2048).
+    /// Physical slot bytes may round up to the raw event's 64B alignment.
     /// For sweep layers: selects the event size to benchmark.
     #[arg(long, short = 's')]
     size: Option<usize>,

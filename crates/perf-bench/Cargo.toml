@@ -49,4 +49,3 @@ path = "src/bin/broadcast.rs"
 [[bin]]
 name = "perf-bench-signal"
 path = "src/bin/signal.rs"
-
