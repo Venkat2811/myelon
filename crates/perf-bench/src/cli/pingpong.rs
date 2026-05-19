@@ -304,8 +304,8 @@ pub fn scenario_label(args: &PingPongArgs) -> String {
 
 pub fn apply_wait_strategy(wait_strategy: &str) {
     match wait_strategy.to_ascii_lowercase().as_str() {
-        "sleep" => std::thread::sleep(Duration::from_micros(50)),
-        "block" => std::thread::sleep(Duration::from_millis(1)),
+        "sleep" => disruptor_mp::perform_default_consume_sleep_wait(),
+        "block" => disruptor_mp::perform_default_block_wait(),
         "spinloop" => std::hint::spin_loop(),
         _ => std::hint::spin_loop(),
     }

@@ -47,7 +47,7 @@ pub mod runner_verify;
 // Convenience re-exports preserve the flat DST harness surface
 // (`BackendKind`, `ChildReport`, etc.) for workspace tests.
 pub use runner::{DstRunner, DstRunnerError, RawRingHarness, RequiredConsumerLivenessPolicy};
-pub use runner_config::{BackendKind, CodecKind, DstConfig};
+pub use runner_config::{BackendKind, CodecKind, DstConfig, WaitStrategyKind};
 pub use runner_fault::FaultInjector;
 pub use runner_oracle::{
     payload_bytes, stable_payload_hash, MessageOracle, OracleMessage, OracleViolation,

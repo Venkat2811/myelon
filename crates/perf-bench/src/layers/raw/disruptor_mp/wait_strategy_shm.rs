@@ -126,8 +126,8 @@ fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
             match wait_strategy.as_str() {
                 "BusySpin" => {}
                 "BusySpinWithSpinLoopHint" => std::hint::spin_loop(),
-                "Sleep" => std::thread::sleep(Duration::from_micros(1)),
-                "Block" => std::thread::sleep(Duration::from_millis(1)),
+                "Sleep" => disruptor_mp::perform_default_consume_sleep_wait(),
+                "Block" => disruptor_mp::perform_default_block_wait(),
                 _ => std::hint::spin_loop(),
             }
         }

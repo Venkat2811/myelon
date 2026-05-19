@@ -206,12 +206,15 @@ pub use rkyv;
 pub use flatbuffers;
 
 pub use disruptor_mp::{
-    attach_shared_consumer, build_shared_single_producer, portable_shm_segment_name, AutoConsumer,
-    AutoWaitStrategy, CoordinationMode, MmapConsumer, MmapProducer, MmapTransportLayout,
-    MultiProcessError, MultiProcessResult, RequiredConsumerAlert, RequiredConsumerAlertHook,
-    RequiredConsumerError, RequiredConsumerFailureAction, RequiredConsumerLivenessConfig,
-    RingBufferFull, Sequence, SharedConsumer, SharedDisruptorBuilder, SharedProducer,
-    DEFAULT_MAX_CONSUMERS, PORTABLE_SHM_SEGMENT_NAME_MAX_LEN,
+    attach_shared_consumer, build_shared_single_producer, default_block_strategy_duration,
+    default_consume_sleep_duration, default_discovery_poll_duration, perform_default_block_wait,
+    perform_default_consume_sleep_wait, perform_default_discovery_poll_wait, perform_sleep_wait,
+    portable_shm_segment_name, AutoConsumer, AutoWaitStrategy, CoordinationMode, MmapConsumer,
+    MmapProducer, MmapTransportLayout, MultiProcessError, MultiProcessResult,
+    RequiredConsumerAlert, RequiredConsumerAlertHook, RequiredConsumerError,
+    RequiredConsumerFailureAction, RequiredConsumerLivenessConfig, RingBufferFull, Sequence,
+    SharedConsumer, SharedDisruptorBuilder, SharedProducer, DEFAULT_MAX_CONSUMERS,
+    PORTABLE_SHM_SEGMENT_NAME_MAX_LEN,
 };
 pub use inference::{FixedTopology, InferenceTopologyError, InferenceTopologyResult, WorkerCount};
 pub use transport::{

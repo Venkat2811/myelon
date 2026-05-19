@@ -50,9 +50,9 @@ impl Default for Event {
 fn apply_wait_strategy(wait_strategy: &str) {
     match wait_strategy {
         "BusySpin" | "BusySpinWithSpinLoopHint" => std::hint::spin_loop(),
-        "Sleep" => std::thread::sleep(Duration::from_micros(1)),
-        "Block" => std::thread::sleep(Duration::from_millis(1)),
-        _ => std::thread::sleep(Duration::from_millis(1)),
+        "Sleep" => disruptor_mp::perform_default_consume_sleep_wait(),
+        "Block" => disruptor_mp::perform_default_block_wait(),
+        _ => disruptor_mp::perform_default_block_wait(),
     }
 }
 
@@ -83,7 +83,9 @@ fn producer_process() -> Result<(), Box<dyn std::error::Error>> {
     let strategy = match wait_strategy.as_str() {
         "BusySpin" => disruptor_mp::AutoWaitStrategy::BusySpin,
         "BusySpinWithSpinLoopHint" => disruptor_mp::AutoWaitStrategy::BusySpinWithSpinLoopHint,
-        "Sleep" => disruptor_mp::AutoWaitStrategy::Sleep(Duration::from_micros(1)),
+        "Sleep" => {
+            disruptor_mp::AutoWaitStrategy::Sleep(disruptor_mp::default_consume_sleep_duration())
+        }
         "Block" => disruptor_mp::AutoWaitStrategy::Block,
         _ => disruptor_mp::AutoWaitStrategy::Block,
     };

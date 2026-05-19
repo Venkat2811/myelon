@@ -224,11 +224,7 @@ fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
     let mut checksum_total = 0u64;
     let total = env.warmup + env.messages;
     let mut measured_start = None;
-    let interval_ns = if env.target_rate > 0 {
-        Some(1_000_000_000u64 / env.target_rate)
-    } else {
-        None
-    };
+    let interval_ns = crate::infra::co_interval_ns(env.target_rate);
     let base_ns = nanos_now();
 
     match env.codec.as_str() {

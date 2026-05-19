@@ -33,7 +33,7 @@ impl DiscoveryMode {
         DiscoveryMode::Enabled {
             max_consumers,
             consumer_prefix: None,
-            scan_interval: Duration::from_millis(100),
+            scan_interval: super::wait::default_discovery_poll_duration(),
         }
     }
 
@@ -43,7 +43,7 @@ impl DiscoveryMode {
         DiscoveryMode::Enabled {
             max_consumers,
             consumer_prefix: Some(prefix),
-            scan_interval: Duration::from_millis(100),
+            scan_interval: super::wait::default_discovery_poll_duration(),
         }
     }
 
@@ -322,7 +322,7 @@ impl SharedConsumerBarrier {
             if discovery_probe.consumer_cursors.len() >= min_consumers_usize {
                 return true;
             }
-            std::thread::sleep(super::wait::SLEEP_CONFIG.discovery_poll_duration());
+            super::wait::perform_default_discovery_poll_wait();
         }
         false
     }
@@ -604,6 +604,23 @@ mod tests {
     #[should_panic(expected = "max_consumers must be greater than zero")]
     fn discovery_mode_with_prefix_rejects_zero_max_consumers() {
         let _ = DiscoveryMode::with_consumer_prefix(0, "test".to_string());
+    }
+
+    #[test]
+    fn discovery_mode_uses_runtime_default_scan_interval() {
+        let expected = crate::default_discovery_poll_duration();
+        match DiscoveryMode::enabled(1) {
+            DiscoveryMode::Enabled { scan_interval, .. } => {
+                assert_eq!(scan_interval, expected);
+            }
+            DiscoveryMode::Disabled => panic!("expected enabled discovery mode"),
+        }
+        match DiscoveryMode::with_consumer_prefix(1, "cp".to_string()) {
+            DiscoveryMode::Enabled { scan_interval, .. } => {
+                assert_eq!(scan_interval, expected);
+            }
+            DiscoveryMode::Disabled => panic!("expected enabled discovery mode"),
+        }
     }
 
     #[test]

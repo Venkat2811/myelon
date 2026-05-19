@@ -16,6 +16,8 @@ pub struct RunMetadata {
     pub cpu: String,
     pub git_commit: Option<String>,
     pub rust_version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_msrv: Option<String>,
 }
 
 impl RunMetadata {
@@ -25,11 +27,26 @@ impl RunMetadata {
             platform: format!("{} {}", std::env::consts::OS, std::env::consts::ARCH),
             cpu: detect_cpu(),
             git_commit: detect_git_commit(),
-            rust_version: env!("CARGO_PKG_RUST_VERSION")
-                .parse()
-                .unwrap_or_else(|_| "unknown".to_string()),
+            rust_version: detect_rustc_version(),
+            workspace_msrv: option_env!("CARGO_PKG_RUST_VERSION").map(str::to_string),
         }
     }
+}
+
+fn detect_rustc_version() -> String {
+    Command::new("rustc")
+        .arg("--version")
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| {
+            option_env!("CARGO_PKG_RUST_VERSION")
+                .unwrap_or("unknown")
+                .to_string()
+        })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

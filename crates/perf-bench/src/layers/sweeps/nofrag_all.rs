@@ -1007,6 +1007,11 @@ impl infra::BenchHarness for NofragAllBench {
             ($scenario:expr, $label:expr, $backend:expr) => {{
                 let bench_result = ($scenario).run()?;
                 if !selection.output_args.json_mode {
+                    let p99 = bench_result
+                        .latency
+                        .as_ref()
+                        .map(|latency| crate::infra::latency::format_ns(latency.p99_ns))
+                        .unwrap_or_else(|| "-".to_string());
                     println!(
                         "  {:<12} {:<5} {:<8} prod={:>10} cons={:>10} p99={:>8}",
                         $label,
@@ -1014,13 +1019,7 @@ impl infra::BenchHarness for NofragAllBench {
                         bench_result.measurement_mode.replace("co_aware@", "CO@"),
                         format_throughput(bench_result.results.producer_throughput_ops_sec),
                         format_throughput(bench_result.results.consumer_throughput_ops_sec),
-                        if bench_result.latency.is_none() {
-                            "-".to_string()
-                        } else {
-                            crate::infra::latency::format_ns(
-                                bench_result.latency.as_ref().expect("latency").p99_ns,
-                            )
-                        }
+                        p99
                     );
                 }
                 report.add(bench_result);

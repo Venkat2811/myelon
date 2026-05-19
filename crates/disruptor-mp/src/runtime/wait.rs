@@ -19,6 +19,8 @@ pub struct SleepConfig {
     pub discovery_poll_ms: u64,
     /// `consume_next_with_sleep` duration (microseconds)
     pub consume_sleep_us: u64,
+    /// Durations below this threshold yield instead of calling into the OS scheduler.
+    pub sleep_yield_threshold_us: u64,
     /// Python consumer busy wait prevention (microseconds)
     pub consumer_busy_wait_us: u64,
 }
@@ -27,9 +29,13 @@ impl Default for SleepConfig {
     fn default() -> Self {
         Self {
             shutdown_grace_ms: 10,
-            block_strategy_ms: 1.0,
+            // Keep the default block backoff in the low-microsecond range. The current
+            // implementation is still sleep-based rather than a true futex/condvar block,
+            // so millisecond-scale defaults make the library look arbitrarily slow.
+            block_strategy_ms: 0.01,
             discovery_poll_ms: 10,
             consume_sleep_us: 1,
+            sleep_yield_threshold_us: 50,
             consumer_busy_wait_us: 10,
         }
     }
@@ -47,8 +53,12 @@ impl SleepConfig {
             }
         }
 
-        // Parse block strategy sleep
-        if let Ok(val) = env::var("DISRUPTOR_BLOCK_STRATEGY_MS") {
+        // Parse block strategy sleep (microsecond override first for sane low-latency tuning).
+        if let Ok(val) = env::var("DISRUPTOR_BLOCK_STRATEGY_US") {
+            if let Ok(us) = val.parse::<u64>() {
+                config.block_strategy_ms = us as f64 / 1000.0;
+            }
+        } else if let Ok(val) = env::var("DISRUPTOR_BLOCK_STRATEGY_MS") {
             if let Ok(ms) = val.parse::<f64>() {
                 if ms >= 0.0 {
                     config.block_strategy_ms = ms;
@@ -67,6 +77,12 @@ impl SleepConfig {
         if let Ok(val) = env::var("DISRUPTOR_CONSUME_SLEEP_US") {
             if let Ok(us) = val.parse::<u64>() {
                 config.consume_sleep_us = us;
+            }
+        }
+
+        if let Ok(val) = env::var("DISRUPTOR_SLEEP_YIELD_THRESHOLD_US") {
+            if let Ok(us) = val.parse::<u64>() {
+                config.sleep_yield_threshold_us = us;
             }
         }
 
@@ -112,6 +128,59 @@ impl SleepConfig {
 /// Global sleep configuration loaded once at startup
 pub static SLEEP_CONFIG: Lazy<SleepConfig> = Lazy::new(SleepConfig::from_env);
 
+/// Return the configured backoff used by `AutoWaitStrategy::Block`.
+#[inline]
+pub fn default_block_strategy_duration() -> Duration {
+    SLEEP_CONFIG.block_strategy_duration()
+}
+
+/// Return the configured sleep used by `consume_next_with_sleep` and similar helpers.
+#[inline]
+pub fn default_consume_sleep_duration() -> Duration {
+    SLEEP_CONFIG.consume_sleep_duration()
+}
+
+/// Return the configured poll interval used by discovery/startup coordination loops.
+#[inline]
+pub fn default_discovery_poll_duration() -> Duration {
+    SLEEP_CONFIG.discovery_poll_duration()
+}
+
+/// For very short waits, yield instead of sleeping so scheduler granularity does not
+/// turn microsecond-scale wait strategies into tens-of-microseconds stalls.
+#[inline]
+pub fn sleep_or_yield(duration: Duration) {
+    if duration <= Duration::from_micros(SLEEP_CONFIG.sleep_yield_threshold_us) {
+        std::thread::yield_now();
+    } else {
+        std::thread::sleep(duration);
+    }
+}
+
+/// Apply the configured `AutoWaitStrategy::Block` wait policy.
+#[inline]
+pub fn perform_default_block_wait() {
+    sleep_or_yield(default_block_strategy_duration());
+}
+
+/// Apply the configured consumer sleep wait policy.
+#[inline]
+pub fn perform_default_consume_sleep_wait() {
+    sleep_or_yield(default_consume_sleep_duration());
+}
+
+/// Apply the configured discovery/startup polling wait policy.
+#[inline]
+pub fn perform_default_discovery_poll_wait() {
+    sleep_or_yield(default_discovery_poll_duration());
+}
+
+/// Apply the explicit `AutoWaitStrategy::Sleep(duration)` wait policy.
+#[inline]
+pub fn perform_sleep_wait(duration: Duration) {
+    sleep_or_yield(duration);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -120,9 +189,10 @@ mod tests {
     fn test_default_config() {
         let config = SleepConfig::default();
         assert_eq!(config.shutdown_grace_ms, 10);
-        assert_eq!(config.block_strategy_ms, 1.0);
+        assert_eq!(config.block_strategy_ms, 0.01);
         assert_eq!(config.discovery_poll_ms, 10);
         assert_eq!(config.consume_sleep_us, 1);
+        assert_eq!(config.sleep_yield_threshold_us, 50);
         assert_eq!(config.consumer_busy_wait_us, 10);
     }
 
@@ -133,6 +203,7 @@ mod tests {
         assert_eq!(config.shutdown_grace_duration(), Duration::from_millis(10));
         assert_eq!(config.discovery_poll_duration(), Duration::from_millis(10));
         assert_eq!(config.consume_sleep_duration(), Duration::from_micros(1));
+        assert_eq!(config.block_strategy_duration(), Duration::from_micros(10));
         assert_eq!(
             config.consumer_busy_wait_duration(),
             Duration::from_micros(10)

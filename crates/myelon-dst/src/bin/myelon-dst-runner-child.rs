@@ -2,8 +2,8 @@
 //!
 use disruptor_mp::dst::contract::ProcessRole;
 use disruptor_mp::{
-    attach_shared_consumer, build_shared_single_producer, MmapConsumer, MmapProducer,
-    MmapTransportLayout, RequiredConsumerLivenessConfig,
+    attach_shared_consumer, build_shared_single_producer, AutoWaitStrategy, MmapConsumer,
+    MmapProducer, MmapTransportLayout, RequiredConsumerLivenessConfig,
 };
 use myelon_dst::{payload_bytes, stable_payload_hash, BackendKind, ChildReport, OracleMessage};
 use serde_json::to_string;
@@ -79,6 +79,31 @@ fn write_checkpoint(report: &ChildReport) {
     .expect("child report should write");
 }
 
+fn checkpoint_every() -> Option<u64> {
+    match env::var("DST_CHECKPOINT_EVERY") {
+        Ok(raw) => {
+            let every = raw
+                .parse::<u64>()
+                .unwrap_or_else(|err| panic!("invalid DST_CHECKPOINT_EVERY='{raw}': {err}"));
+            if every == 0 {
+                None
+            } else {
+                Some(every)
+            }
+        }
+        Err(_) => Some(1),
+    }
+}
+
+fn maybe_write_checkpoint(report: &ChildReport, event_count: u64) {
+    let Some(every) = checkpoint_every() else {
+        return;
+    };
+    if event_count.is_multiple_of(every) {
+        write_checkpoint(report);
+    }
+}
+
 fn producer_completed() -> bool {
     let report_path =
         env::var("DST_PRODUCER_REPORT_PATH").expect("DST_PRODUCER_REPORT_PATH should be set");
@@ -149,6 +174,48 @@ fn parse_backend() -> BackendKind {
         "mmap" => BackendKind::Mmap,
         other => panic!("unsupported backend: {other}"),
     }
+}
+
+fn parse_wait_strategy() -> AutoWaitStrategy {
+    match env::var("DST_WAIT_STRATEGY")
+        .unwrap_or_else(|_| "busyspin".to_string())
+        .as_str()
+    {
+        "busyspin" => AutoWaitStrategy::BusySpin,
+        "sleep" => AutoWaitStrategy::Sleep(disruptor_mp::default_consume_sleep_duration()),
+        "block" => AutoWaitStrategy::Block,
+        "spinloop" => AutoWaitStrategy::BusySpinWithSpinLoopHint,
+        other => panic!("unsupported DST_WAIT_STRATEGY: {other}"),
+    }
+}
+
+fn apply_wait_strategy(strategy: &AutoWaitStrategy) {
+    match strategy {
+        AutoWaitStrategy::BusySpin => std::hint::spin_loop(),
+        AutoWaitStrategy::BusySpinWithSpinLoopHint => std::hint::spin_loop(),
+        AutoWaitStrategy::SpinThenYield { spins } => {
+            for _ in 0..*spins {
+                std::hint::spin_loop();
+            }
+            thread::yield_now();
+        }
+        AutoWaitStrategy::Block => disruptor_mp::perform_default_block_wait(),
+        AutoWaitStrategy::Sleep(duration) => disruptor_mp::perform_sleep_wait(*duration),
+    }
+}
+
+fn dst_discovery_poll_duration() -> Duration {
+    let default_ms =
+        u64::try_from(disruptor_mp::default_discovery_poll_duration().as_millis()).unwrap_or(10);
+    Duration::from_millis(parse_env_or("DST_DISCOVERY_POLL_MS", default_ms.max(1)))
+}
+
+fn perform_dst_discovery_poll_wait() {
+    disruptor_mp::perform_sleep_wait(dst_discovery_poll_duration());
+}
+
+fn dst_producer_done_grace_duration() -> Duration {
+    Duration::from_millis(parse_env_or("DST_PRODUCER_DONE_GRACE_MS", 25u64))
 }
 
 fn make_event(seed: u64, sequence: u64, payload_len: usize) -> (RawRingEvent, OracleMessage) {
@@ -245,7 +312,7 @@ fn run_shm_producer() -> ChildReport {
             .discover_consumer_with_prefix_and_interval(
                 consumer_count,
                 &consumer_prefix,
-                Duration::from_millis(10),
+                dst_discovery_poll_duration(),
             )
             .wait_for_consumers(consumer_count as i64, Duration::from_secs(15));
     }
@@ -273,13 +340,16 @@ fn run_shm_producer() -> ChildReport {
         }
         checksum_total = checksum_total.wrapping_add(oracle.payload_hash);
         messages.push(oracle);
-        write_checkpoint(&ChildReport {
-            role: ProcessRole::Producer,
-            messages: messages.clone(),
-            checksum_total,
-            backpressure_events: 0,
-            attached_after_ms: 0,
-        });
+        maybe_write_checkpoint(
+            &ChildReport {
+                role: ProcessRole::Producer,
+                messages: messages.clone(),
+                checksum_total,
+                backpressure_events: 0,
+                attached_after_ms: 0,
+            },
+            messages.len() as u64,
+        );
         if pause_every > 0 && (sequence as usize + 1).is_multiple_of(pause_every) {
             thread::sleep(Duration::from_micros(pause_micros));
         }
@@ -310,6 +380,7 @@ fn run_shm_consumer() -> ChildReport {
     let consumer_id = env::var("DST_CONSUMER_ID").expect("DST_CONSUMER_ID should be set");
     let allow_corruption_validation =
         env::var("DST_ALLOW_CORRUPTION_VALIDATION").as_deref() == Ok("1");
+    let wait_strategy = parse_wait_strategy();
 
     let start = Instant::now();
     let attach_deadline = start + Duration::from_secs(15);
@@ -318,7 +389,7 @@ fn run_shm_consumer() -> ChildReport {
             .with_consumer_id(&consumer_id);
         match builder.build_consumer() {
             Ok(consumer) => break consumer,
-            Err(_) if Instant::now() < attach_deadline => thread::sleep(Duration::from_millis(20)),
+            Err(_) if Instant::now() < attach_deadline => perform_dst_discovery_poll_wait(),
             Err(err) => panic!("consumer attach failed: {err}"),
         }
     };
@@ -344,21 +415,24 @@ fn run_shm_consumer() -> ChildReport {
             checksum_total = checksum_total.wrapping_add(oracle.payload_hash);
             messages.push(oracle);
             producer_done_at = None;
-            write_checkpoint(&ChildReport {
-                role: ProcessRole::Consumer {
-                    index: index as u32,
+            maybe_write_checkpoint(
+                &ChildReport {
+                    role: ProcessRole::Consumer {
+                        index: index as u32,
+                    },
+                    messages: messages.clone(),
+                    checksum_total,
+                    backpressure_events: 0,
+                    attached_after_ms,
                 },
-                messages: messages.clone(),
-                checksum_total,
-                backpressure_events: 0,
-                attached_after_ms,
-            });
+                messages.len() as u64,
+            );
             continue;
         }
 
         if producer_completed() {
             let done_at = producer_done_at.get_or_insert_with(Instant::now);
-            if done_at.elapsed() >= Duration::from_millis(250) {
+            if done_at.elapsed() >= dst_producer_done_grace_duration() {
                 break;
             }
         }
@@ -368,7 +442,7 @@ fn run_shm_consumer() -> ChildReport {
             "consumer timed out after consuming {} messages",
             messages.len()
         );
-        thread::sleep(Duration::from_millis(1));
+        apply_wait_strategy(&wait_strategy);
     }
 
     let report = ChildReport {
@@ -431,13 +505,16 @@ fn run_mmap_producer() -> ChildReport {
         }
         checksum_total = checksum_total.wrapping_add(oracle.payload_hash);
         messages.push(oracle);
-        write_checkpoint(&ChildReport {
-            role: ProcessRole::Producer,
-            messages: messages.clone(),
-            checksum_total,
-            backpressure_events: 0,
-            attached_after_ms: 0,
-        });
+        maybe_write_checkpoint(
+            &ChildReport {
+                role: ProcessRole::Producer,
+                messages: messages.clone(),
+                checksum_total,
+                backpressure_events: 0,
+                attached_after_ms: 0,
+            },
+            messages.len() as u64,
+        );
         if pause_every > 0 && (sequence as usize + 1).is_multiple_of(pause_every) {
             thread::sleep(Duration::from_micros(pause_micros));
         }
@@ -467,13 +544,14 @@ fn run_mmap_consumer() -> ChildReport {
     let consumer_id = env::var("DST_CONSUMER_ID").expect("DST_CONSUMER_ID should be set");
     let allow_corruption_validation =
         env::var("DST_ALLOW_CORRUPTION_VALIDATION").as_deref() == Ok("1");
+    let wait_strategy = parse_wait_strategy();
 
     let start = Instant::now();
     let attach_deadline = start + Duration::from_secs(15);
     let mut consumer = loop {
         match MmapConsumer::<RawRingEvent>::attach(child_layout(), ring_depth, &consumer_id) {
             Ok(consumer) => break consumer,
-            Err(_) if Instant::now() < attach_deadline => thread::sleep(Duration::from_millis(20)),
+            Err(_) if Instant::now() < attach_deadline => perform_dst_discovery_poll_wait(),
             Err(err) => panic!("mmap consumer attach failed: {err}"),
         }
     };
@@ -499,21 +577,24 @@ fn run_mmap_consumer() -> ChildReport {
             checksum_total = checksum_total.wrapping_add(oracle.payload_hash);
             messages.push(oracle);
             producer_done_at = None;
-            write_checkpoint(&ChildReport {
-                role: ProcessRole::Consumer {
-                    index: index as u32,
+            maybe_write_checkpoint(
+                &ChildReport {
+                    role: ProcessRole::Consumer {
+                        index: index as u32,
+                    },
+                    messages: messages.clone(),
+                    checksum_total,
+                    backpressure_events: 0,
+                    attached_after_ms,
                 },
-                messages: messages.clone(),
-                checksum_total,
-                backpressure_events: 0,
-                attached_after_ms,
-            });
+                messages.len() as u64,
+            );
             continue;
         }
 
         if producer_completed() {
             let done_at = producer_done_at.get_or_insert_with(Instant::now);
-            if done_at.elapsed() >= Duration::from_millis(250) {
+            if done_at.elapsed() >= dst_producer_done_grace_duration() {
                 break;
             }
         }
@@ -523,7 +604,7 @@ fn run_mmap_consumer() -> ChildReport {
             "mmap consumer timed out after consuming {} messages",
             messages.len()
         );
-        thread::sleep(Duration::from_millis(1));
+        apply_wait_strategy(&wait_strategy);
     }
 
     let report = ChildReport {

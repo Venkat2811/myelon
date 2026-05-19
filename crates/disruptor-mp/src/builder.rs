@@ -740,9 +740,7 @@ where
                             if processed == 0 {
                                 // No events available, wait a bit before trying again
                                 // This prevents the infinite spin in consume_next()
-                                std::thread::sleep(
-                                    super::wait::SLEEP_CONFIG.block_strategy_duration(),
-                                );
+                                super::wait::perform_default_block_wait();
                             }
 
                             processed
@@ -755,7 +753,7 @@ where
                             });
 
                             if processed == 0 {
-                                std::thread::sleep(duration);
+                                super::wait::sleep_or_yield(duration);
                             }
                             processed
                         }

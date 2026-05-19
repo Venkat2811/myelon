@@ -440,7 +440,7 @@ where
             }
             // CPU efficient: Use sleep to reduce CPU usage (lower throughput)
             // TODO: Implement proper blocking with futex/condition variables
-            std::thread::sleep(super::wait::SLEEP_CONFIG.consume_sleep_duration());
+            super::wait::perform_default_consume_sleep_wait();
         }
     }
 
@@ -455,7 +455,7 @@ where
                     event_ptr,
                 };
             }
-            std::thread::sleep(super::wait::SLEEP_CONFIG.consume_sleep_duration());
+            super::wait::perform_default_consume_sleep_wait();
         }
     }
 

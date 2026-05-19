@@ -282,6 +282,48 @@ pub mod lock_free {
     pub type ProducerBarrier = super::cursor::SharedCursor;
 }
 
+/// Return the configured backoff used by `AutoWaitStrategy::Block`.
+#[inline]
+pub fn default_block_strategy_duration() -> std::time::Duration {
+    wait::default_block_strategy_duration()
+}
+
+/// Return the configured sleep used by `consume_next_with_sleep` and similar helpers.
+#[inline]
+pub fn default_consume_sleep_duration() -> std::time::Duration {
+    wait::default_consume_sleep_duration()
+}
+
+/// Return the configured poll interval used by discovery/startup coordination loops.
+#[inline]
+pub fn default_discovery_poll_duration() -> std::time::Duration {
+    wait::default_discovery_poll_duration()
+}
+
+/// Apply the configured `AutoWaitStrategy::Block` wait policy.
+#[inline]
+pub fn perform_default_block_wait() {
+    wait::perform_default_block_wait()
+}
+
+/// Apply the configured consumer sleep wait policy.
+#[inline]
+pub fn perform_default_consume_sleep_wait() {
+    wait::perform_default_consume_sleep_wait()
+}
+
+/// Apply the configured discovery/startup polling wait policy.
+#[inline]
+pub fn perform_default_discovery_poll_wait() {
+    wait::perform_default_discovery_poll_wait()
+}
+
+/// Apply the explicit `AutoWaitStrategy::Sleep(duration)` wait policy.
+#[inline]
+pub fn perform_sleep_wait(duration: std::time::Duration) {
+    wait::perform_sleep_wait(duration)
+}
+
 pub use crate::mmap_barrier::MmapConsumerBarrier;
 pub use crate::mmap_consumer::MmapConsumer;
 pub use crate::mmap_cursor::MmapCursor;

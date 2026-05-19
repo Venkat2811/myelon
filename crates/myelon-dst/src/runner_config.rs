@@ -160,6 +160,11 @@ impl DstConfig {
         self.message_count = message_count;
         self
     }
+
+    pub fn with_wait_strategy(mut self, wait_strategy: WaitStrategyKind) -> Self {
+        self.wait_strategy = wait_strategy;
+        self
+    }
 }
 
 #[cfg(test)]

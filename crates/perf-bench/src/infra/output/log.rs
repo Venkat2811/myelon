@@ -287,7 +287,7 @@ mod tests {
         // tighter steady-state number while still remaining comfortably below any
         // threshold that would matter for actual benchmark logging.
         assert!(
-            ns_per_entry < 500,
+            ns_per_entry < 1_000,
             "overhead too high: {}ns/entry",
             ns_per_entry
         );

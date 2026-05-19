@@ -163,6 +163,16 @@ where
         }
     }
 
+    /// Block until one event is available, then consume it with the configured sleep policy.
+    pub fn consume_next_with_sleep(&mut self) -> (Sequence, E) {
+        loop {
+            if let Some(result) = self.try_consume_next() {
+                return result;
+            }
+            crate::perform_default_consume_sleep_wait();
+        }
+    }
+
     /// Block until one event is available, then lease it.
     pub fn consume_next_leased(&mut self) -> MmapConsumerLease<'_, E> {
         loop {
@@ -177,6 +187,23 @@ where
                 };
             }
             std::hint::spin_loop();
+        }
+    }
+
+    /// Block until one event is available, then lease it with the configured sleep policy.
+    pub fn consume_next_leased_with_sleep(&mut self) -> MmapConsumerLease<'_, E> {
+        loop {
+            let producer_sequence = self.producer_sequence.load(Ordering::Acquire);
+            let next_sequence = self.last_processed_sequence + 1;
+            if next_sequence <= producer_sequence {
+                let event_ptr = self.ring_buffer.get(next_sequence) as *const E;
+                return MmapConsumerLease {
+                    consumer: self,
+                    sequence: next_sequence,
+                    event_ptr,
+                };
+            }
+            crate::perform_default_consume_sleep_wait();
         }
     }
 

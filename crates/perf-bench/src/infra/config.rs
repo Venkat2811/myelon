@@ -31,6 +31,15 @@ pub fn read_env_string(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_string())
 }
 
+/// Convert a target rate in ops/s to an inter-message interval in nanoseconds.
+///
+/// Returns `None` when the target rate is zero, which indicates unconstrained
+/// throughput mode in the benchmark surfaces.
+#[inline]
+pub fn co_interval_ns(target_rate: u64) -> Option<u64> {
+    1_000_000_000u64.checked_div(target_rate)
+}
+
 /// Default benchmark timeout in seconds. Override with `BENCH_TIMEOUT` env var.
 pub fn bench_timeout_secs() -> u64 {
     read_env_u64("BENCH_TIMEOUT", 300) // 5 minutes default
@@ -133,5 +142,12 @@ mod tests {
 
         std::env::remove_var("BENCH_TIMEOUT");
         std::env::remove_var("BENCH_TIMEOUT_OVERRIDE");
+    }
+
+    #[test]
+    fn test_co_interval_ns_returns_none_for_zero() {
+        assert_eq!(co_interval_ns(0), None);
+        assert_eq!(co_interval_ns(1), Some(1_000_000_000));
+        assert_eq!(co_interval_ns(2), Some(500_000_000));
     }
 }

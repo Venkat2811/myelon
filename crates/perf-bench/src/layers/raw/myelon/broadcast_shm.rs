@@ -124,8 +124,7 @@ fn message_producer_sized<const SIZE: usize>() -> Result<(), Box<dyn std::error:
 
     // Measured — full 128B payload fill + absolute timestamp on every event
     let start = Instant::now();
-    if target_rate > 0 {
-        let interval_ns = 1_000_000_000u64 / target_rate;
+    if let Some(interval_ns) = crate::infra::co_interval_ns(target_rate) {
         let base_ns = nanos_now();
         for i in 0..events {
             let intended_ns = base_ns.saturating_add(i.saturating_mul(interval_ns));
@@ -528,8 +527,7 @@ fn multi_message_producer_sized<const SIZE: usize>() -> Result<(), Box<dyn std::
     }
 
     let start = Instant::now();
-    if target_rate > 0 {
-        let interval_ns = 1_000_000_000u64 / target_rate;
+    if let Some(interval_ns) = crate::infra::co_interval_ns(target_rate) {
         let base_ns = nanos_now();
         for i in 0..events {
             let intended_ns = base_ns.saturating_add(i.saturating_mul(interval_ns));

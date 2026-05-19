@@ -148,6 +148,7 @@ fn run_metadata(metadata: &BenchMetadata) -> RunMetadata {
         cpu: metadata.cpu.clone(),
         git_commit: metadata.git_commit.clone(),
         rust_version: metadata.rust_version.clone(),
+        workspace_msrv: metadata.workspace_msrv.clone(),
     }
 }
 
@@ -158,6 +159,7 @@ fn bench_metadata(metadata: &RunMetadata) -> BenchMetadata {
         cpu: metadata.cpu.clone(),
         git_commit: metadata.git_commit.clone(),
         rust_version: metadata.rust_version.clone(),
+        workspace_msrv: metadata.workspace_msrv.clone(),
     }
 }
 

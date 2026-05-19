@@ -219,8 +219,7 @@ fn producer_process() -> Result<(), Box<dyn std::error::Error>> {
         producer.discover_consumers(Duration::from_secs(3));
 
         let start = Instant::now();
-        if target_rate > 0 {
-            let interval_ns = 1_000_000_000u64 / target_rate;
+        if let Some(interval_ns) = crate::infra::co_interval_ns(target_rate) {
             let base_ns = wall_clock_ns();
             macro_rules! co_loop {
                 ($payload:expr) => {

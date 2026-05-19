@@ -515,7 +515,7 @@ where
                 return Err(error);
             }
 
-            std::thread::sleep(Duration::from_millis(25));
+            super::wait::perform_default_discovery_poll_wait();
         }
     }
 
@@ -681,7 +681,7 @@ where
             if Instant::now() >= deadline {
                 return false;
             }
-            std::thread::sleep(Duration::from_millis(25));
+            super::wait::perform_default_discovery_poll_wait();
         }
     }
 
@@ -741,11 +741,11 @@ where
                 std::thread::yield_now();
             }
             WS::Block => {
-                std::thread::sleep(super::wait::SLEEP_CONFIG.block_strategy_duration());
+                super::wait::perform_default_block_wait();
             }
             WS::Sleep(d) => {
                 // Explicit sleep strategy lets the platform scheduler absorb queueing jitter.
-                std::thread::sleep(*d);
+                super::wait::sleep_or_yield(*d);
             }
         }
     }

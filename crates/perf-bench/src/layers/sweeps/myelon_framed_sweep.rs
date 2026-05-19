@@ -130,8 +130,7 @@ fn run_publish_loop<F>(events: u64, target_rate: u64, mut publish: F)
 where
     F: FnMut(u64),
 {
-    if target_rate > 0 {
-        let interval_ns = 1_000_000_000u64 / target_rate;
+    if let Some(interval_ns) = crate::infra::co_interval_ns(target_rate) {
         let base_ns = wall_clock_ns();
         for i in 0..events {
             let intended_ns = base_ns + i * interval_ns;

@@ -568,7 +568,7 @@ where
             if std::time::Instant::now() >= deadline {
                 return false;
             }
-            std::thread::sleep(std::time::Duration::from_millis(150));
+            disruptor_mp::perform_default_discovery_poll_wait();
         }
     }
 
@@ -1086,12 +1086,7 @@ where
         recv_framed_message(
             || match self.wait_strategy {
                 MyelonWaitStrategy::BusySpin => self.inner.consume_next(),
-                MyelonWaitStrategy::Block => loop {
-                    if let Some(frame) = self.inner.try_consume_next() {
-                        break frame;
-                    }
-                    std::thread::sleep(Duration::from_millis(1));
-                },
+                MyelonWaitStrategy::Block => self.inner.consume_next_with_sleep(),
             },
             |frame| frame.frame_meta(),
         )
@@ -1103,12 +1098,7 @@ where
         recv_framed_message_with_meta(
             || match self.wait_strategy {
                 MyelonWaitStrategy::BusySpin => self.inner.consume_next(),
-                MyelonWaitStrategy::Block => loop {
-                    if let Some(frame) = self.inner.try_consume_next() {
-                        break frame;
-                    }
-                    std::thread::sleep(Duration::from_millis(1));
-                },
+                MyelonWaitStrategy::Block => self.inner.consume_next_with_sleep(),
             },
             |frame| frame.frame_meta(),
         )
@@ -1144,12 +1134,7 @@ where
         let (mut message_meta, msg_id, first_was_last) = {
             let first_frame = match self.wait_strategy {
                 MyelonWaitStrategy::BusySpin => self.inner.consume_next_leased(),
-                MyelonWaitStrategy::Block => loop {
-                    if let Some(frame) = self.inner.try_consume_next_leased() {
-                        break frame;
-                    }
-                    std::thread::sleep(Duration::from_millis(1));
-                },
+                MyelonWaitStrategy::Block => self.inner.consume_next_leased_with_sleep(),
             };
             let first = first_frame.frame_meta();
             let mut message_meta = ReceivedMessageMeta {
@@ -1175,12 +1160,7 @@ where
         loop {
             let frame_lease = match self.wait_strategy {
                 MyelonWaitStrategy::BusySpin => self.inner.consume_next_leased(),
-                MyelonWaitStrategy::Block => loop {
-                    if let Some(frame) = self.inner.try_consume_next_leased() {
-                        break frame;
-                    }
-                    std::thread::sleep(Duration::from_millis(1));
-                },
+                MyelonWaitStrategy::Block => self.inner.consume_next_leased_with_sleep(),
             };
             let frame = frame_lease.frame_meta();
             if frame.msg_id != msg_id {
@@ -2116,6 +2096,32 @@ mod tests {
         let (kind, payload) = consumer.recv_message_blocking();
         assert_eq!(kind, 7);
         assert_eq!(payload, b"hello world");
+    }
+
+    #[test]
+    fn mmap_framed_transport_round_trip_block_uses_configured_wait_policy() {
+        let ring_name = unique_ring_name("mmfr");
+        let root = std::env::temp_dir().join(format!("myelon_mmap_block_{ring_name}"));
+        let mut producer = MmapFramedTransportProducer::<RawFrame>::create(
+            MmapTransportLayout::new(root.clone(), ring_name.clone()).unwrap(),
+            8,
+        )
+        .unwrap();
+        let mut consumer = MmapFramedTransportConsumer::<RawFrame>::attach(
+            MmapTransportLayout::new(root, ring_name).unwrap(),
+            8,
+            "c0",
+            MyelonWaitStrategy::Block,
+        )
+        .unwrap();
+
+        assert!(consumer.has_coordination_support());
+
+        producer.publish(b"hello mmap", 9);
+
+        let (kind, payload) = consumer.recv_message_blocking();
+        assert_eq!(kind, 9);
+        assert_eq!(payload, b"hello mmap");
     }
 
     #[test]

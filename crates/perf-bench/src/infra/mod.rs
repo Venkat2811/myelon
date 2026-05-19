@@ -25,8 +25,8 @@ pub use child_runner::{
 };
 pub use config::{
     apply_timeout_arg, bench_timeout_duration, bench_timeout_secs, bench_timeout_secs_or,
-    check_deadline, read_env_bool, read_env_string, read_env_u64, read_env_usize, spin_deadline,
-    spin_deadline_or,
+    check_deadline, co_interval_ns, read_env_bool, read_env_string, read_env_u64, read_env_usize,
+    spin_deadline, spin_deadline_or,
 };
 pub use launch::{launch_mmap_group, launch_shm_group, MultiConsumerSpawn};
 pub use naming::{

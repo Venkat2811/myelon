@@ -1,4 +1,4 @@
-use crate::runner_config::{BackendKind, DstConfig};
+use crate::runner_config::{BackendKind, DstConfig, WaitStrategyKind};
 use crate::runner_fault::FaultInjector;
 use crate::runner_oracle::MessageOracle;
 use crate::runner_report::{ChildReport, DstProperty, DstRunReport, TransportKind};
@@ -322,6 +322,38 @@ impl DstRunner {
         }
     }
 
+    pub fn run_wait_strategy_smoke(
+        &mut self,
+        transport: TransportKind,
+        harness: &RawRingHarness,
+    ) -> Result<DstRunReport, DstRunnerError> {
+        let policy = RawRingExecutionPolicy {
+            spawn_consumers_first: false,
+            wait_for_consumers_ready: false,
+            startup_delay_ms: 60,
+            consumer_spawn_stagger_ms: 10,
+            producer_hold_ms: 250,
+            publish_pause_every: 1,
+            publish_pause_micros: 25,
+            injected_fault: None,
+            required_consumer_liveness: None,
+        };
+
+        match transport {
+            TransportKind::RawRing => self.run_raw_ring_case_with_overrides(
+                DstProperty::MessageIntegrity,
+                None,
+                harness,
+                policy,
+                RawRingChildOverrides {
+                    checkpoint_every: Some(0),
+                    ..RawRingChildOverrides::default()
+                },
+            ),
+            other => Err(DstRunnerError::UnsupportedTransport(other)),
+        }
+    }
+
     pub fn run_failure_class_with_required_consumer_liveness(
         &mut self,
         class: FailureClass,
@@ -441,6 +473,23 @@ impl DstRunner {
         harness: &RawRingHarness,
         policy: RawRingExecutionPolicy,
     ) -> Result<DstRunReport, DstRunnerError> {
+        self.run_raw_ring_case_with_overrides(
+            property,
+            failure_class,
+            harness,
+            policy,
+            RawRingChildOverrides::default(),
+        )
+    }
+
+    fn run_raw_ring_case_with_overrides(
+        &mut self,
+        property: DstProperty,
+        failure_class: Option<FailureClass>,
+        harness: &RawRingHarness,
+        policy: RawRingExecutionPolicy,
+        base_overrides: RawRingChildOverrides,
+    ) -> Result<DstRunReport, DstRunnerError> {
         if self.config.consumer_count == 0 {
             return Err(DstRunnerError::InvalidConfig(
                 "consumer_count must be > 0".into(),
@@ -510,7 +559,7 @@ impl DstRunner {
                     &producer_report_path,
                     RawRingChildOverrides {
                         allow_corruption_validation: runner.corruption_at_sequence.is_some(),
-                        ..RawRingChildOverrides::default()
+                        ..base_overrides
                     },
                 )?;
                 runner.trace.push(
@@ -543,7 +592,7 @@ impl DstRunner {
                 &producer_report_path,
                 RawRingChildOverrides {
                     corrupt_at_sequence: self.corruption_at_sequence,
-                    ..RawRingChildOverrides::default()
+                    ..base_overrides
                 },
             )?;
         } else {
@@ -559,7 +608,7 @@ impl DstRunner {
                 &producer_report_path,
                 RawRingChildOverrides {
                     corrupt_at_sequence: self.corruption_at_sequence,
-                    ..RawRingChildOverrides::default()
+                    ..base_overrides
                 },
             )?;
             thread::sleep(Duration::from_millis(policy.startup_delay_ms));
@@ -996,6 +1045,15 @@ impl DstRunner {
             .env("DST_PAYLOAD_SIZE", self.config.payload_size.to_string())
             .env("DST_CONSUMER_COUNT", self.config.consumer_count.to_string())
             .env(
+                "DST_WAIT_STRATEGY",
+                match self.config.wait_strategy {
+                    WaitStrategyKind::BusySpin => "busyspin",
+                    WaitStrategyKind::Sleep => "sleep",
+                    WaitStrategyKind::Block => "block",
+                    WaitStrategyKind::SpinLoopHint => "spinloop",
+                },
+            )
+            .env(
                 "DST_POST_PUBLISH_HOLD_MS",
                 policy.producer_hold_ms.to_string(),
             )
@@ -1059,6 +1117,9 @@ impl DstRunner {
         }
         if let Some(sequence_start) = overrides.sequence_start {
             cmd.env("DST_SEQUENCE_START", sequence_start.to_string());
+        }
+        if let Some(checkpoint_every) = overrides.checkpoint_every {
+            cmd.env("DST_CHECKPOINT_EVERY", checkpoint_every.to_string());
         }
         if let Some(corrupt_at_sequence) = overrides.corrupt_at_sequence {
             cmd.env("DST_CORRUPT_AT_SEQUENCE", corrupt_at_sequence.to_string());
@@ -1129,7 +1190,7 @@ impl DstRunner {
                 });
             }
 
-            thread::sleep(Duration::from_millis(10));
+            disruptor_mp::perform_default_discovery_poll_wait();
         }
     }
 
@@ -1301,6 +1362,7 @@ struct RawRingChildOverrides {
     producer_message_count: Option<u64>,
     consumer_message_count: Option<u64>,
     sequence_start: Option<u64>,
+    checkpoint_every: Option<u64>,
     corrupt_at_sequence: Option<u64>,
     allow_corruption_validation: bool,
 }

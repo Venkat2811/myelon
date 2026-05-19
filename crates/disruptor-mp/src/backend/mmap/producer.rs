@@ -159,7 +159,7 @@ where
                 return Err(error);
             }
 
-            std::thread::sleep(Duration::from_millis(25));
+            crate::perform_default_discovery_poll_wait();
         }
     }
 
@@ -295,7 +295,7 @@ where
             if std::time::Instant::now() >= deadline {
                 return false;
             }
-            std::thread::sleep(Duration::from_millis(25));
+            crate::perform_default_discovery_poll_wait();
         }
     }
 
@@ -353,10 +353,10 @@ where
                 std::thread::yield_now();
             }
             AutoWaitStrategy::Block => {
-                std::thread::sleep(Duration::from_millis(1));
+                crate::perform_default_block_wait();
             }
             AutoWaitStrategy::Sleep(duration) => {
-                std::thread::sleep(*duration);
+                crate::perform_sleep_wait(*duration);
             }
         }
     }

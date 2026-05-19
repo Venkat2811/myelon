@@ -4,11 +4,11 @@ use disruptor_mp::dst::buggify::ScopedBuggify;
 use disruptor_mp::dst::contract::FailureClass;
 use myelon_dst::{
     BackendKind, DstConfig, DstProperty, DstRunner, DstRunnerError, OracleViolation,
-    RawRingHarness, RequiredConsumerLivenessPolicy, TransportKind,
+    RawRingHarness, RequiredConsumerLivenessPolicy, TransportKind, WaitStrategyKind,
 };
 use std::ops::Deref;
 use std::sync::{LazyLock, Mutex, MutexGuard};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 static RAW_RING_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
@@ -99,6 +99,29 @@ fn run_failure_case(
                 "{class:?} should pass for backend {backend:?} with {consumer_count} consumers: {err:?}"
             )
         })
+}
+
+fn run_wait_strategy_smoke(
+    backend: BackendKind,
+    wait_strategy: WaitStrategyKind,
+) -> (myelon_dst::DstRunReport, Duration) {
+    let config = DstConfig::raw_ring_from_seed(0x5EED_1705)
+        .with_backend(backend)
+        .with_ring_depth(2048)
+        .with_payload_size(128)
+        .with_consumer_count(1)
+        .with_message_count(4096)
+        .with_wait_strategy(wait_strategy);
+    let mut runner = DstRunner::with_config(config);
+    let started = Instant::now();
+    let report = runner
+        .run_wait_strategy_smoke(TransportKind::RawRing, &harness())
+        .unwrap_or_else(|err| {
+            panic!(
+                "wait-strategy smoke should pass for backend {backend:?} strategy {wait_strategy:?}: {err:?}"
+            )
+        });
+    (report, started.elapsed())
 }
 
 fn required_consumer_policy(shutdown_grace_ms: u64) -> RequiredConsumerLivenessPolicy {
@@ -539,6 +562,46 @@ fn dst_required_consumer_liveness_rejects_wrong_id_restart() {
         }
         other => panic!("unexpected error: {other:?}"),
     }
+}
+
+#[test]
+fn dst_wait_strategy_sleep_shm_smoke_avoids_scheduler_floor() {
+    let (report, elapsed) = run_wait_strategy_smoke(BackendKind::Shm, WaitStrategyKind::Sleep);
+    assert_eq!(report.consumers[0].messages.len(), 4096);
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "sleep wait smoke regressed to scheduler-floor behavior: elapsed={elapsed:?}"
+    );
+}
+
+#[test]
+fn dst_wait_strategy_block_shm_smoke_avoids_scheduler_floor() {
+    let (report, elapsed) = run_wait_strategy_smoke(BackendKind::Shm, WaitStrategyKind::Block);
+    assert_eq!(report.consumers[0].messages.len(), 4096);
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "block wait smoke regressed to scheduler-floor behavior: elapsed={elapsed:?}"
+    );
+}
+
+#[test]
+fn dst_wait_strategy_sleep_mmap_smoke_avoids_scheduler_floor() {
+    let (report, elapsed) = run_wait_strategy_smoke(BackendKind::Mmap, WaitStrategyKind::Sleep);
+    assert_eq!(report.consumers[0].messages.len(), 4096);
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "mmap sleep wait smoke regressed to scheduler-floor behavior: elapsed={elapsed:?}"
+    );
+}
+
+#[test]
+fn dst_wait_strategy_block_mmap_smoke_avoids_scheduler_floor() {
+    let (report, elapsed) = run_wait_strategy_smoke(BackendKind::Mmap, WaitStrategyKind::Block);
+    assert_eq!(report.consumers[0].messages.len(), 4096);
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "mmap block wait smoke regressed to scheduler-floor behavior: elapsed={elapsed:?}"
+    );
 }
 
 #[test]
