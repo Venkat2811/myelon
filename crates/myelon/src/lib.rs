@@ -211,7 +211,7 @@ pub use disruptor_mp::{
     MultiProcessError, MultiProcessResult, RequiredConsumerAlert, RequiredConsumerAlertHook,
     RequiredConsumerError, RequiredConsumerFailureAction, RequiredConsumerLivenessConfig,
     RingBufferFull, Sequence, SharedConsumer, SharedDisruptorBuilder, SharedProducer,
-    DEFAULT_MAX_CONSUMERS,
+    DEFAULT_MAX_CONSUMERS, PORTABLE_SHM_SEGMENT_NAME_MAX_LEN,
 };
 pub use inference::{FixedTopology, InferenceTopologyError, InferenceTopologyResult, WorkerCount};
 pub use transport::{
