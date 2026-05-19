@@ -327,7 +327,9 @@ fn parse_benchmark_id(benchmark_id: &str) -> (String, String) {
 
 fn infer_family(benchmark: &str) -> ScenarioFamily {
     match benchmark {
-        "raw_ring_shm" | "raw_ring_mmap" => ScenarioFamily::RawRing,
+        "raw_ring_shm" | "raw_ring_mmap" | "raw_myelon_shm" | "raw_myelon_mmap" => {
+            ScenarioFamily::RawRing
+        }
         "wait_strategy_shm" | "wait_strategy_mmap" => ScenarioFamily::WaitStrategy,
         "pingpong_shm"
         | "pingpong_mmap"
@@ -750,5 +752,11 @@ mod tests {
             infer_family("pingpong_typed_zero_copy_mmap"),
             ScenarioFamily::PingPong
         );
+    }
+
+    #[test]
+    fn raw_myelon_broadcast_benches_map_to_raw_ring_family() {
+        assert_eq!(infer_family("raw_myelon_shm"), ScenarioFamily::RawRing);
+        assert_eq!(infer_family("raw_myelon_mmap"), ScenarioFamily::RawRing);
     }
 }

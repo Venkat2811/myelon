@@ -93,7 +93,6 @@ fn signal_sequence_observer_emits_observer_payload() {
             "--observe-sequences",
             "--sequence-poll-us",
             "1000",
-            "--json",
             "--json-out",
             out_path.to_str().expect("temp path"),
         ])

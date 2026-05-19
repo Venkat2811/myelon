@@ -304,20 +304,21 @@ fn run_signal_with_sequence_observer(
         );
     }
 
+    let payload = serde_json::json!({
+        "mode": "signal_sequence_observer",
+        "backend": args.backend,
+        "events": args.events,
+        "warmup": warmup,
+        "latency_mode": latency_mode.as_str(),
+        "producer": producer_metrics,
+        "consumer": consumer_metrics,
+        "sequence_observer": observer_report,
+    });
+    if let Some(path) = &args.json_out {
+        std::fs::write(path, serde_json::to_vec_pretty(&payload)?)?;
+    }
+
     if args.json {
-        let payload = serde_json::json!({
-            "mode": "signal_sequence_observer",
-            "backend": args.backend,
-            "events": args.events,
-            "warmup": warmup,
-            "latency_mode": latency_mode.as_str(),
-            "producer": producer_metrics,
-            "consumer": consumer_metrics,
-            "sequence_observer": observer_report,
-        });
-        if let Some(path) = &args.json_out {
-            std::fs::write(path, serde_json::to_vec_pretty(&payload)?)?;
-        }
         println!("{}", serde_json::to_string_pretty(&payload)?);
     } else {
         eprintln!(

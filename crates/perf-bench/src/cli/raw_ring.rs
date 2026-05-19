@@ -322,7 +322,7 @@ fn base_specs(backend: BackendKind, signal_multi_events: u64) -> Vec<RawRingScen
             4096,
             1_000,
             6,
-            false,
+            true,
         ),
         message_spec(
             backend.clone(),
@@ -331,7 +331,7 @@ fn base_specs(backend: BackendKind, signal_multi_events: u64) -> Vec<RawRingScen
             4096,
             1_000,
             8,
-            false,
+            true,
         ),
         message_spec(
             backend.clone(),
@@ -340,7 +340,7 @@ fn base_specs(backend: BackendKind, signal_multi_events: u64) -> Vec<RawRingScen
             4096,
             1_000,
             12,
-            false,
+            true,
         ),
         signal_spec(
             backend.clone(),
@@ -703,5 +703,21 @@ mod tests {
             .find(|s| s.label == "signal_1p1c_64B")
             .expect("signal scenario");
         assert_eq!(signal.event_bytes, 64);
+    }
+
+    #[test]
+    fn message_throughput_scenarios_record_latency_for_multi_consumer_cases() {
+        let args = vec![
+            "bench".to_string(),
+            "--class".to_string(),
+            "message".to_string(),
+            "--consumers".to_string(),
+            "8".to_string(),
+        ];
+        let selection = RawRingSelection::parse(&args).expect("parse selection");
+        let scenarios = selection.scenario_specs(BackendKind::Shm, 10_000_000);
+        assert_eq!(scenarios.len(), 1);
+        assert_eq!(scenarios[0].label, "message_1p8c_144Breq_192Bslot");
+        assert!(scenarios[0].record_latency);
     }
 }
