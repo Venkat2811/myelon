@@ -8,7 +8,7 @@
 use disruptor_mp::dst::buggify::ScopedBuggify;
 use myelon::transport::{
     FixedFrame, FramedTransportConsumer, FramedTransportProducer, MmapFramedTransportConsumer,
-    MmapFramedTransportProducer, MyelonWaitStrategy,
+    MmapFramedTransportProducer, MyelonWaitStrategy, ReassemblyBuffer,
 };
 use myelon_dst::{BackendKind, DstConfig};
 use std::env;
@@ -109,6 +109,7 @@ fn spawn_framed_child(
         root,
         consumer_id,
         0,
+        "owned",
     )
 }
 
@@ -127,6 +128,7 @@ fn spawn_framed_child_custom(
     root: Option<&std::path::Path>,
     consumer_id: Option<&str>,
     start_sequence: usize,
+    receive_mode: &str,
 ) -> std::process::Child {
     let mut cmd = Command::new(env::current_exe().expect("exe"));
     cmd.arg("--exact")
@@ -141,6 +143,7 @@ fn spawn_framed_child_custom(
         .env("DST_FRAMED_MESSAGES", messages.to_string())
         .env("DST_FRAMED_SLOW_MICROS", slow_micros.to_string())
         .env("DST_FRAMED_START_SEQUENCE", start_sequence.to_string())
+        .env("DST_FRAMED_RECEIVE_MODE", receive_mode)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     if let Some(root) = root {
@@ -264,6 +267,43 @@ fn dst_fragmentation_correctness_shm() {
 }
 
 #[test]
+fn dst_fragmentation_correctness_shm_leased() {
+    let segment = segment_name("fdstl");
+    let payload_size = 4096;
+    let messages = 1000usize;
+    let mut producer =
+        FramedTransportProducer::<Frame>::create(&segment, DEFAULT_DEPTH).expect("create producer");
+
+    let mut child = spawn_framed_child_custom(
+        "stream",
+        "shm",
+        &segment,
+        DEFAULT_DEPTH,
+        payload_size,
+        messages,
+        0,
+        None,
+        None,
+        0,
+        "leased",
+    );
+
+    std::thread::sleep(Duration::from_millis(400));
+    producer.discover_consumers(Duration::from_secs(3));
+
+    for sequence in 0..messages {
+        assert_child_alive(&mut child, "framed shm leased child");
+        producer.publish(&payload_for(sequence, payload_size), (sequence % 251) as u8);
+    }
+    producer.publish(&[], 255);
+
+    let output = child
+        .wait_with_output()
+        .expect("wait for framed leased child");
+    assert_child_success(&output, "fragmentation leased child");
+}
+
+#[test]
 fn dst_backpressure_enforced_with_slow_consumer_shm() {
     let segment = segment_name("fbp");
     let depth = 64usize;
@@ -340,6 +380,45 @@ fn dst_fragmentation_correctness_mmap() {
 }
 
 #[test]
+fn dst_fragmentation_correctness_mmap_leased() {
+    let (_root, segment, layout) = mmap_case("fdstml");
+    let payload_size = 4096;
+    let messages = 1000usize;
+    let consumer_id = "dst_framed_mmap_consumer_leased";
+    let mut producer = MmapFramedTransportProducer::<Frame>::create(layout.clone(), DEFAULT_DEPTH)
+        .expect("create mmap producer");
+
+    let child = spawn_framed_child_custom(
+        "stream",
+        "mmap",
+        &segment,
+        DEFAULT_DEPTH,
+        payload_size,
+        messages,
+        0,
+        Some(layout.root_dir()),
+        Some(consumer_id),
+        0,
+        "leased",
+    );
+
+    assert!(
+        producer.wait_for_consumers_ready(1, Duration::from_secs(3)),
+        "mmap framed producer timed out waiting for leased consumer"
+    );
+
+    for sequence in 0..messages {
+        producer.publish(&payload_for(sequence, payload_size), (sequence % 251) as u8);
+    }
+    producer.publish(&[], 255);
+
+    let output = child
+        .wait_with_output()
+        .expect("wait for mmap framed leased child");
+    assert_child_success(&output, "mmap fragmentation leased child");
+}
+
+#[test]
 fn dst_backpressure_enforced_with_slow_consumer_mmap() {
     let (_root, segment, layout) = mmap_case("fbpm");
     let depth = 64usize;
@@ -405,6 +484,7 @@ fn dst_consumer_restart_resumes_framed_shm() {
         None,
         Some(consumer_id),
         0,
+        "owned",
     );
 
     std::thread::sleep(Duration::from_millis(250));
@@ -438,6 +518,7 @@ fn dst_consumer_restart_resumes_framed_shm() {
         None,
         Some(consumer_id),
         restart_after,
+        "owned",
     );
     std::thread::sleep(Duration::from_millis(100));
     assert!(
@@ -479,6 +560,7 @@ fn dst_consumer_restart_resumes_framed_mmap() {
         Some(layout.root_dir()),
         Some(consumer_id),
         0,
+        "owned",
     );
 
     assert!(
@@ -511,6 +593,7 @@ fn dst_consumer_restart_resumes_framed_mmap() {
         Some(layout.root_dir()),
         Some(consumer_id),
         restart_after,
+        "owned",
     );
     assert!(
         producer.wait_for_consumers_ready(1, Duration::from_secs(3)),
@@ -577,6 +660,7 @@ fn dst_framed_child() {
         .expect("DST_FRAMED_SLOW_MICROS should be set")
         .parse()
         .expect("slow micros should parse");
+    let receive_mode = env::var("DST_FRAMED_RECEIVE_MODE").unwrap_or_else(|_| "owned".to_string());
     let deadline = Instant::now() + Duration::from_secs(10);
     let mut consumer = loop {
         match backend.as_str() {
@@ -625,12 +709,18 @@ fn dst_framed_child() {
             other => panic!("unsupported framed backend: {other}"),
         }
     };
+    let mut reassembly = ReassemblyBuffer::new(payload_size.max(256 * 1024));
 
     for offset in 0..messages {
         let sequence = start_sequence + offset;
-        let (kind, data) = match &mut consumer {
-            FramedConsumer::Shm(consumer) => consumer.recv_message_blocking_owned(),
-            FramedConsumer::Mmap(consumer) => consumer.recv_message_blocking_owned(),
+        let (kind, data) = match (&mut consumer, receive_mode.as_str()) {
+            (FramedConsumer::Shm(consumer), "owned") => consumer.recv_message_blocking_owned(),
+            (FramedConsumer::Mmap(consumer), "owned") => consumer.recv_message_blocking_owned(),
+            (FramedConsumer::Shm(consumer), "leased") => consumer
+                .recv_message_blocking_leased(&mut reassembly, |kind, data| (kind, data.to_vec())),
+            (FramedConsumer::Mmap(consumer), "leased") => consumer
+                .recv_message_blocking_leased(&mut reassembly, |kind, data| (kind, data.to_vec())),
+            (_, other) => panic!("unsupported DST_FRAMED_RECEIVE_MODE '{other}'"),
         };
         assert_eq!(
             kind,
@@ -648,9 +738,14 @@ fn dst_framed_child() {
     }
 
     if case == "stream" {
-        let (kind, data) = match &mut consumer {
-            FramedConsumer::Shm(consumer) => consumer.recv_message_blocking_owned(),
-            FramedConsumer::Mmap(consumer) => consumer.recv_message_blocking_owned(),
+        let (kind, data) = match (&mut consumer, receive_mode.as_str()) {
+            (FramedConsumer::Shm(consumer), "owned") => consumer.recv_message_blocking_owned(),
+            (FramedConsumer::Mmap(consumer), "owned") => consumer.recv_message_blocking_owned(),
+            (FramedConsumer::Shm(consumer), "leased") => consumer
+                .recv_message_blocking_leased(&mut reassembly, |kind, data| (kind, data.to_vec())),
+            (FramedConsumer::Mmap(consumer), "leased") => consumer
+                .recv_message_blocking_leased(&mut reassembly, |kind, data| (kind, data.to_vec())),
+            (_, other) => panic!("unsupported DST_FRAMED_RECEIVE_MODE '{other}'"),
         };
         assert_eq!(kind, 255, "sentinel kind mismatch");
         assert!(data.is_empty(), "sentinel payload should be empty");

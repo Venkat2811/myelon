@@ -9,6 +9,7 @@
 
 use myelon::transport::{
     FixedFrame, FramedTransportConsumer, FramedTransportProducer, MyelonWaitStrategy,
+    ReassemblyBuffer,
 };
 use std::env;
 use std::process::{Command, Stdio};
@@ -20,6 +21,12 @@ const DEPTH: usize = 256;
 const PAYLOAD_SIZE: usize = 4000; // 4x frame capacity → 4 frames per message
 const NUM_MESSAGES: usize = 5000;
 
+#[derive(Clone, Copy)]
+enum ReceiveMode {
+    Owned,
+    Leased,
+}
+
 fn segment_name() -> String {
     if let Ok(s) = env::var("FRAG_TEST_SEGMENT") {
         return s;
@@ -27,8 +34,7 @@ fn segment_name() -> String {
     disruptor_mp::portable_shm_segment_name("frtst")
 }
 
-#[test]
-fn fragmented_multiprocess_backpressure() {
+fn run_fragmentation_case(mode: ReceiveMode) {
     let segment = segment_name();
     let exe = env::current_exe().expect("exe");
 
@@ -42,6 +48,13 @@ fn fragmented_multiprocess_backpressure() {
         .arg("--ignored")
         .arg("--nocapture")
         .env("FRAG_TEST_SEGMENT", &segment)
+        .env(
+            "FRAG_TEST_RECEIVE_MODE",
+            match mode {
+                ReceiveMode::Owned => "owned",
+                ReceiveMode::Leased => "leased",
+            },
+        )
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -78,6 +91,16 @@ fn fragmented_multiprocess_backpressure() {
 }
 
 #[test]
+fn fragmented_multiprocess_backpressure() {
+    run_fragmentation_case(ReceiveMode::Owned);
+}
+
+#[test]
+fn fragmented_multiprocess_backpressure_leased() {
+    run_fragmentation_case(ReceiveMode::Leased);
+}
+
+#[test]
 #[ignore]
 fn frag_child() {
     let segment = segment_name();
@@ -97,24 +120,52 @@ fn frag_child() {
 
     let expected: Vec<u8> = (0..PAYLOAD_SIZE).map(|i| (i % 251) as u8).collect();
     let mut count = 0usize;
+    let receive_mode = env::var("FRAG_TEST_RECEIVE_MODE").unwrap_or_else(|_| "owned".to_string());
+    let mut reassembly = ReassemblyBuffer::new(PAYLOAD_SIZE.max(256 * 1024));
 
-    loop {
-        let (kind, data) = consumer.recv_message_blocking();
+    match receive_mode.as_str() {
+        "owned" => loop {
+            let (kind, data) = consumer.recv_message_blocking();
 
-        if kind == 255 && data.is_empty() {
-            break;
-        }
+            if kind == 255 && data.is_empty() {
+                break;
+            }
 
-        count += 1;
+            count += 1;
 
-        assert_eq!(
-            data.len(),
-            PAYLOAD_SIZE,
-            "message {count}: got {} bytes, expected {PAYLOAD_SIZE}",
-            data.len()
-        );
+            assert_eq!(
+                data.len(),
+                PAYLOAD_SIZE,
+                "message {count}: got {} bytes, expected {PAYLOAD_SIZE}",
+                data.len()
+            );
 
-        assert_eq!(data, expected, "message {count}: byte mismatch");
+            assert_eq!(data, expected, "message {count}: byte mismatch");
+        },
+        "leased" => loop {
+            let should_stop =
+                consumer.recv_message_blocking_leased(&mut reassembly, |kind, data| {
+                    if kind == 255 && data.is_empty() {
+                        return true;
+                    }
+
+                    count += 1;
+
+                    assert_eq!(
+                        data.len(),
+                        PAYLOAD_SIZE,
+                        "message {count}: got {} bytes, expected {PAYLOAD_SIZE}",
+                        data.len()
+                    );
+
+                    assert_eq!(data, expected, "message {count}: byte mismatch");
+                    false
+                });
+            if should_stop {
+                break;
+            }
+        },
+        other => panic!("unknown FRAG_TEST_RECEIVE_MODE '{other}'"),
     }
 
     assert_eq!(
