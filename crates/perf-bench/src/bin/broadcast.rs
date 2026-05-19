@@ -384,7 +384,11 @@ fn build_codec_args(args: &Args) -> Vec<String> {
 ///
 /// These use `BasicSweepSelection::parse` or `ReportOutputArgs::from_args` which expect:
 ///   --mode, --backend, --size, --consumers, --num-messages, --target-rate, --json, --tree, --json-out
-fn build_sweep_args(args: &Args) -> Vec<String> {
+fn process_cli_requested(flag: &str) -> bool {
+    std::env::args().any(|arg| arg == flag)
+}
+
+fn build_sweep_args_inner(args: &Args, include_consumers_filter: bool) -> Vec<String> {
     let mut v = vec!["perf-bench-broadcast".to_string()];
 
     v.push("--mode".to_string());
@@ -398,8 +402,10 @@ fn build_sweep_args(args: &Args) -> Vec<String> {
         v.push(size.to_string());
     }
 
-    v.push("--consumers".to_string());
-    v.push(args.consumers.to_string());
+    if include_consumers_filter {
+        v.push("--consumers".to_string());
+        v.push(args.consumers.to_string());
+    }
 
     if args.num_messages != 100000 {
         v.push("--num-messages".to_string());
@@ -418,6 +424,10 @@ fn build_sweep_args(args: &Args) -> Vec<String> {
 
     append_output_args(&mut v, args);
     v
+}
+
+fn build_sweep_args(args: &Args) -> Vec<String> {
+    build_sweep_args_inner(args, process_cli_requested("--consumers"))
 }
 
 // ---------------------------------------------------------------------------
@@ -693,7 +703,7 @@ mod tests {
     #[test]
     fn build_sweep_args_preserves_backend_size_consumers_and_quick() {
         let args = sample_args();
-        let built = build_sweep_args(&args);
+        let built = build_sweep_args_inner(&args, true);
         assert!(built.windows(2).any(|pair| pair == ["--backend", "mmap"]));
         assert!(built.windows(2).any(|pair| pair == ["--size", "1KB"]));
         assert!(built.windows(2).any(|pair| pair == ["--consumers", "4"]));
@@ -705,6 +715,14 @@ mod tests {
             .windows(2)
             .any(|pair| pair == ["--target-rate", "20000"]));
         assert!(built.iter().any(|arg| arg == "--quick"));
+    }
+
+    #[test]
+    fn build_sweep_args_omits_default_consumer_filter_when_not_requested() {
+        let args = sample_args();
+        let built = build_sweep_args_inner(&args, false);
+        assert!(!built.iter().any(|arg| arg == "--consumers"));
+        assert!(!built.iter().any(|arg| arg == "4"));
     }
 
     #[test]
