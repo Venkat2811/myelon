@@ -17,7 +17,7 @@ use std::error::Error;
 struct Args {
     /// Transport layer / benchmark to run
     #[arg(long, value_parser = ["raw_ring", "raw_myelon", "framed", "codec",
-                                 "wait_strategy", "myelon_layers", "monster_sweep",
+                                 "typed_zc", "wait_strategy", "myelon_layers", "monster_sweep",
                                  "framed_sweep", "typed_zc_sweep", "nofrag", "layout"])]
     layer: String,
 
@@ -119,6 +119,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         "raw_myelon" => run_raw_myelon(&args),
         "framed" => run_framed(&args),
         "codec" => run_codec(&args),
+        "typed_zc" => run_typed_zc_sweep(&args),
         "wait_strategy" => run_wait_strategy(&args),
         "myelon_layers" => run_myelon_layers(&args),
         "monster_sweep" => run_monster_sweep(&args),
@@ -707,17 +708,16 @@ mod tests {
     }
 
     #[test]
-    fn typed_zero_copy_is_not_advertised_as_a_broadcast_layer() {
-        let err = Args::try_parse_from([
+    fn typed_zero_copy_is_advertised_as_a_broadcast_layer_alias() {
+        let parsed = Args::try_parse_from([
             "perf-bench-broadcast",
             "--layer",
             "typed_zc",
             "--backend",
             "mmap",
         ])
-        .expect_err("typed_zc broadcast should be rejected");
-        let rendered = err.to_string();
-        assert!(rendered.contains("typed_zc"));
-        assert!(rendered.contains("possible values"));
+        .expect("typed_zc should map to the typed zero-copy broadcast sweep");
+        assert_eq!(parsed.layer, "typed_zc");
+        assert_eq!(parsed.backend, "mmap");
     }
 }

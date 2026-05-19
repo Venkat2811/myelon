@@ -9,7 +9,7 @@
 | Binary | Scenarios |
 |---|---|
 | `perf-bench-pingpong` | 1p1c ping-pong. All four layers (raw_ring, framed, codec, typed_zc) × both backends (shm, mmap) × three modes (max-throughput, fixed-rate coordinated-omission-aware, low-overhead batch-timing). |
-| `perf-bench-broadcast` | 1pNc broadcast for `1p4c` and `1p8c` across the raw, framed, codec, wait-strategy, sweep, and layout families. Typed zero-copy is ping-pong only today. |
+| `perf-bench-broadcast` | 1pNc broadcast across the raw, framed, codec, typed zero-copy, wait-strategy, sweep, and layout families. `typed_zc` is exposed as a first-class alias over the dedicated typed zero-copy sweep family. |
 | `perf-bench-signal` | Cache-line-sized signal events, no payload variation, raw layer only — pure throughput ceiling for "what can this hardware push through a disruptor ring?". |
 | `perf-bench-repeatability` | Repeat a single configuration N times and emit canonical JSON for run-to-run variance analysis. |
 
