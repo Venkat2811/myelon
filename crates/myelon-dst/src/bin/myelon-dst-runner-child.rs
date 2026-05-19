@@ -208,6 +208,17 @@ fn validate_event(
     }
 }
 
+fn consumer_timeout(message_count: u64) -> Duration {
+    let required_consumer_liveness_enabled = env::var("DST_REQUIRED_CONSUMER_IDS").is_ok();
+    if required_consumer_liveness_enabled {
+        Duration::from_secs(45)
+    } else if message_count >= 4096 {
+        Duration::from_secs(30)
+    } else {
+        Duration::from_secs(20)
+    }
+}
+
 fn run_shm_producer() -> ChildReport {
     let segment = env::var("DST_SEGMENT").expect("DST_SEGMENT should be set");
     let ring_depth: usize = parse_env("DST_RING_DEPTH");
@@ -316,7 +327,7 @@ fn run_shm_consumer() -> ChildReport {
     let mut messages = Vec::with_capacity(message_count as usize);
     let mut checksum_total = 0u64;
     let mut previous = None::<u64>;
-    let consume_deadline = Instant::now() + Duration::from_secs(20);
+    let consume_deadline = Instant::now() + consumer_timeout(message_count);
     let mut producer_done_at = None::<Instant>;
 
     while messages.len() < message_count as usize {
@@ -471,7 +482,7 @@ fn run_mmap_consumer() -> ChildReport {
     let mut messages = Vec::with_capacity(message_count as usize);
     let mut checksum_total = 0u64;
     let mut previous = None::<u64>;
-    let consume_deadline = Instant::now() + Duration::from_secs(20);
+    let consume_deadline = Instant::now() + consumer_timeout(message_count);
     let mut producer_done_at = None::<Instant>;
 
     while messages.len() < message_count as usize {

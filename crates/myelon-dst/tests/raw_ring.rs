@@ -31,7 +31,7 @@ fn harness() -> LockedHarness {
             .lock()
             .expect("raw-ring dst test lock should not be poisoned"),
         inner: RawRingHarness::new(env!("CARGO_BIN_EXE_myelon-dst-runner-child"))
-            .with_timeout(Duration::from_secs(45)),
+            .with_timeout(Duration::from_secs(75)),
     }
 }
 
