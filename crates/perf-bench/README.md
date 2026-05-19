@@ -40,6 +40,11 @@
         producer publishes raw struct or framed bytes
 ```
 
+Methodology note:
+- Layer 1 framed benches use `myelon`'s leased receive path where available, so the reported cost is framing / fragmentation / reassembly overhead, not an avoidable owned-copy artifact.
+- Layer 2 codec benches intentionally include owned decode cost.
+- Layer 3 typed-zero-copy benches intentionally exercise in-place access.
+
 Each scenario in `perf-bench` is named after the layer + backend it exercises, e.g. `layers/raw/disruptor_mp/pingpong_shm.rs` is "Layer 0, SHM backend, ping-pong shape." The directory tree mirrors the layer hierarchy exactly so you can read the filesystem and understand what the bench measures.
 
 ## File / directory structure

@@ -562,16 +562,11 @@ where
     pub fn discover_consumers(&mut self, timeout: std::time::Duration) -> bool {
         let deadline = std::time::Instant::now() + timeout;
         loop {
-            // Each call triggers a discovery scan if the scan interval elapsed.
-            let min_seq = self.inner.min_gating_sequence();
-
-            // If min_seq is -1, either no consumers found (fallback) or consumer
-            // at initial position. We can't distinguish, but after enough scans
-            // with a real consumer attached, the barrier will have found it.
-            // The scan interval is 100ms, so sleeping 150ms between retries
-            // ensures at least one scan per iteration.
+            if self.inner.get_consumer_count() > 0 {
+                return true;
+            }
             if std::time::Instant::now() >= deadline {
-                return min_seq >= -1;
+                return false;
             }
             std::thread::sleep(std::time::Duration::from_millis(150));
         }
@@ -602,15 +597,14 @@ where
     /// more transport frames. Blocks if the ring is full.
     #[inline(always)]
     pub fn publish(&mut self, payload: &[u8], kind: u8) {
-        publish_framed_payload(
+        publish_framed_payload_in_place(
             payload,
             kind,
             T::payload_capacity(),
-            |frame| self.inner.publish(|slot| *slot = frame),
             |chunk, chunk_kind, msg_id, flags| {
-                let mut frame = T::default();
-                frame.write_frame(chunk, chunk_kind, msg_id, flags);
-                frame
+                self.inner.publish(|slot| {
+                    slot.write_frame(chunk, chunk_kind, msg_id, flags);
+                });
             },
         );
     }
@@ -628,15 +622,16 @@ where
         payload: &[u8],
         kind: u8,
     ) -> Result<(), RequiredConsumerError> {
-        publish_framed_payload_result(
+        publish_framed_payload_result_in_place(
             payload,
             kind,
             T::payload_capacity(),
-            |frame| self.inner.publish_managed(|slot| *slot = frame).map(|_| ()),
             |chunk, chunk_kind, msg_id, flags| {
-                let mut frame = T::default();
-                frame.write_frame(chunk, chunk_kind, msg_id, flags);
-                frame
+                self.inner
+                    .publish_managed(|slot| {
+                        slot.write_frame(chunk, chunk_kind, msg_id, flags);
+                    })
+                    .map(|_| ())
             },
         )
     }
@@ -969,15 +964,14 @@ where
     /// more transport frames. Blocks if the ring is full.
     #[inline(always)]
     pub fn publish(&mut self, payload: &[u8], kind: u8) {
-        publish_framed_payload(
+        publish_framed_payload_in_place(
             payload,
             kind,
             T::payload_capacity(),
-            |frame| self.inner.publish(|slot| *slot = frame),
             |chunk, chunk_kind, msg_id, flags| {
-                let mut frame = T::default();
-                frame.write_frame(chunk, chunk_kind, msg_id, flags);
-                frame
+                self.inner.publish(|slot| {
+                    slot.write_frame(chunk, chunk_kind, msg_id, flags);
+                });
             },
         );
     }
@@ -1008,15 +1002,16 @@ where
         payload: &[u8],
         kind: u8,
     ) -> Result<(), RequiredConsumerError> {
-        publish_framed_payload_result(
+        publish_framed_payload_result_in_place(
             payload,
             kind,
             T::payload_capacity(),
-            |frame| self.inner.publish_managed(|slot| *slot = frame).map(|_| ()),
             |chunk, chunk_kind, msg_id, flags| {
-                let mut frame = T::default();
-                frame.write_frame(chunk, chunk_kind, msg_id, flags);
-                frame
+                self.inner
+                    .publish_managed(|slot| {
+                        slot.write_frame(chunk, chunk_kind, msg_id, flags);
+                    })
+                    .map(|_| ())
             },
         )
     }
@@ -1581,6 +1576,41 @@ pub fn publish_framed_payload<T, P, W>(
     }
 }
 
+/// Split `payload` into `chunk_size`-byte frames and write each frame
+/// directly into the caller-owned destination slot.
+///
+/// This avoids constructing a temporary frame value and then copying
+/// that whole frame into the ring slot.
+pub fn publish_framed_payload_in_place<W>(
+    payload: &[u8],
+    kind: u8,
+    chunk_size: usize,
+    mut write_frame: W,
+) where
+    W: FnMut(&[u8], u8, u32, u8),
+{
+    let msg_id = NEXT_MESSAGE_ID.fetch_add(1, Ordering::Relaxed);
+    if payload.is_empty() {
+        write_frame(payload, kind, msg_id, frame_flags(true, true));
+        return;
+    }
+
+    #[cfg(dst)]
+    if payload.len() > chunk_size {
+        disruptor_mp::dst::assert_sometimes(
+            true,
+            "fragmented message",
+            format!("payload_len={} chunk_size={chunk_size}", payload.len()),
+        );
+    }
+
+    for (index, chunk) in payload.chunks(chunk_size).enumerate() {
+        let last = (index + 1) * chunk_size >= payload.len();
+        let flags = frame_flags(index == 0, last);
+        write_frame(chunk, kind, msg_id, flags);
+    }
+}
+
 /// Variant of [`publish_framed_payload`] whose `write_frame`
 /// closure is fallible. Stops on the first error and forwards it.
 ///
@@ -1620,6 +1650,44 @@ where
         let flags = frame_flags(index == 0, last);
         let frame = make_frame(chunk, kind, msg_id, flags);
         write_frame(frame)?;
+    }
+
+    Ok(())
+}
+
+/// Fallible in-place variant of [`publish_framed_payload_in_place`].
+///
+/// # Errors
+///
+/// Forwards `E` from `write_frame` on the first failed frame write.
+pub fn publish_framed_payload_result_in_place<W, E>(
+    payload: &[u8],
+    kind: u8,
+    chunk_size: usize,
+    mut write_frame: W,
+) -> Result<(), E>
+where
+    W: FnMut(&[u8], u8, u32, u8) -> Result<(), E>,
+{
+    let msg_id = NEXT_MESSAGE_ID.fetch_add(1, Ordering::Relaxed);
+    if payload.is_empty() {
+        write_frame(payload, kind, msg_id, frame_flags(true, true))?;
+        return Ok(());
+    }
+
+    #[cfg(dst)]
+    if payload.len() > chunk_size {
+        disruptor_mp::dst::assert_sometimes(
+            true,
+            "fragmented message",
+            format!("payload_len={} chunk_size={chunk_size}", payload.len()),
+        );
+    }
+
+    for (index, chunk) in payload.chunks(chunk_size).enumerate() {
+        let last = (index + 1) * chunk_size >= payload.len();
+        let flags = frame_flags(index == 0, last);
+        write_frame(chunk, kind, msg_id, flags)?;
     }
 
     Ok(())
@@ -1915,6 +1983,26 @@ mod tests {
     }
 
     #[test]
+    fn publish_framed_payload_in_place_splits_large_payload() {
+        let payload = vec![7u8; 16 * 2 + 5];
+        let mut frames = Vec::new();
+
+        publish_framed_payload_in_place(&payload, 9, 16, |chunk, kind, msg_id, flags| {
+            let mut frame = RawFrame::default();
+            frame.write_frame(chunk, kind, msg_id, flags);
+            frames.push(frame);
+        });
+
+        assert_eq!(frames.len(), 3);
+        assert_eq!(frames[0].flags, 0b01);
+        assert_eq!(frames[1].flags, 0b00);
+        assert_eq!(frames[2].flags, 0b10);
+        assert_eq!(frames[0].kind, 9);
+        assert_eq!(frames[0].msg_id, frames[1].msg_id);
+        assert_eq!(frames[1].msg_id, frames[2].msg_id);
+    }
+
+    #[test]
     fn recv_framed_message_reassembles_large_payload() {
         let payload = b"abcdefghijklmnopqrstuvwxyz".to_vec();
         let mut frames = Vec::new();
@@ -2028,6 +2116,14 @@ mod tests {
         let (kind, payload) = consumer.recv_message_blocking();
         assert_eq!(kind, 7);
         assert_eq!(payload, b"hello world");
+    }
+
+    #[test]
+    fn framed_transport_discover_consumers_times_out_when_no_consumer_attaches() {
+        let ring_name = unique_ring_name("mydc");
+        let mut producer = FramedTransportProducer::<RawFrame>::create(&ring_name, 8).unwrap();
+
+        assert!(!producer.discover_consumers(std::time::Duration::from_millis(25)));
     }
 
     #[test]

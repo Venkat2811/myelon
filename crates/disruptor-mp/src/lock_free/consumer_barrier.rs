@@ -515,6 +515,20 @@ impl SharedConsumerBarrier {
         self.min_sequence_fallback()
     }
 
+    /// Return the number of currently discovered consumer cursors.
+    pub fn best_effort_consumer_count(&mut self) -> usize {
+        match &self.discovery_mode {
+            DiscoveryMode::Disabled => {}
+            DiscoveryMode::Enabled { .. } => {
+                if !self.discovery_completed {
+                    self.discover_consumers();
+                }
+            }
+        }
+
+        self.consumer_cursors.len()
+    }
+
     fn discovered_min_sequence(&self) -> Option<Sequence> {
         let mut min_sequence = i64::MAX;
 

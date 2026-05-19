@@ -646,6 +646,11 @@ where
         self.consumer_barrier.consumer_sequence(consumer_id)
     }
 
+    /// Return the number of currently discovered consumers.
+    pub fn get_consumer_count(&mut self) -> usize {
+        self.consumer_barrier.best_effort_consumer_count()
+    }
+
     /// Wait until the provided sequence is consumed by all known consumers or timeout.
     ///
     /// The waiting behavior is controlled by the provided `AutoWaitStrategy`:

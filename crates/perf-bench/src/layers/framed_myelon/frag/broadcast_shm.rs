@@ -18,6 +18,7 @@ use crate::infra::{
 };
 use myelon::transport::{
     FixedFrame, FramedTransportConsumer, FramedTransportProducer, MyelonWaitStrategy,
+    ReassemblyBuffer,
 };
 use std::time::{Duration, Instant};
 
@@ -89,18 +90,21 @@ fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
     let mut start: Option<Instant> = None;
     let mut consumed = 0u64;
     let mut checksum = 0u64;
+    let mut reassembly =
+        ReassemblyBuffer::new(read_env_usize("BENCH_PAYLOAD_SIZE", 1024).max(256 * 1024));
 
     // Consume exactly num_messages — avoids deadlock from calling
     // recv_message_blocking after all messages are consumed.
     while consumed < num_messages {
-        let (_kind, data) = consumer.recv_message_blocking();
-        if start.is_none() {
-            start = Some(Instant::now());
-        }
-        let payload_sum = data.iter().fold(0u8, |a, &b| a.wrapping_add(b)) as u64;
-        std::hint::black_box(payload_sum);
-        checksum = checksum.wrapping_add(payload_sum);
-        consumed += 1;
+        consumer.recv_message_blocking_leased(&mut reassembly, |_kind, data| {
+            if start.is_none() {
+                start = Some(Instant::now());
+            }
+            let payload_sum = data.iter().fold(0u8, |a, &b| a.wrapping_add(b)) as u64;
+            std::hint::black_box(payload_sum);
+            checksum = checksum.wrapping_add(payload_sum);
+            consumed += 1;
+        });
     }
     let elapsed = start.expect("consumer never received a frame").elapsed();
 

@@ -25,6 +25,7 @@ use crate::infra::{
 };
 use myelon::transport::{
     FixedFrame, MmapFramedTransportConsumer, MmapFramedTransportProducer, MyelonWaitStrategy,
+    ReassemblyBuffer,
 };
 use myelon::MmapTransportLayout;
 use std::env;
@@ -154,15 +155,21 @@ where
 
     let total = env.warmup + env.messages;
     let mut measured_start = None;
+    let mut reassembly = ReassemblyBuffer::new(env.payload_bytes.max(256 * 1024));
     for index in 0..total {
         if coordination.is_shutdown() {
             return Err("shutdown requested during echo loop".into());
         }
-        let (_kind, payload) = ping_consumer.recv_message_blocking();
-        if index == env.warmup {
-            measured_start = Some(Instant::now());
-        }
-        pong_producer.publish(&payload, 1);
+        ping_consumer.recv_message_blocking_leased(
+            &mut reassembly,
+            |_kind, payload| -> Result<(), Box<dyn std::error::Error>> {
+                if index == env.warmup {
+                    measured_start = Some(Instant::now());
+                }
+                pong_producer.publish(payload, 1);
+                Ok(())
+            },
+        )?;
     }
 
     let elapsed = measured_start.unwrap_or_else(Instant::now).elapsed();
@@ -218,6 +225,7 @@ where
     let mut checksum_total = 0u64;
     let total = env.warmup + env.messages;
     let mut measured_start = None;
+    let mut reassembly = ReassemblyBuffer::new(env.payload_bytes.max(256 * 1024));
     let interval_ns = if env.target_rate > 0 {
         Some(1_000_000_000u64 / env.target_rate)
     } else {
@@ -246,22 +254,27 @@ where
         }
 
         ping_producer.publish(&payload, 1);
-        let (_kind, response) = pong_consumer.recv_message_blocking();
-        if index < env.warmup {
-            continue;
-        }
+        pong_consumer.recv_message_blocking_leased(
+            &mut reassembly,
+            |_kind, response| -> Result<(), Box<dyn std::error::Error>> {
+                if index < env.warmup {
+                    return Ok(());
+                }
 
-        if response.len() != payload.len() {
-            return Err(format!(
-                "unexpected echoed payload size: got {} expected {}",
-                response.len(),
-                payload.len()
-            )
-            .into());
-        }
+                if response.len() != payload.len() {
+                    return Err(format!(
+                        "unexpected echoed payload size: got {} expected {}",
+                        response.len(),
+                        payload.len()
+                    )
+                    .into());
+                }
 
-        checksum_total = checksum_total.wrapping_add(checksum_bytes(&response));
-        recorder.record_delta(send_ns, nanos_now());
+                checksum_total = checksum_total.wrapping_add(checksum_bytes(response));
+                recorder.record_delta(send_ns, nanos_now());
+                Ok(())
+            },
+        )?;
     }
 
     coordination.signal_shutdown();

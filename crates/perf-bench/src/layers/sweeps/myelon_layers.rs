@@ -470,15 +470,17 @@ fn framed_consumer() -> Result<(), Box<dyn std::error::Error>> {
     let mut start: Option<Instant> = None;
     let mut consumed = 0u64;
     let mut checksum = 0u64;
+    let mut reassembly = ReassemblyBuffer::new(payload_size.max(256 * 1024));
     while consumed < events {
-        let (_, data) = consumer.recv_message_blocking();
-        if start.is_none() {
-            start = Some(Instant::now());
-        }
-        let payload_sum = access_raw(&data);
-        black_box(payload_sum);
-        checksum = checksum.wrapping_add(payload_sum);
-        consumed += 1;
+        consumer.recv_message_blocking_leased(&mut reassembly, |_kind, data| {
+            if start.is_none() {
+                start = Some(Instant::now());
+            }
+            let payload_sum = access_raw(data);
+            black_box(payload_sum);
+            checksum = checksum.wrapping_add(payload_sum);
+            consumed += 1;
+        });
     }
     let elapsed = start.expect("consumer never received a frame").elapsed();
     let output =
@@ -971,15 +973,17 @@ fn ml_framed_mmap_consumer() -> Result<(), Box<dyn std::error::Error>> {
     let mut consumed = 0u64;
     let mut start: Option<Instant> = None;
     let mut checksum = 0u64;
+    let mut reassembly = ReassemblyBuffer::new(payload_size.max(256 * 1024));
     while consumed < events {
-        let (_, data) = consumer.recv_message_blocking_owned();
-        if start.is_none() {
-            start = Some(Instant::now());
-        }
-        let payload_sum = access_raw(&data);
-        black_box(payload_sum);
-        checksum = checksum.wrapping_add(payload_sum);
-        consumed += 1;
+        consumer.recv_message_blocking_leased(&mut reassembly, |_kind, data| {
+            if start.is_none() {
+                start = Some(Instant::now());
+            }
+            let payload_sum = access_raw(data);
+            black_box(payload_sum);
+            checksum = checksum.wrapping_add(payload_sum);
+            consumed += 1;
+        });
     }
     let elapsed = start.expect("consumer never received a frame").elapsed();
     let output =
