@@ -12,6 +12,7 @@ use crate::infra::events::PingPongEvent as BenchmarkEvent;
 use crate::infra::latency::{self, LatencyRecorder};
 use crate::infra::liveness::{liveness_config, liveness_enabled};
 use crate::infra::output::reporting::{self, BenchReport};
+use crate::infra::{discovery_scan_rounds, warm_discovery_scans};
 use clap::Parser;
 use common::{calculate_data_rate_gbps, format_throughput};
 use disruptor_mp::{
@@ -47,7 +48,6 @@ macro_rules! publish_or_managed {
     }};
 }
 
-const DISCOVERY_SCAN_SLEEP: Duration = Duration::from_millis(150);
 const CONSUMER_PREFIX: &str = "cp";
 const ECHO_CONSUMER_ID: &str = "cp_0";
 const MAIN_CONSUMER_ID: &str = "cp_0";
@@ -105,24 +105,6 @@ fn maybe_attach_counters_consumer<E: Copy + Default + 'static>(
 
 fn child_counters_enabled() -> bool {
     env::var(COUNTERS_ENV_VAR).ok().as_deref() == Some("1")
-}
-
-fn discovery_scan_rounds(num_consumers: usize) -> usize {
-    if num_consumers > 1 {
-        8 + num_consumers
-    } else {
-        8
-    }
-}
-
-fn warm_discovery_scans<F>(mut scan: F, rounds: usize)
-where
-    F: FnMut() -> i64,
-{
-    for _ in 0..rounds {
-        let _ = scan();
-        std::thread::sleep(DISCOVERY_SCAN_SLEEP);
-    }
 }
 
 struct ChildProcessGuard {

@@ -10,6 +10,7 @@
 pub mod bench;
 pub mod child_runner;
 pub mod config;
+pub mod discovery;
 pub mod env {
     pub use myelon_env::bench::*;
 }
@@ -29,8 +30,9 @@ pub use child_runner::{
 pub use config::{
     apply_timeout_arg, bench_timeout_duration, bench_timeout_secs, bench_timeout_secs_or,
     check_deadline, co_interval_ns, read_env_bool, read_env_string, read_env_u64, read_env_usize,
-    spin_deadline, spin_deadline_or,
+    required_env_string, spin_deadline, spin_deadline_or,
 };
+pub use discovery::{discovery_scan_rounds, warm_discovery_scans, DISCOVERY_SCAN_SLEEP};
 pub use launch::{launch_mmap_group, launch_shm_group, MultiConsumerSpawn};
 pub use naming::{
     mmap_layout_from_env, segment_from_env, unique_mmap_root, unique_mmap_segment,

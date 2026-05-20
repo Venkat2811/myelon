@@ -13,7 +13,10 @@ use crate::infra::coordination::BenchmarkCoordination;
 use crate::infra::events::{format_throughput, nanos_now};
 use crate::infra::latency::LatencyRecorder;
 use crate::infra::output::reporting::{self, BenchReport};
-use crate::infra::{self, ConsumerOutput, IpcBenchmark, ProducerOutput, ScenarioChildren};
+use crate::infra::{
+    self, discovery_scan_rounds, read_env_string, segment_from_env, warm_discovery_scans,
+    ConsumerOutput, IpcBenchmark, ProducerOutput, ScenarioChildren,
+};
 use crate::layers::framed_myelon::codec::payloads::{
     checksum_payloads, make_payloads, BincodeBatch, FlatbufBatch, RkyvBatch,
 };
@@ -21,29 +24,8 @@ use disruptor_mp::{
     build_shared_single_producer, CoordinationMode, SharedDisruptorBuilder, SharedMemoryConfig,
 };
 use myelon::codec::Codec;
-use std::env;
 use std::hint::black_box;
 use std::time::{Duration, Instant};
-
-const DISCOVERY_SCAN_SLEEP: Duration = Duration::from_millis(150);
-
-fn discovery_scan_rounds(num_consumers: usize) -> usize {
-    if num_consumers > 1 {
-        8 + num_consumers
-    } else {
-        8
-    }
-}
-
-fn warm_discovery_scans<F>(mut scan: F, rounds: usize)
-where
-    F: FnMut() -> i64,
-{
-    for _ in 0..rounds {
-        let _ = scan();
-        std::thread::sleep(DISCOVERY_SCAN_SLEEP);
-    }
-}
 
 fn scaled_buffer_depth(base_buffer: usize, consumers: usize) -> usize {
     let min_depth = consumers.next_power_of_two().max(1) * 256;
@@ -115,9 +97,8 @@ impl Default for Slot256K {
 macro_rules! impl_nofrag_bench {
     ($slot_type:ty, $slot_data_len:expr, $producer_fn:ident, $consumer_fn:ident) => {
         fn $producer_fn() -> Result<(), Box<dyn std::error::Error>> {
-            let segment =
-                env::var(crate::infra::env::SEGMENT_NAME).expect(crate::infra::env::SEGMENT_NAME);
-            let codec = env::var(crate::infra::env::CODEC).expect(crate::infra::env::CODEC);
+            let segment = segment_from_env(crate::infra::env::SEGMENT_NAME);
+            let codec = read_env_string(crate::infra::env::CODEC, "rkyv");
             let batch_size = infra::read_env_usize(crate::infra::env::BATCH_SIZE, 8);
             let messages = infra::read_env_u64(crate::infra::env::MESSAGES, 50_000);
             let buffer_depth = infra::read_env_usize(crate::infra::env::BUFFER_DEPTH, 4096);
@@ -221,9 +202,8 @@ macro_rules! impl_nofrag_bench {
         }
 
         fn $consumer_fn() -> Result<(), Box<dyn std::error::Error>> {
-            let segment =
-                env::var(crate::infra::env::SEGMENT_NAME).expect(crate::infra::env::SEGMENT_NAME);
-            let codec = env::var(crate::infra::env::CODEC).expect(crate::infra::env::CODEC);
+            let segment = segment_from_env(crate::infra::env::SEGMENT_NAME);
+            let codec = read_env_string(crate::infra::env::CODEC, "rkyv");
             let consumer_id = infra::read_env_usize(crate::infra::env::CONSUMER_ID, 0);
             let messages = infra::read_env_u64(crate::infra::env::MESSAGES, 50_000);
             let buffer_depth = infra::read_env_usize(crate::infra::env::BUFFER_DEPTH, 4096);

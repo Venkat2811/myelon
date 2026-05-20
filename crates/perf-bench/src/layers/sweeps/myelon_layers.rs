@@ -19,8 +19,9 @@ use crate::infra::events::{format_throughput, nanos_now, BenchEvent};
 use crate::infra::output::report::ReportBundleCompat;
 use crate::infra::output::reporting;
 use crate::infra::{
-    self, launch_mmap_group, launch_shm_group, read_env_u64, read_env_usize, segment_from_env,
-    ConsumerOutput, IpcBenchmark, MultiConsumerSpawn, ProducerOutput, ScenarioChildren,
+    self, discovery_scan_rounds, launch_mmap_group, launch_shm_group, read_env_string,
+    read_env_u64, read_env_usize, segment_from_env, warm_discovery_scans, ConsumerOutput,
+    IpcBenchmark, MultiConsumerSpawn, ProducerOutput, ScenarioChildren,
 };
 use crate::layers::framed_myelon::codec::payloads::{
     access_raw, access_rkyv, checksum_archived_rkyv, checksum_flatbuf_root, encode_rkyv,
@@ -43,26 +44,6 @@ use myelon::{
 use std::hint::black_box;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
-
-const DISCOVERY_SCAN_SLEEP: Duration = Duration::from_millis(150);
-
-fn discovery_scan_rounds(num_consumers: usize) -> usize {
-    if num_consumers > 1 {
-        8 + num_consumers
-    } else {
-        8
-    }
-}
-
-fn warm_discovery_scans<F>(mut scan: F, rounds: usize)
-where
-    F: FnMut() -> i64,
-{
-    for _ in 0..rounds {
-        let _ = scan();
-        std::thread::sleep(DISCOVERY_SCAN_SLEEP);
-    }
-}
 
 const FRAME_DATA_BYTES: usize = 64 * 1024 - 12;
 type Frame = FixedFrame<FRAME_DATA_BYTES>;
@@ -630,7 +611,7 @@ fn typed_zc_producer() -> Result<(), Box<dyn std::error::Error>> {
     let events = read_env_u64(crate::infra::env::EVENTS, 50_000);
     let batch_size = read_env_usize(crate::infra::env::BATCH_SIZE, 8);
     let payload_size = read_env_usize(crate::infra::env::PAYLOAD_SIZE, 1024);
-    let codec = std::env::var(crate::infra::env::CODEC).unwrap_or_else(|_| "rkyv".to_string());
+    let codec = read_env_string(crate::infra::env::CODEC, "rkyv");
     let num_consumers = read_env_usize(crate::infra::env::CONSUMERS, 1);
     let payloads = make_payloads(batch_size);
 
@@ -672,7 +653,7 @@ fn typed_zc_consumer() -> Result<(), Box<dyn std::error::Error>> {
     let buffer = read_env_usize(crate::infra::env::BUFFER, 1024);
     let events = read_env_u64(crate::infra::env::EVENTS, 50_000);
     let payload_size = read_env_usize(crate::infra::env::PAYLOAD_SIZE, 1024);
-    let codec = std::env::var(crate::infra::env::CODEC).unwrap_or_else(|_| "rkyv".to_string());
+    let codec = read_env_string(crate::infra::env::CODEC, "rkyv");
     let coord = BenchmarkCoordination::attach_with_timeout(&segment, Duration::from_secs(30))?;
     let mut consumer =
         TypedConsumer::<ZcFrame>::attach(&segment, buffer, MyelonWaitStrategy::BusySpin)?;
@@ -1168,7 +1149,7 @@ fn ml_typed_zc_mmap_producer() -> Result<(), Box<dyn std::error::Error>> {
     let events = read_env_u64(crate::infra::env::EVENTS, 50_000);
     let batch_size = read_env_usize(crate::infra::env::BATCH_SIZE, 8);
     let payload_size = read_env_usize(crate::infra::env::PAYLOAD_SIZE, 1024);
-    let codec = std::env::var(crate::infra::env::CODEC).unwrap_or_else(|_| "rkyv".to_string());
+    let codec = read_env_string(crate::infra::env::CODEC, "rkyv");
     let num_consumers = read_env_usize(crate::infra::env::CONSUMERS, 1);
     let payloads = make_payloads(batch_size);
 
@@ -1215,7 +1196,7 @@ fn ml_typed_zc_mmap_consumer() -> Result<(), Box<dyn std::error::Error>> {
     let buffer = read_env_usize(crate::infra::env::BUFFER, 1024);
     let events = read_env_u64(crate::infra::env::EVENTS, 50_000);
     let payload_size = read_env_usize(crate::infra::env::PAYLOAD_SIZE, 1024);
-    let codec = std::env::var(crate::infra::env::CODEC).unwrap_or_else(|_| "rkyv".to_string());
+    let codec = read_env_string(crate::infra::env::CODEC, "rkyv");
     let layout = MmapTransportLayout::new(PathBuf::from(&root), seg).expect("layout");
     let cid = format!("c{consumer_id}_{}", std::process::id());
     let deadline_attach = Instant::now() + Duration::from_secs(15);

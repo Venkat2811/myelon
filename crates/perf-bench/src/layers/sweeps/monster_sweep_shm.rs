@@ -18,7 +18,10 @@ use crate::infra::events::{format_throughput, nanos_now, BenchEvent};
 use crate::infra::latency::LatencyRecorder;
 use crate::infra::output::report::{MonsterSweepBackend, ReportBundleCompat};
 use crate::infra::output::reporting::{self, BenchReport};
-use crate::infra::{self, IpcBenchmark, ScenarioChildren};
+use crate::infra::{
+    self, discovery_scan_rounds, warm_discovery_scans, IpcBenchmark, ScenarioChildren,
+    DISCOVERY_SCAN_SLEEP,
+};
 use disruptor_mp::{
     attach_shared_consumer, build_shared_single_producer, AutoWaitStrategy, CoordinationMode,
     SharedConsumer, SharedDisruptorBuilder, SharedMemoryConfig,
@@ -48,26 +51,7 @@ type Ev64K = BenchEvent<{ 64 * 1024 - 16 }>;
 type Ev256K = BenchEvent<{ 256 * 1024 - 16 }>;
 type Ev1M = BenchEvent<{ 1024 * 1024 - 16 }>;
 
-const DISCOVERY_SCAN_SLEEP: Duration = Duration::from_millis(150);
 const MULTI_CONSUMER_PREFIX: &str = "msc";
-
-fn discovery_scan_rounds(num_consumers: usize) -> usize {
-    if num_consumers > 1 {
-        8 + num_consumers
-    } else {
-        8
-    }
-}
-
-fn warm_discovery_scans<F>(mut scan: F, rounds: usize)
-where
-    F: FnMut() -> i64,
-{
-    for _ in 0..rounds {
-        let _ = scan();
-        std::thread::sleep(DISCOVERY_SCAN_SLEEP);
-    }
-}
 
 fn multi_consumer_id(consumer_id: usize) -> String {
     format!("{MULTI_CONSUMER_PREFIX}_{consumer_id}")

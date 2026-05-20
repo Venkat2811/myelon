@@ -140,7 +140,7 @@ fn read_env() -> (
     usize,
     u64,
 ) {
-    let codec = env::var(crate::infra::env::CODEC).expect(crate::infra::env::CODEC);
+    let codec = infra::required_env_string(crate::infra::env::CODEC);
     let batch_size = env::var(crate::infra::env::BATCH_SIZE)
         .expect(crate::infra::env::BATCH_SIZE)
         .parse()

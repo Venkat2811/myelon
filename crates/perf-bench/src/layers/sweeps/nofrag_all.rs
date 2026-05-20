@@ -12,7 +12,8 @@ use crate::infra::latency::LatencyRecorder;
 use crate::infra::output::report::ReportBundleCompat;
 use crate::infra::output::reporting;
 use crate::infra::{
-    self, launch_mmap_group, launch_shm_group, read_env_u64, read_env_usize, ConsumerOutput,
+    self, discovery_scan_rounds, launch_mmap_group, launch_shm_group, mmap_layout_from_env,
+    read_env_u64, read_env_usize, segment_from_env, warm_discovery_scans, ConsumerOutput,
     IpcBenchmark, MultiConsumerSpawn, ProducerOutput, ScenarioChildren,
 };
 use crate::layers::framed_myelon::codec::payloads::{
@@ -20,32 +21,10 @@ use crate::layers::framed_myelon::codec::payloads::{
 };
 use disruptor_mp::{
     build_shared_single_producer, CoordinationMode, MmapConsumer, MmapProducer,
-    MmapTransportLayout, SharedDisruptorBuilder, SharedMemoryConfig,
+    SharedDisruptorBuilder, SharedMemoryConfig,
 };
-use std::env;
 use std::hint::black_box;
-use std::path::PathBuf;
 use std::time::{Duration, Instant};
-
-const DISCOVERY_SCAN_SLEEP: Duration = Duration::from_millis(150);
-
-fn discovery_scan_rounds(num_consumers: usize) -> usize {
-    if num_consumers > 1 {
-        8 + num_consumers
-    } else {
-        8
-    }
-}
-
-fn warm_discovery_scans<F>(mut scan: F, rounds: usize)
-where
-    F: FnMut() -> i64,
-{
-    for _ in 0..rounds {
-        let _ = scan();
-        std::thread::sleep(DISCOVERY_SCAN_SLEEP);
-    }
-}
 
 fn scaled_buffer_depth(base_buffer: usize, consumers: usize) -> usize {
     let min_depth = consumers.next_power_of_two().max(1) * 256;
@@ -145,7 +124,7 @@ type Ev64K = BenchEvent<{ 64 * 1024 - 16 }>;
 macro_rules! shm_nofrag_impl {
     ($slot:ty, $encode_fn:ident, $access_fn:expr, $prod:ident, $cons:ident) => {
         fn $prod() -> Result<(), Box<dyn std::error::Error>> {
-            let seg = env::var(crate::infra::env::SEGMENT).expect(crate::infra::env::SEGMENT);
+            let seg = segment_from_env(crate::infra::env::SEGMENT);
             let buf = read_env_usize(crate::infra::env::BUFFER, 16384);
             let events = read_env_u64(crate::infra::env::EVENTS, 100_000);
             let batch = read_env_usize(crate::infra::env::BATCH_SIZE, 8);
@@ -200,7 +179,7 @@ macro_rules! shm_nofrag_impl {
         }
 
         fn $cons() -> Result<(), Box<dyn std::error::Error>> {
-            let seg = env::var(crate::infra::env::SEGMENT).expect(crate::infra::env::SEGMENT);
+            let seg = segment_from_env(crate::infra::env::SEGMENT);
             let consumer_id = read_env_usize(crate::infra::env::CONSUMER_ID, 0);
             let buf = read_env_usize(crate::infra::env::BUFFER, 16384);
             let events = read_env_u64(crate::infra::env::EVENTS, 100_000);
@@ -322,7 +301,7 @@ shm_nofrag_impl!(
 macro_rules! raw_shm_impl {
     ($ev:ty, $prod:ident, $cons:ident) => {
         fn $prod() -> Result<(), Box<dyn std::error::Error>> {
-            let seg = env::var(crate::infra::env::SEGMENT).expect(crate::infra::env::SEGMENT);
+            let seg = segment_from_env(crate::infra::env::SEGMENT);
             let buf = read_env_usize(crate::infra::env::BUFFER, 16384);
             let events = read_env_u64(crate::infra::env::EVENTS, 100_000);
             let num_consumers = read_env_usize(crate::infra::env::CONSUMERS, 1);
@@ -371,7 +350,7 @@ macro_rules! raw_shm_impl {
             Ok(())
         }
         fn $cons() -> Result<(), Box<dyn std::error::Error>> {
-            let seg = env::var(crate::infra::env::SEGMENT).expect(crate::infra::env::SEGMENT);
+            let seg = segment_from_env(crate::infra::env::SEGMENT);
             let consumer_id = read_env_usize(crate::infra::env::CONSUMER_ID, 0);
             let buf = read_env_usize(crate::infra::env::BUFFER, 16384);
             let events = read_env_u64(crate::infra::env::EVENTS, 100_000);
@@ -439,13 +418,11 @@ raw_shm_impl!(Ev64K, raw_shm_prod_64k, raw_shm_cons_64k);
 macro_rules! raw_mmap_impl {
     ($ev:ty, $prod:ident, $cons:ident) => {
         fn $prod() -> Result<(), Box<dyn std::error::Error>> {
-            let root = env::var(crate::infra::env::ROOT).expect(crate::infra::env::ROOT);
-            let seg = env::var(crate::infra::env::SEGMENT).expect(crate::infra::env::SEGMENT);
+            let layout = mmap_layout_from_env(crate::infra::env::ROOT, crate::infra::env::SEGMENT);
             let buf = read_env_usize(crate::infra::env::BUFFER, 16384);
             let events = read_env_u64(crate::infra::env::EVENTS, 100_000);
             let num_consumers = read_env_usize(crate::infra::env::CONSUMERS, 1);
             let target_rate = read_env_u64(crate::infra::env::TARGET_RATE, 0);
-            let layout = MmapTransportLayout::new(PathBuf::from(&root), seg).expect("layout");
             layout.ensure_directories().expect("dirs");
             let mut producer = MmapProducer::<$ev>::create(layout, buf, || <$ev>::default())?;
             if !producer.wait_for_consumers_ready(num_consumers as i64, Duration::from_secs(30)) {
@@ -487,12 +464,10 @@ macro_rules! raw_mmap_impl {
             Ok(())
         }
         fn $cons() -> Result<(), Box<dyn std::error::Error>> {
-            let root = env::var(crate::infra::env::ROOT).expect(crate::infra::env::ROOT);
-            let seg = env::var(crate::infra::env::SEGMENT).expect(crate::infra::env::SEGMENT);
+            let layout = mmap_layout_from_env(crate::infra::env::ROOT, crate::infra::env::SEGMENT);
             let consumer_id = read_env_usize(crate::infra::env::CONSUMER_ID, 0);
             let buf = read_env_usize(crate::infra::env::BUFFER, 16384);
             let events = read_env_u64(crate::infra::env::EVENTS, 100_000);
-            let layout = MmapTransportLayout::new(PathBuf::from(&root), seg).expect("layout");
             let cid = format!("c{consumer_id}_{}", std::process::id());
             let deadline = Instant::now() + Duration::from_secs(15);
             let mut consumer = loop {
@@ -560,15 +535,13 @@ raw_mmap_impl!(Ev64K, raw_mmap_prod_64k, raw_mmap_cons_64k);
 macro_rules! mmap_nofrag_impl {
     ($slot:ty, $encode_fn:ident, $access_fn:expr, $prod:ident, $cons:ident) => {
         fn $prod() -> Result<(), Box<dyn std::error::Error>> {
-            let root = env::var(crate::infra::env::ROOT).expect(crate::infra::env::ROOT);
-            let seg = env::var(crate::infra::env::SEGMENT).expect(crate::infra::env::SEGMENT);
+            let layout = mmap_layout_from_env(crate::infra::env::ROOT, crate::infra::env::SEGMENT);
             let buf = read_env_usize(crate::infra::env::BUFFER, 16384);
             let events = read_env_u64(crate::infra::env::EVENTS, 100_000);
             let batch = read_env_usize(crate::infra::env::BATCH_SIZE, 8);
             let num_consumers = read_env_usize(crate::infra::env::CONSUMERS, 1);
             let target_rate = read_env_u64(crate::infra::env::TARGET_RATE, 0);
             let payloads = make_payloads(batch);
-            let layout = MmapTransportLayout::new(PathBuf::from(&root), seg).expect("layout");
             layout.ensure_directories().expect("dirs");
             let mut producer = MmapProducer::<$slot>::create(layout, buf, || <$slot>::default())?;
             if !producer.wait_for_consumers_ready(num_consumers as i64, Duration::from_secs(30)) {
@@ -614,12 +587,10 @@ macro_rules! mmap_nofrag_impl {
         }
 
         fn $cons() -> Result<(), Box<dyn std::error::Error>> {
-            let root = env::var(crate::infra::env::ROOT).expect(crate::infra::env::ROOT);
-            let seg = env::var(crate::infra::env::SEGMENT).expect(crate::infra::env::SEGMENT);
+            let layout = mmap_layout_from_env(crate::infra::env::ROOT, crate::infra::env::SEGMENT);
             let consumer_id = read_env_usize(crate::infra::env::CONSUMER_ID, 0);
             let buf = read_env_usize(crate::infra::env::BUFFER, 16384);
             let events = read_env_u64(crate::infra::env::EVENTS, 100_000);
-            let layout = MmapTransportLayout::new(PathBuf::from(&root), seg).expect("layout");
             let cid = format!("c{consumer_id}_{}", std::process::id());
             let deadline = Instant::now() + Duration::from_secs(15);
             let mut consumer = loop {

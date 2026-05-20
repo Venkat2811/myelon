@@ -79,14 +79,13 @@ fn read_env() -> MmapEnv {
             .expect(crate::infra::env::PONG_SEGMENT),
         coordination_segment: env::var(crate::infra::env::COORDINATION_SEGMENT)
             .expect(crate::infra::env::COORDINATION_SEGMENT),
-        codec: env::var(crate::infra::env::CODEC).expect(crate::infra::env::CODEC),
+        codec: infra::required_env_string(crate::infra::env::CODEC),
         batch_size: infra::read_env_usize(crate::infra::env::BATCH_SIZE, 1),
         encoded_bytes: infra::read_env_usize(crate::infra::env::ENCODED_BYTES, 1),
         messages: infra::read_env_u64(crate::infra::env::MESSAGES, 100_000),
         warmup: infra::read_env_u64(crate::infra::env::WARMUP, 10_000),
         buffer_depth: infra::read_env_usize(crate::infra::env::BUFFER_DEPTH, 4096),
-        wait_strategy: env::var(crate::infra::env::WAIT_STRATEGY)
-            .unwrap_or_else(|_| "busyspin".into()),
+        wait_strategy: infra::read_env_string(crate::infra::env::WAIT_STRATEGY, "busyspin"),
         target_rate: infra::read_env_u64(crate::infra::env::TARGET_RATE, 0),
     }
 }

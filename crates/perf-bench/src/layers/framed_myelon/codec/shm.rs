@@ -109,28 +109,13 @@ fn set_intended_send_timestamp(timestamp_ns: Option<u64>) {
 }
 
 fn read_codec_env() -> (String, usize, u64, String, usize, usize, u64) {
-    let codec = env::var(crate::infra::env::CODEC).expect(crate::infra::env::CODEC);
-    let batch_size = env::var(crate::infra::env::BATCH_SIZE)
-        .expect(crate::infra::env::BATCH_SIZE)
-        .parse()
-        .expect("batch size");
-    let messages = env::var(crate::infra::env::MESSAGES)
-        .expect(crate::infra::env::MESSAGES)
-        .parse()
-        .expect("message count");
+    let codec = infra::required_env_string(crate::infra::env::CODEC);
+    let batch_size = infra::read_env_usize(crate::infra::env::BATCH_SIZE, 8);
+    let messages = infra::read_env_u64(crate::infra::env::MESSAGES, 100_000);
     let segment = segment_from_env(crate::infra::env::SEGMENT_NAME);
-    let buffer_depth = env::var(crate::infra::env::BUFFER_DEPTH)
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(BUFFER_DEPTH);
-    let num_consumers = env::var(crate::infra::env::NUM_CONSUMERS)
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(1);
-    let target_rate = env::var(crate::infra::env::TARGET_RATE)
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(0);
+    let buffer_depth = infra::read_env_usize(crate::infra::env::BUFFER_DEPTH, BUFFER_DEPTH);
+    let num_consumers = infra::read_env_usize(crate::infra::env::NUM_CONSUMERS, 1);
+    let target_rate = infra::read_env_u64(crate::infra::env::TARGET_RATE, 0);
     (
         codec,
         batch_size,

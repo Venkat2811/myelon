@@ -18,7 +18,6 @@ use crate::layers::framed_myelon::codec::payloads::{
 };
 use disruptor_mp::{MmapConsumer, MmapProducer};
 use myelon::codec::Codec;
-use std::env;
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
@@ -92,7 +91,7 @@ macro_rules! impl_nofrag_bench {
                 crate::infra::env::MMAP_SEGMENT,
             );
             layout.ensure_directories().expect("mmap dirs");
-            let codec = env::var(crate::infra::env::CODEC).expect(crate::infra::env::CODEC);
+            let codec = infra::required_env_string(crate::infra::env::CODEC);
             let batch_size = infra::read_env_usize(crate::infra::env::BATCH_SIZE, 8);
             let messages = infra::read_env_u64(crate::infra::env::MESSAGES, 50_000);
             let buffer_depth = infra::read_env_usize(crate::infra::env::BUFFER_DEPTH, 4096);
@@ -200,7 +199,7 @@ macro_rules! impl_nofrag_bench {
                 crate::infra::env::MMAP_ROOT,
                 crate::infra::env::MMAP_SEGMENT,
             );
-            let codec = env::var(crate::infra::env::CODEC).expect(crate::infra::env::CODEC);
+            let codec = infra::required_env_string(crate::infra::env::CODEC);
             let consumer_id = infra::read_env_usize(crate::infra::env::CONSUMER_ID, 0);
             let messages = infra::read_env_u64(crate::infra::env::MESSAGES, 50_000);
             let buffer_depth = infra::read_env_usize(crate::infra::env::BUFFER_DEPTH, 4096);

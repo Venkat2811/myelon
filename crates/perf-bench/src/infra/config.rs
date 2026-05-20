@@ -26,6 +26,11 @@ pub fn read_env_string(key: &str, default: &str) -> String {
     read::string_or(key, default)
 }
 
+/// Read a required string environment variable.
+pub fn required_env_string(key: &str) -> String {
+    read::required(key)
+}
+
 /// Convert a target rate in ops/s to an inter-message interval in nanoseconds.
 ///
 /// Returns `None` when the target rate is zero, which indicates unconstrained

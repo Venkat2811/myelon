@@ -22,7 +22,10 @@ use crate::infra::signal_latency::{
     should_sample, OfflineSignalSamples, ShmTimestampSidecar, SignalEvent, SignalLatencyMode,
     TimestampSidecar, TscCalibration,
 };
-use crate::infra::{self, IpcBenchmark, ScenarioChildren};
+use crate::infra::{
+    self, discovery_scan_rounds, warm_discovery_scans, IpcBenchmark, ScenarioChildren,
+    DISCOVERY_SCAN_SLEEP,
+};
 use disruptor_mp::{
     attach_shared_consumer, build_shared_single_producer, AutoWaitStrategy,
     ConsumerCounterSelection, CoordinationMode, ProducerCounterSelection, SharedConsumer,
@@ -30,26 +33,7 @@ use disruptor_mp::{
 };
 use std::time::{Duration, Instant};
 
-const DISCOVERY_SCAN_SLEEP: Duration = Duration::from_millis(150);
 const MULTI_CONSUMER_PREFIX: &str = "rrc";
-
-fn discovery_scan_rounds(num_consumers: usize) -> usize {
-    if num_consumers > 1 {
-        8 + num_consumers
-    } else {
-        8
-    }
-}
-
-fn warm_discovery_scans<F>(mut scan: F, rounds: usize)
-where
-    F: FnMut() -> i64,
-{
-    for _ in 0..rounds {
-        let _ = scan();
-        std::thread::sleep(DISCOVERY_SCAN_SLEEP);
-    }
-}
 
 fn multi_consumer_id(consumer_id: usize) -> String {
     format!("{MULTI_CONSUMER_PREFIX}_{consumer_id}")
