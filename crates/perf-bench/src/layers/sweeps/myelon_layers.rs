@@ -19,9 +19,9 @@ use crate::infra::events::{format_throughput, nanos_now, BenchEvent};
 use crate::infra::output::report::ReportBundleCompat;
 use crate::infra::output::reporting;
 use crate::infra::{
-    self, discovery_scan_rounds, launch_mmap_group, launch_shm_group, read_env_string,
-    read_env_u64, read_env_usize, segment_from_env, warm_discovery_scans, ConsumerOutput,
-    IpcBenchmark, MultiConsumerSpawn, ProducerOutput, ScenarioChildren,
+    self, discovery_scan_rounds, launch_mmap_group, launch_shm_group, mmap_layout_from_env,
+    read_env_string, read_env_u64, read_env_usize, segment_from_env, warm_discovery_scans,
+    ConsumerOutput, IpcBenchmark, MultiConsumerSpawn, ProducerOutput, ScenarioChildren,
 };
 use crate::layers::framed_myelon::codec::payloads::{
     access_raw, access_rkyv, checksum_archived_rkyv, checksum_flatbuf_root, encode_rkyv,
@@ -42,7 +42,6 @@ use myelon::{
     build_shared_single_producer as my_build_shared_single_producer,
 };
 use std::hint::black_box;
-use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 const FRAME_DATA_BYTES: usize = 64 * 1024 - 12;
@@ -51,10 +50,32 @@ type Frame = FixedFrame<FRAME_DATA_BYTES>;
 /// Aligned zero-copy frame sized for a 64KB ring slot.
 type ZcFrame = AlignedFixedFrame<{ 64 * 1024 - 16 }>;
 
+const MMAP_ATTACH_TIMEOUT: Duration = Duration::from_secs(15);
+const MMAP_ATTACH_RETRY_SLEEP: Duration = Duration::from_millis(25);
+
 // Right-sized frames: slot matches payload to eliminate bandwidth waste
 type Frame2K = FixedFrame<{ 2 * 1024 - 12 }>; // for 1KB payloads
 type Frame8K = FixedFrame<{ 8 * 1024 - 12 }>; // for 4KB payloads
 type Frame32K = FixedFrame<{ 32 * 1024 - 12 }>; // for 16KB payloads
+
+fn child_mmap_layout() -> MmapTransportLayout {
+    mmap_layout_from_env(crate::infra::env::ROOT, crate::infra::env::SEGMENT)
+}
+
+fn retry_mmap_attach<T, E, F>(context: &str, mut attach: F) -> Result<T, Box<dyn std::error::Error>>
+where
+    E: std::fmt::Display,
+    F: FnMut() -> Result<T, E>,
+{
+    let deadline = Instant::now() + MMAP_ATTACH_TIMEOUT;
+    loop {
+        match attach() {
+            Ok(value) => return Ok(value),
+            Err(_) if Instant::now() < deadline => std::thread::sleep(MMAP_ATTACH_RETRY_SLEEP),
+            Err(error) => return Err(format!("{context}: {error}").into()),
+        }
+    }
+}
 
 // ============================================================
 // Event types for raw ring
@@ -719,12 +740,10 @@ fn typed_zc_consumer() -> Result<(), Box<dyn std::error::Error>> {
 macro_rules! raw_mmap_impl {
     ($ev:ty, $prod_fn:ident, $cons_fn:ident) => {
         fn $prod_fn() -> Result<(), Box<dyn std::error::Error>> {
-            let root = std::env::var(crate::infra::env::ROOT).expect(crate::infra::env::ROOT);
-            let seg = std::env::var(crate::infra::env::SEGMENT).expect(crate::infra::env::SEGMENT);
             let buffer = read_env_usize(crate::infra::env::BUFFER, 4096);
             let events = read_env_u64(crate::infra::env::EVENTS, 100_000);
             let num_consumers = read_env_usize(crate::infra::env::CONSUMERS, 1);
-            let layout = MmapTransportLayout::new(PathBuf::from(&root), seg).expect("layout");
+            let layout = child_mmap_layout();
             layout.ensure_directories().expect("dirs");
             let mut producer = MmapProducer::<$ev>::create(layout, buffer, || <$ev>::default())?;
             if !producer.wait_for_consumers_ready(num_consumers as i64, Duration::from_secs(30)) {
@@ -750,23 +769,14 @@ macro_rules! raw_mmap_impl {
             Ok(())
         }
         fn $cons_fn() -> Result<(), Box<dyn std::error::Error>> {
-            let root = std::env::var(crate::infra::env::ROOT).expect(crate::infra::env::ROOT);
-            let seg = std::env::var(crate::infra::env::SEGMENT).expect(crate::infra::env::SEGMENT);
             let consumer_id = read_env_usize(crate::infra::env::CONSUMER_ID, 0);
             let buffer = read_env_usize(crate::infra::env::BUFFER, 4096);
             let events = read_env_u64(crate::infra::env::EVENTS, 100_000);
-            let layout = MmapTransportLayout::new(PathBuf::from(&root), seg).expect("layout");
+            let layout = child_mmap_layout();
             let cid = format!("c{consumer_id}_{}", std::process::id());
-            let deadline = Instant::now() + Duration::from_secs(15);
-            let mut consumer = loop {
-                match MmapConsumer::<$ev>::attach(layout.clone(), buffer, &cid) {
-                    Ok(c) => break c,
-                    Err(_) if Instant::now() < deadline => {
-                        std::thread::sleep(Duration::from_millis(25))
-                    }
-                    Err(e) => return Err(format!("attach: {e}").into()),
-                }
-            };
+            let mut consumer = retry_mmap_attach("attach", || {
+                MmapConsumer::<$ev>::attach(layout.clone(), buffer, &cid)
+            })?;
             let deadline = infra::spin_deadline();
             let mut consumed = 0u64;
             let mut start: Option<Instant> = None;
@@ -811,12 +821,10 @@ raw_mmap_impl!(Ev64K, ml_raw_mmap_prod_64k, ml_raw_mmap_cons_64k);
 macro_rules! raw_myelon_mmap_impl {
     ($ev:ty, $prod_fn:ident, $cons_fn:ident) => {
         fn $prod_fn() -> Result<(), Box<dyn std::error::Error>> {
-            let root = std::env::var(crate::infra::env::ROOT).expect(crate::infra::env::ROOT);
-            let seg = std::env::var(crate::infra::env::SEGMENT).expect(crate::infra::env::SEGMENT);
             let buffer = read_env_usize(crate::infra::env::BUFFER, 4096);
             let events = read_env_u64(crate::infra::env::EVENTS, 100_000);
             let num_consumers = read_env_usize(crate::infra::env::CONSUMERS, 1);
-            let layout = MmapTransportLayout::new(PathBuf::from(&root), seg).expect("layout");
+            let layout = child_mmap_layout();
             layout.ensure_directories().expect("dirs");
             let mut producer = MmapProducer::<$ev>::create(layout, buffer, || <$ev>::default())?;
             if !producer.wait_for_consumers_ready(num_consumers as i64, Duration::from_secs(30)) {
@@ -842,23 +850,14 @@ macro_rules! raw_myelon_mmap_impl {
             Ok(())
         }
         fn $cons_fn() -> Result<(), Box<dyn std::error::Error>> {
-            let root = std::env::var(crate::infra::env::ROOT).expect(crate::infra::env::ROOT);
-            let seg = std::env::var(crate::infra::env::SEGMENT).expect(crate::infra::env::SEGMENT);
             let consumer_id = read_env_usize(crate::infra::env::CONSUMER_ID, 0);
             let buffer = read_env_usize(crate::infra::env::BUFFER, 4096);
             let events = read_env_u64(crate::infra::env::EVENTS, 100_000);
-            let layout = MmapTransportLayout::new(PathBuf::from(&root), seg).expect("layout");
+            let layout = child_mmap_layout();
             let cid = format!("c{consumer_id}_{}", std::process::id());
-            let deadline = Instant::now() + Duration::from_secs(15);
-            let mut consumer = loop {
-                match MmapConsumer::<$ev>::attach(layout.clone(), buffer, &cid) {
-                    Ok(c) => break c,
-                    Err(_) if Instant::now() < deadline => {
-                        std::thread::sleep(Duration::from_millis(25))
-                    }
-                    Err(e) => return Err(format!("attach: {e}").into()),
-                }
-            };
+            let mut consumer = retry_mmap_attach("attach", || {
+                MmapConsumer::<$ev>::attach(layout.clone(), buffer, &cid)
+            })?;
             let deadline = infra::spin_deadline();
             let mut consumed = 0u64;
             let mut start: Option<Instant> = None;
@@ -901,13 +900,11 @@ raw_myelon_mmap_impl!(Ev64K, ml_my_raw_mmap_prod_64k, ml_my_raw_mmap_cons_64k);
 // ============================================================
 
 fn ml_framed_mmap_producer() -> Result<(), Box<dyn std::error::Error>> {
-    let root = std::env::var(crate::infra::env::ROOT).expect(crate::infra::env::ROOT);
-    let seg = std::env::var(crate::infra::env::SEGMENT).expect(crate::infra::env::SEGMENT);
     let buffer = read_env_usize(crate::infra::env::BUFFER, 1024);
     let events = read_env_u64(crate::infra::env::EVENTS, 50_000);
     let payload_size = read_env_usize(crate::infra::env::PAYLOAD_SIZE, 1024);
     let num_consumers = read_env_usize(crate::infra::env::CONSUMERS, 1);
-    let layout = MmapTransportLayout::new(PathBuf::from(&root), seg).expect("layout");
+    let layout = child_mmap_layout();
     let mut producer = MmapFramedTransportProducer::<Frame>::create(layout, buffer)?;
     if !producer.wait_for_consumers_ready(num_consumers as i64, Duration::from_secs(30)) {
         return Err(format!("timeout waiting for {num_consumers} consumers").into());
@@ -930,29 +927,20 @@ fn ml_framed_mmap_producer() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn ml_framed_mmap_consumer() -> Result<(), Box<dyn std::error::Error>> {
-    let root = std::env::var(crate::infra::env::ROOT).expect(crate::infra::env::ROOT);
-    let seg = std::env::var(crate::infra::env::SEGMENT).expect(crate::infra::env::SEGMENT);
     let consumer_id = read_env_usize(crate::infra::env::CONSUMER_ID, 0);
     let buffer = read_env_usize(crate::infra::env::BUFFER, 1024);
     let events = read_env_u64(crate::infra::env::EVENTS, 50_000);
     let payload_size = read_env_usize(crate::infra::env::PAYLOAD_SIZE, 1024);
-    let layout = MmapTransportLayout::new(PathBuf::from(&root), seg).expect("layout");
+    let layout = child_mmap_layout();
     let cid = format!("c{consumer_id}_{}", std::process::id());
-    let deadline_attach = Instant::now() + Duration::from_secs(15);
-    let mut consumer = loop {
-        match MmapFramedTransportConsumer::<Frame>::attach(
+    let mut consumer = retry_mmap_attach("attach", || {
+        MmapFramedTransportConsumer::<Frame>::attach(
             layout.clone(),
             buffer,
             &cid,
             MyelonWaitStrategy::BusySpin,
-        ) {
-            Ok(c) => break c,
-            Err(_) if Instant::now() < deadline_attach => {
-                std::thread::sleep(Duration::from_millis(25))
-            }
-            Err(e) => return Err(format!("attach: {e}").into()),
-        }
-    };
+        )
+    })?;
     let mut consumed = 0u64;
     let mut start: Option<Instant> = None;
     let mut checksum = 0u64;
@@ -980,29 +968,20 @@ fn ml_framed_mmap_consumer() -> Result<(), Box<dyn std::error::Error>> {
 // ============================================================
 
 fn ml_framed_batch_mmap_consumer() -> Result<(), Box<dyn std::error::Error>> {
-    let root = std::env::var(crate::infra::env::ROOT).expect(crate::infra::env::ROOT);
-    let seg = std::env::var(crate::infra::env::SEGMENT).expect(crate::infra::env::SEGMENT);
     let consumer_id = read_env_usize(crate::infra::env::CONSUMER_ID, 0);
     let buffer = read_env_usize(crate::infra::env::BUFFER, 1024);
     let events = read_env_u64(crate::infra::env::EVENTS, 50_000);
     let payload_size = read_env_usize(crate::infra::env::PAYLOAD_SIZE, 1024);
-    let layout = MmapTransportLayout::new(PathBuf::from(&root), seg).expect("layout");
+    let layout = child_mmap_layout();
     let cid = format!("c{consumer_id}_{}", std::process::id());
-    let deadline_attach = Instant::now() + Duration::from_secs(15);
-    let mut consumer = loop {
-        match MmapFramedTransportConsumer::<Frame>::attach(
+    let mut consumer = retry_mmap_attach("attach", || {
+        MmapFramedTransportConsumer::<Frame>::attach(
             layout.clone(),
             buffer,
             &cid,
             MyelonWaitStrategy::BusySpin,
-        ) {
-            Ok(c) => break c,
-            Err(_) if Instant::now() < deadline_attach => {
-                std::thread::sleep(Duration::from_millis(25))
-            }
-            Err(e) => return Err(format!("attach: {e}").into()),
-        }
-    };
+        )
+    })?;
     let mut reassembly = ReassemblyBuffer::new(256 * 1024);
     let deadline = infra::spin_deadline();
     let mut consumed = 0u64;
@@ -1037,13 +1016,11 @@ fn ml_framed_batch_mmap_consumer() -> Result<(), Box<dyn std::error::Error>> {
 macro_rules! rightsized_framed_mmap_impl {
     ($frame:ty, $prod_fn:ident, $cons_fn:ident) => {
         fn $prod_fn() -> Result<(), Box<dyn std::error::Error>> {
-            let root = std::env::var(crate::infra::env::ROOT).expect(crate::infra::env::ROOT);
-            let seg = std::env::var(crate::infra::env::SEGMENT).expect(crate::infra::env::SEGMENT);
             let buffer = read_env_usize(crate::infra::env::BUFFER, 4096);
             let events = read_env_u64(crate::infra::env::EVENTS, 100_000);
             let payload_size = read_env_usize(crate::infra::env::PAYLOAD_SIZE, 1024);
             let num_consumers = read_env_usize(crate::infra::env::CONSUMERS, 1);
-            let layout = MmapTransportLayout::new(PathBuf::from(&root), seg).expect("layout");
+            let layout = child_mmap_layout();
             let mut producer = MmapFramedTransportProducer::<$frame>::create(layout, buffer)?;
             if !producer.wait_for_consumers_ready(num_consumers as i64, Duration::from_secs(30)) {
                 return Err(format!("timeout waiting for {num_consumers} consumers").into());
@@ -1065,29 +1042,20 @@ macro_rules! rightsized_framed_mmap_impl {
             Ok(())
         }
         fn $cons_fn() -> Result<(), Box<dyn std::error::Error>> {
-            let root = std::env::var(crate::infra::env::ROOT).expect(crate::infra::env::ROOT);
-            let seg = std::env::var(crate::infra::env::SEGMENT).expect(crate::infra::env::SEGMENT);
             let consumer_id = read_env_usize(crate::infra::env::CONSUMER_ID, 0);
             let buffer = read_env_usize(crate::infra::env::BUFFER, 4096);
             let events = read_env_u64(crate::infra::env::EVENTS, 100_000);
             let payload_size = read_env_usize(crate::infra::env::PAYLOAD_SIZE, 1024);
-            let layout = MmapTransportLayout::new(PathBuf::from(&root), seg).expect("layout");
+            let layout = child_mmap_layout();
             let cid = format!("c{consumer_id}_{}", std::process::id());
-            let deadline_attach = Instant::now() + Duration::from_secs(15);
-            let mut consumer = loop {
-                match MmapFramedTransportConsumer::<$frame>::attach(
+            let mut consumer = retry_mmap_attach("attach", || {
+                MmapFramedTransportConsumer::<$frame>::attach(
                     layout.clone(),
                     buffer,
                     &cid,
                     MyelonWaitStrategy::BusySpin,
-                ) {
-                    Ok(c) => break c,
-                    Err(_) if Instant::now() < deadline_attach => {
-                        std::thread::sleep(Duration::from_millis(25))
-                    }
-                    Err(e) => return Err(format!("attach: {e}").into()),
-                }
-            };
+                )
+            })?;
             let mut reassembly = ReassemblyBuffer::new(256 * 1024);
             let deadline = infra::spin_deadline();
             let mut consumed = 0u64;
@@ -1143,8 +1111,6 @@ rightsized_framed_mmap_impl!(
 // ============================================================
 
 fn ml_typed_zc_mmap_producer() -> Result<(), Box<dyn std::error::Error>> {
-    let root = std::env::var(crate::infra::env::ROOT).expect(crate::infra::env::ROOT);
-    let seg = std::env::var(crate::infra::env::SEGMENT).expect(crate::infra::env::SEGMENT);
     let buffer = read_env_usize(crate::infra::env::BUFFER, 1024);
     let events = read_env_u64(crate::infra::env::EVENTS, 50_000);
     let batch_size = read_env_usize(crate::infra::env::BATCH_SIZE, 8);
@@ -1153,7 +1119,7 @@ fn ml_typed_zc_mmap_producer() -> Result<(), Box<dyn std::error::Error>> {
     let num_consumers = read_env_usize(crate::infra::env::CONSUMERS, 1);
     let payloads = make_payloads(batch_size);
 
-    let layout = MmapTransportLayout::new(PathBuf::from(&root), seg).expect("layout");
+    let layout = child_mmap_layout();
     let mut producer = MmapTypedProducer::<ZcFrame>::create(layout, buffer)?;
     if !producer
         .raw()
@@ -1190,30 +1156,21 @@ fn ml_typed_zc_mmap_producer() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn ml_typed_zc_mmap_consumer() -> Result<(), Box<dyn std::error::Error>> {
-    let root = std::env::var(crate::infra::env::ROOT).expect(crate::infra::env::ROOT);
-    let seg = std::env::var(crate::infra::env::SEGMENT).expect(crate::infra::env::SEGMENT);
     let consumer_id = read_env_usize(crate::infra::env::CONSUMER_ID, 0);
     let buffer = read_env_usize(crate::infra::env::BUFFER, 1024);
     let events = read_env_u64(crate::infra::env::EVENTS, 50_000);
     let payload_size = read_env_usize(crate::infra::env::PAYLOAD_SIZE, 1024);
     let codec = read_env_string(crate::infra::env::CODEC, "rkyv");
-    let layout = MmapTransportLayout::new(PathBuf::from(&root), seg).expect("layout");
+    let layout = child_mmap_layout();
     let cid = format!("c{consumer_id}_{}", std::process::id());
-    let deadline_attach = Instant::now() + Duration::from_secs(15);
-    let mut consumer = loop {
-        match MmapTypedConsumer::<ZcFrame>::attach(
+    let mut consumer = retry_mmap_attach("attach", || {
+        MmapTypedConsumer::<ZcFrame>::attach(
             layout.clone(),
             buffer,
             &cid,
             MyelonWaitStrategy::BusySpin,
-        ) {
-            Ok(c) => break c,
-            Err(_) if Instant::now() < deadline_attach => {
-                std::thread::sleep(Duration::from_millis(25))
-            }
-            Err(e) => return Err(format!("attach: {e}").into()),
-        }
-    };
+        )
+    })?;
     let mut reassembly = ReassemblyBuffer::new(256 * 1024);
     let deadline = infra::spin_deadline();
     let mut consumed = 0u64;
@@ -1274,15 +1231,13 @@ fn ml_typed_zc_mmap_consumer() -> Result<(), Box<dyn std::error::Error>> {
 macro_rules! rkyv_nofrag_mmap_impl {
     ($slot:ty, $data_len:expr, $prod_fn:ident, $cons_fn:ident) => {
         fn $prod_fn() -> Result<(), Box<dyn std::error::Error>> {
-            let root = std::env::var(crate::infra::env::ROOT).expect(crate::infra::env::ROOT);
-            let seg = std::env::var(crate::infra::env::SEGMENT).expect(crate::infra::env::SEGMENT);
             let buffer = read_env_usize(crate::infra::env::BUFFER, 16384);
             let events = read_env_u64(crate::infra::env::EVENTS, 100_000);
             let batch_size = read_env_usize(crate::infra::env::BATCH_SIZE, 8);
             let num_consumers = read_env_usize(crate::infra::env::CONSUMERS, 1);
             let payloads = make_payloads(batch_size);
 
-            let layout = MmapTransportLayout::new(PathBuf::from(&root), seg).expect("layout");
+            let layout = child_mmap_layout();
             layout.ensure_directories().expect("dirs");
             let mut producer =
                 MmapProducer::<$slot>::create(layout, buffer, || <$slot>::default())?;
@@ -1313,23 +1268,14 @@ macro_rules! rkyv_nofrag_mmap_impl {
         }
 
         fn $cons_fn() -> Result<(), Box<dyn std::error::Error>> {
-            let root = std::env::var(crate::infra::env::ROOT).expect(crate::infra::env::ROOT);
-            let seg = std::env::var(crate::infra::env::SEGMENT).expect(crate::infra::env::SEGMENT);
             let consumer_id = read_env_usize(crate::infra::env::CONSUMER_ID, 0);
             let buffer = read_env_usize(crate::infra::env::BUFFER, 16384);
             let events = read_env_u64(crate::infra::env::EVENTS, 100_000);
-            let layout = MmapTransportLayout::new(PathBuf::from(&root), seg).expect("layout");
+            let layout = child_mmap_layout();
             let cid = format!("c{consumer_id}_{}", std::process::id());
-            let deadline_attach = Instant::now() + Duration::from_secs(15);
-            let mut consumer = loop {
-                match MmapConsumer::<$slot>::attach(layout.clone(), buffer, &cid) {
-                    Ok(c) => break c,
-                    Err(_) if Instant::now() < deadline_attach => {
-                        std::thread::sleep(Duration::from_millis(25))
-                    }
-                    Err(e) => return Err(format!("attach: {e}").into()),
-                }
-            };
+            let mut consumer = retry_mmap_attach("attach", || {
+                MmapConsumer::<$slot>::attach(layout.clone(), buffer, &cid)
+            })?;
             let deadline = infra::spin_deadline();
             let mut consumed = 0u64;
             let mut start: Option<Instant> = None;
