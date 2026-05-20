@@ -181,12 +181,12 @@ fn throttle_mmap_backlog<T: FramedTransportFrame>(
 macro_rules! shm_framed_impl {
     ($frame:ty, $prod_fn:ident, $cons_fn:ident) => {
         fn $prod_fn() -> Result<(), Box<dyn std::error::Error>> {
-            let segment = segment_from_env("BENCHMARK_SEGMENT_NAME");
-            let buffer_depth = read_env_usize("BENCH_BUFFER_DEPTH", 1024);
-            let num_messages = read_env_u64("BENCH_NUM_MESSAGES", 50_000);
-            let payload_bytes = read_env_usize("BENCH_PAYLOAD_BYTES", 1024);
-            let num_consumers = read_env_usize("BENCH_NUM_CONSUMERS", 1);
-            let target_rate = read_env_u64("BENCH_TARGET_RATE", 0);
+            let segment = segment_from_env("MYELON_BENCH_SEGMENT_NAME");
+            let buffer_depth = read_env_usize("MYELON_BENCH_BUFFER_DEPTH", 1024);
+            let num_messages = read_env_u64("MYELON_BENCH_NUM_MESSAGES", 50_000);
+            let payload_bytes = read_env_usize("MYELON_BENCH_PAYLOAD_BYTES", 1024);
+            let num_consumers = read_env_usize("MYELON_BENCH_NUM_CONSUMERS", 1);
+            let target_rate = read_env_u64("MYELON_BENCH_TARGET_RATE", 0);
             let payload = vec![42u8; payload_bytes];
 
             let mut producer = FramedTransportProducer::<$frame>::create_with_consumers(
@@ -215,11 +215,11 @@ macro_rules! shm_framed_impl {
         }
 
         fn $cons_fn() -> Result<(), Box<dyn std::error::Error>> {
-            let segment = segment_from_env("BENCHMARK_SEGMENT_NAME");
-            let consumer_id = read_env_usize("BENCH_CONSUMER_ID", 0);
-            let buffer_depth = read_env_usize("BENCH_BUFFER_DEPTH", 1024);
-            let num_messages = read_env_u64("BENCH_NUM_MESSAGES", 50_000);
-            let payload_bytes = read_env_usize("BENCH_PAYLOAD_BYTES", 1024);
+            let segment = segment_from_env("MYELON_BENCH_SEGMENT_NAME");
+            let consumer_id = read_env_usize("MYELON_BENCH_CONSUMER_ID", 0);
+            let buffer_depth = read_env_usize("MYELON_BENCH_BUFFER_DEPTH", 1024);
+            let num_messages = read_env_u64("MYELON_BENCH_NUM_MESSAGES", 50_000);
+            let payload_bytes = read_env_usize("MYELON_BENCH_PAYLOAD_BYTES", 1024);
 
             let coord =
                 BenchmarkCoordination::attach_with_timeout(&segment, Duration::from_secs(30))?;
@@ -278,12 +278,13 @@ macro_rules! shm_framed_impl {
 macro_rules! mmap_framed_impl {
     ($frame:ty, $prod_fn:ident, $cons_fn:ident) => {
         fn $prod_fn() -> Result<(), Box<dyn std::error::Error>> {
-            let layout = mmap_layout_from_env("MMAP_ROOT", "MMAP_SEGMENT");
-            let buffer_depth = read_env_usize("BENCH_BUFFER_DEPTH", 1024);
-            let num_messages = read_env_u64("BENCH_NUM_MESSAGES", 50_000);
-            let payload_bytes = read_env_usize("BENCH_PAYLOAD_BYTES", 1024);
-            let num_consumers = read_env_usize("BENCH_NUM_CONSUMERS", 1);
-            let target_rate = read_env_u64("BENCH_TARGET_RATE", 0);
+            let layout =
+                mmap_layout_from_env("MYELON_BENCH_MMAP_ROOT", "MYELON_BENCH_MMAP_SEGMENT");
+            let buffer_depth = read_env_usize("MYELON_BENCH_BUFFER_DEPTH", 1024);
+            let num_messages = read_env_u64("MYELON_BENCH_NUM_MESSAGES", 50_000);
+            let payload_bytes = read_env_usize("MYELON_BENCH_PAYLOAD_BYTES", 1024);
+            let num_consumers = read_env_usize("MYELON_BENCH_NUM_CONSUMERS", 1);
+            let target_rate = read_env_u64("MYELON_BENCH_TARGET_RATE", 0);
             let payload = vec![42u8; payload_bytes];
 
             let mut producer = MmapFramedTransportProducer::<$frame>::create(layout, buffer_depth)?;
@@ -326,11 +327,12 @@ macro_rules! mmap_framed_impl {
         }
 
         fn $cons_fn() -> Result<(), Box<dyn std::error::Error>> {
-            let layout = mmap_layout_from_env("MMAP_ROOT", "MMAP_SEGMENT");
-            let consumer_id = read_env_usize("BENCH_CONSUMER_ID", 0);
-            let buffer_depth = read_env_usize("BENCH_BUFFER_DEPTH", 1024);
-            let num_messages = read_env_u64("BENCH_NUM_MESSAGES", 50_000);
-            let payload_bytes = read_env_usize("BENCH_PAYLOAD_BYTES", 1024);
+            let layout =
+                mmap_layout_from_env("MYELON_BENCH_MMAP_ROOT", "MYELON_BENCH_MMAP_SEGMENT");
+            let consumer_id = read_env_usize("MYELON_BENCH_CONSUMER_ID", 0);
+            let buffer_depth = read_env_usize("MYELON_BENCH_BUFFER_DEPTH", 1024);
+            let num_messages = read_env_u64("MYELON_BENCH_NUM_MESSAGES", 50_000);
+            let payload_bytes = read_env_usize("MYELON_BENCH_PAYLOAD_BYTES", 1024);
             let consumer_name = format!("c{consumer_id}_{}", std::process::id());
 
             let deadline = Instant::now() + Duration::from_secs(15);
@@ -410,11 +412,11 @@ macro_rules! shm_framed_batch_consumer_impl {
         fn $cons_fn() -> Result<(), Box<dyn std::error::Error>> {
             use myelon::transport::ReassemblyBuffer;
 
-            let segment = segment_from_env("BENCHMARK_SEGMENT_NAME");
-            let consumer_id = read_env_usize("BENCH_CONSUMER_ID", 0);
-            let buffer_depth = read_env_usize("BENCH_BUFFER_DEPTH", 1024);
-            let num_messages = read_env_u64("BENCH_NUM_MESSAGES", 50_000);
-            let payload_bytes = read_env_usize("BENCH_PAYLOAD_BYTES", 1024);
+            let segment = segment_from_env("MYELON_BENCH_SEGMENT_NAME");
+            let consumer_id = read_env_usize("MYELON_BENCH_CONSUMER_ID", 0);
+            let buffer_depth = read_env_usize("MYELON_BENCH_BUFFER_DEPTH", 1024);
+            let num_messages = read_env_u64("MYELON_BENCH_NUM_MESSAGES", 50_000);
+            let payload_bytes = read_env_usize("MYELON_BENCH_PAYLOAD_BYTES", 1024);
 
             let coord =
                 BenchmarkCoordination::attach_with_timeout(&segment, Duration::from_secs(30))?;
@@ -484,11 +486,12 @@ macro_rules! mmap_framed_batch_consumer_impl {
         fn $cons_fn() -> Result<(), Box<dyn std::error::Error>> {
             use myelon::transport::ReassemblyBuffer;
 
-            let layout = mmap_layout_from_env("MMAP_ROOT", "MMAP_SEGMENT");
-            let consumer_id = read_env_usize("BENCH_CONSUMER_ID", 0);
-            let buffer_depth = read_env_usize("BENCH_BUFFER_DEPTH", 1024);
-            let num_messages = read_env_u64("BENCH_NUM_MESSAGES", 50_000);
-            let payload_bytes = read_env_usize("BENCH_PAYLOAD_BYTES", 1024);
+            let layout =
+                mmap_layout_from_env("MYELON_BENCH_MMAP_ROOT", "MYELON_BENCH_MMAP_SEGMENT");
+            let consumer_id = read_env_usize("MYELON_BENCH_CONSUMER_ID", 0);
+            let buffer_depth = read_env_usize("MYELON_BENCH_BUFFER_DEPTH", 1024);
+            let num_messages = read_env_u64("MYELON_BENCH_NUM_MESSAGES", 50_000);
+            let payload_bytes = read_env_usize("MYELON_BENCH_PAYLOAD_BYTES", 1024);
             let consumer_name = format!("c{consumer_id}_{}", std::process::id());
 
             let deadline = Instant::now() + Duration::from_secs(15);
@@ -691,20 +694,20 @@ impl IpcBenchmark for Scenario {
         if self.backend == "shm" {
             let segment = unique_shm_segment(&format!("mfs_{}_{}", self.layer, self.size_tag));
             let mut envs = vec![
-                ("BENCHMARK_SEGMENT_NAME", segment.clone()),
-                ("BENCH_PAYLOAD_BYTES", self.payload_size.to_string()),
-                ("BENCH_NUM_MESSAGES", self.events.to_string()),
-                ("BENCH_BUFFER_DEPTH", self.buffer.to_string()),
-                ("BENCH_NUM_CONSUMERS", self.consumers.to_string()),
+                ("MYELON_BENCH_SEGMENT_NAME", segment.clone()),
+                ("MYELON_BENCH_PAYLOAD_BYTES", self.payload_size.to_string()),
+                ("MYELON_BENCH_NUM_MESSAGES", self.events.to_string()),
+                ("MYELON_BENCH_BUFFER_DEPTH", self.buffer.to_string()),
+                ("MYELON_BENCH_NUM_CONSUMERS", self.consumers.to_string()),
             ];
             if self.target_rate > 0 {
-                envs.push(("BENCH_TARGET_RATE", self.target_rate.to_string()));
+                envs.push(("MYELON_BENCH_TARGET_RATE", self.target_rate.to_string()));
             }
             let producer = spawn_child(exe, self.prod_role, &envs);
             let consumers = (0..self.consumers)
                 .map(|consumer_id| {
                     let mut consumer_envs = envs.clone();
-                    consumer_envs.push(("BENCH_CONSUMER_ID", consumer_id.to_string()));
+                    consumer_envs.push(("MYELON_BENCH_CONSUMER_ID", consumer_id.to_string()));
                     spawn_child(exe, self.cons_role, &consumer_envs)
                 })
                 .collect();
@@ -713,21 +716,21 @@ impl IpcBenchmark for Scenario {
             let root = unique_mmap_root(&format!("mfs_{}_{}", self.layer, self.size_tag));
             let segment = unique_mmap_segment("framed");
             let mut envs = vec![
-                ("MMAP_ROOT", root.display().to_string()),
-                ("MMAP_SEGMENT", segment),
-                ("BENCH_PAYLOAD_BYTES", self.payload_size.to_string()),
-                ("BENCH_NUM_MESSAGES", self.events.to_string()),
-                ("BENCH_BUFFER_DEPTH", self.buffer.to_string()),
-                ("BENCH_NUM_CONSUMERS", self.consumers.to_string()),
+                ("MYELON_BENCH_MMAP_ROOT", root.display().to_string()),
+                ("MYELON_BENCH_MMAP_SEGMENT", segment),
+                ("MYELON_BENCH_PAYLOAD_BYTES", self.payload_size.to_string()),
+                ("MYELON_BENCH_NUM_MESSAGES", self.events.to_string()),
+                ("MYELON_BENCH_BUFFER_DEPTH", self.buffer.to_string()),
+                ("MYELON_BENCH_NUM_CONSUMERS", self.consumers.to_string()),
             ];
             if self.target_rate > 0 {
-                envs.push(("BENCH_TARGET_RATE", self.target_rate.to_string()));
+                envs.push(("MYELON_BENCH_TARGET_RATE", self.target_rate.to_string()));
             }
             let producer = spawn_child(exe, self.prod_role, &envs);
             let consumers = (0..self.consumers)
                 .map(|consumer_id| {
                     let mut consumer_envs = envs.clone();
-                    consumer_envs.push(("BENCH_CONSUMER_ID", consumer_id.to_string()));
+                    consumer_envs.push(("MYELON_BENCH_CONSUMER_ID", consumer_id.to_string()));
                     spawn_child(exe, self.cons_role, &consumer_envs)
                 })
                 .collect();

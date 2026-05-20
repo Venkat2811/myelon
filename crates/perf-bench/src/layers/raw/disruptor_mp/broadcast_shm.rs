@@ -161,11 +161,11 @@ use crate::infra::events::BenchEvent;
 // ============================================================
 
 fn message_producer_sized<const SIZE: usize>() -> Result<(), Box<dyn std::error::Error>> {
-    let segment = infra::segment_from_env("BENCHMARK_SEGMENT_NAME");
-    let target_rate = infra::read_env_u64("BENCH_TARGET_RATE", 0);
-    let buffer = infra::read_env_usize("BENCH_BUFFER", 1024);
-    let events = infra::read_env_u64("BENCH_EVENTS", 100_000);
-    let warmup = infra::read_env_u64("BENCH_WARMUP", 1_000);
+    let segment = infra::segment_from_env("MYELON_BENCH_SEGMENT_NAME");
+    let target_rate = infra::read_env_u64("MYELON_BENCH_TARGET_RATE", 0);
+    let buffer = infra::read_env_usize("MYELON_BENCH_BUFFER", 1024);
+    let events = infra::read_env_u64("MYELON_BENCH_EVENTS", 100_000);
+    let warmup = infra::read_env_u64("MYELON_BENCH_WARMUP", 1_000);
 
     let mut producer = build_shared_single_producer::<BenchEvent<SIZE>>(&segment, buffer)
         .enable_discovery(1)
@@ -226,17 +226,17 @@ fn message_producer_sized<const SIZE: usize>() -> Result<(), Box<dyn std::error:
 }
 
 fn message_producer() -> Result<(), Box<dyn std::error::Error>> {
-    let event_bytes = infra::read_env_usize("BENCH_EVENT_SIZE", 144);
+    let event_bytes = infra::read_env_usize("MYELON_BENCH_EVENT_SIZE", 144);
     crate::dispatch_bench_event!(event_bytes, |<SIZE>| {
         message_producer_sized::<SIZE>()
     })
 }
 
 fn message_consumer_sized<const SIZE: usize>() -> Result<(), Box<dyn std::error::Error>> {
-    let segment = infra::segment_from_env("BENCHMARK_SEGMENT_NAME");
-    let consumer_id = infra::read_env_usize("BENCH_CONSUMER_ID", 0);
-    let buffer = infra::read_env_usize("BENCH_BUFFER", 1024);
-    let warmup_target = infra::read_env_u64("BENCH_WARMUP", 1_000);
+    let segment = infra::segment_from_env("MYELON_BENCH_SEGMENT_NAME");
+    let consumer_id = infra::read_env_usize("MYELON_BENCH_CONSUMER_ID", 0);
+    let buffer = infra::read_env_usize("MYELON_BENCH_BUFFER", 1024);
+    let warmup_target = infra::read_env_u64("MYELON_BENCH_WARMUP", 1_000);
 
     let coord = BenchmarkCoordination::attach_with_timeout(&segment, Duration::from_secs(30))?;
 
@@ -312,7 +312,7 @@ fn message_consumer_sized<const SIZE: usize>() -> Result<(), Box<dyn std::error:
 }
 
 fn message_consumer() -> Result<(), Box<dyn std::error::Error>> {
-    let event_bytes = infra::read_env_usize("BENCH_EVENT_SIZE", 144);
+    let event_bytes = infra::read_env_usize("MYELON_BENCH_EVENT_SIZE", 144);
     crate::dispatch_bench_event!(event_bytes, |<SIZE>| {
         message_consumer_sized::<SIZE>()
     })
@@ -323,11 +323,11 @@ fn message_consumer() -> Result<(), Box<dyn std::error::Error>> {
 // ============================================================
 
 fn signal_producer() -> Result<(), Box<dyn std::error::Error>> {
-    let segment = infra::segment_from_env("BENCHMARK_SEGMENT_NAME");
-    let buffer = infra::read_env_usize("BENCH_BUFFER", 65_536);
-    let events = infra::read_env_u64("BENCH_EVENTS", 10_000_000);
-    let warmup = infra::read_env_u64("BENCH_WARMUP", 100_000);
-    let target_rate = infra::read_env_u64("PERF_BENCH_SIGNAL_TARGET_RATE", 0);
+    let segment = infra::segment_from_env("MYELON_BENCH_SEGMENT_NAME");
+    let buffer = infra::read_env_usize("MYELON_BENCH_BUFFER", 65_536);
+    let events = infra::read_env_u64("MYELON_BENCH_EVENTS", 10_000_000);
+    let warmup = infra::read_env_u64("MYELON_BENCH_WARMUP", 100_000);
+    let target_rate = infra::read_env_u64("MYELON_BENCH_SIGNAL_TARGET_RATE", 0);
     let latency_mode = shm_signal_mode()?;
 
     if matches!(latency_mode, SignalLatencyMode::None) {
@@ -483,11 +483,11 @@ fn signal_producer() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn signal_consumer() -> Result<(), Box<dyn std::error::Error>> {
-    let segment = infra::segment_from_env("BENCHMARK_SEGMENT_NAME");
-    let consumer_id = infra::read_env_usize("BENCH_CONSUMER_ID", 0);
-    let buffer = infra::read_env_usize("BENCH_BUFFER", 65_536);
-    let events = infra::read_env_u64("BENCH_EVENTS", 10_000_000);
-    let warmup_target = infra::read_env_u64("BENCH_WARMUP", 100_000);
+    let segment = infra::segment_from_env("MYELON_BENCH_SEGMENT_NAME");
+    let consumer_id = infra::read_env_usize("MYELON_BENCH_CONSUMER_ID", 0);
+    let buffer = infra::read_env_usize("MYELON_BENCH_BUFFER", 65_536);
+    let events = infra::read_env_u64("MYELON_BENCH_EVENTS", 10_000_000);
+    let warmup_target = infra::read_env_u64("MYELON_BENCH_WARMUP", 100_000);
     let latency_mode = shm_signal_mode()?;
     let sidecar = if latency_mode.uses_sidecar() {
         Some(ShmTimestampSidecar::open_with_timeout(
@@ -688,12 +688,12 @@ fn signal_consumer() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn multi_signal_producer() -> Result<(), Box<dyn std::error::Error>> {
-    let segment = infra::segment_from_env("BENCHMARK_SEGMENT_NAME");
-    let num_consumers = infra::read_env_usize("BENCH_NUM_CONSUMERS", 2);
-    let buffer = infra::read_env_usize("BENCH_BUFFER", 65_536);
-    let events = infra::read_env_u64("BENCH_EVENTS", 10_000_000);
-    let warmup = infra::read_env_u64("BENCH_WARMUP", 100_000);
-    let target_rate = infra::read_env_u64("PERF_BENCH_SIGNAL_TARGET_RATE", 0);
+    let segment = infra::segment_from_env("MYELON_BENCH_SEGMENT_NAME");
+    let num_consumers = infra::read_env_usize("MYELON_BENCH_NUM_CONSUMERS", 2);
+    let buffer = infra::read_env_usize("MYELON_BENCH_BUFFER", 65_536);
+    let events = infra::read_env_u64("MYELON_BENCH_EVENTS", 10_000_000);
+    let warmup = infra::read_env_u64("MYELON_BENCH_WARMUP", 100_000);
+    let target_rate = infra::read_env_u64("MYELON_BENCH_SIGNAL_TARGET_RATE", 0);
     let latency_mode = shm_signal_mode()?;
 
     if matches!(latency_mode, SignalLatencyMode::None) {
@@ -856,11 +856,11 @@ fn multi_signal_producer() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn multi_signal_consumer() -> Result<(), Box<dyn std::error::Error>> {
-    let segment = infra::segment_from_env("BENCHMARK_SEGMENT_NAME");
-    let consumer_id = infra::read_env_usize("BENCH_CONSUMER_ID", 0);
-    let buffer = infra::read_env_usize("BENCH_BUFFER", 65_536);
-    let events = infra::read_env_u64("BENCH_EVENTS", 10_000_000);
-    let warmup = infra::read_env_u64("BENCH_WARMUP", 100_000);
+    let segment = infra::segment_from_env("MYELON_BENCH_SEGMENT_NAME");
+    let consumer_id = infra::read_env_usize("MYELON_BENCH_CONSUMER_ID", 0);
+    let buffer = infra::read_env_usize("MYELON_BENCH_BUFFER", 65_536);
+    let events = infra::read_env_u64("MYELON_BENCH_EVENTS", 10_000_000);
+    let warmup = infra::read_env_u64("MYELON_BENCH_WARMUP", 100_000);
     let latency_mode = shm_signal_mode()?;
     let sidecar = if latency_mode.uses_sidecar() {
         Some(ShmTimestampSidecar::open_with_timeout(
@@ -1060,12 +1060,12 @@ fn multi_signal_consumer() -> Result<(), Box<dyn std::error::Error>> {
 // ============================================================
 
 fn multi_message_producer_sized<const SIZE: usize>() -> Result<(), Box<dyn std::error::Error>> {
-    let segment = infra::segment_from_env("BENCHMARK_SEGMENT_NAME");
-    let num_consumers = infra::read_env_usize("BENCH_NUM_CONSUMERS", 3);
-    let buffer = infra::read_env_usize("BENCH_BUFFER", 4096);
-    let events = infra::read_env_u64("BENCH_EVENTS", 100_000);
-    let warmup = infra::read_env_u64("BENCH_WARMUP", 1_000);
-    let target_rate = infra::read_env_u64("BENCH_TARGET_RATE", 0);
+    let segment = infra::segment_from_env("MYELON_BENCH_SEGMENT_NAME");
+    let num_consumers = infra::read_env_usize("MYELON_BENCH_NUM_CONSUMERS", 3);
+    let buffer = infra::read_env_usize("MYELON_BENCH_BUFFER", 4096);
+    let events = infra::read_env_u64("MYELON_BENCH_EVENTS", 100_000);
+    let warmup = infra::read_env_u64("MYELON_BENCH_WARMUP", 1_000);
+    let target_rate = infra::read_env_u64("MYELON_BENCH_TARGET_RATE", 0);
 
     let mut producer = build_shared_single_producer::<BenchEvent<SIZE>>(&segment, buffer)
         .discover_consumer_with_prefix_and_interval(
@@ -1131,19 +1131,19 @@ fn multi_message_producer_sized<const SIZE: usize>() -> Result<(), Box<dyn std::
 }
 
 fn multi_message_producer() -> Result<(), Box<dyn std::error::Error>> {
-    let event_bytes = infra::read_env_usize("BENCH_EVENT_SIZE", 144);
+    let event_bytes = infra::read_env_usize("MYELON_BENCH_EVENT_SIZE", 144);
     crate::dispatch_bench_event!(event_bytes, |<SIZE>| {
         multi_message_producer_sized::<SIZE>()
     })
 }
 
 fn multi_message_consumer_sized<const SIZE: usize>() -> Result<(), Box<dyn std::error::Error>> {
-    let segment = infra::segment_from_env("BENCHMARK_SEGMENT_NAME");
-    let consumer_id = infra::read_env_usize("BENCH_CONSUMER_ID", 0);
-    let buffer = infra::read_env_usize("BENCH_BUFFER", 4096);
-    let events = infra::read_env_u64("BENCH_EVENTS", 100_000);
-    let warmup = infra::read_env_u64("BENCH_WARMUP", 1_000);
-    let record_latency = infra::read_env_usize("BENCH_RECORD_LATENCY", 0) == 1;
+    let segment = infra::segment_from_env("MYELON_BENCH_SEGMENT_NAME");
+    let consumer_id = infra::read_env_usize("MYELON_BENCH_CONSUMER_ID", 0);
+    let buffer = infra::read_env_usize("MYELON_BENCH_BUFFER", 4096);
+    let events = infra::read_env_u64("MYELON_BENCH_EVENTS", 100_000);
+    let warmup = infra::read_env_u64("MYELON_BENCH_WARMUP", 1_000);
+    let record_latency = infra::read_env_usize("MYELON_BENCH_RECORD_LATENCY", 0) == 1;
 
     let consumer_name = multi_consumer_id(consumer_id);
     let mut consumer = attach_consumer_with_timeout::<BenchEvent<SIZE>>(
@@ -1244,7 +1244,7 @@ fn multi_message_consumer_sized<const SIZE: usize>() -> Result<(), Box<dyn std::
 }
 
 fn multi_message_consumer() -> Result<(), Box<dyn std::error::Error>> {
-    let event_bytes = infra::read_env_usize("BENCH_EVENT_SIZE", 144);
+    let event_bytes = infra::read_env_usize("MYELON_BENCH_EVENT_SIZE", 144);
     crate::dispatch_bench_event!(event_bytes, |<SIZE>| {
         multi_message_consumer_sized::<SIZE>()
     })
@@ -1349,18 +1349,18 @@ impl IpcBenchmark for Scenario {
         let signal_mode = SignalLatencyMode::from_env()?;
         let signal_sample_every = sample_every_from_env();
         let mut envs: Vec<(&str, String)> = vec![
-            ("BENCHMARK_SEGMENT_NAME", segment.clone()),
-            ("BENCH_NUM_CONSUMERS", self.consumers.to_string()),
-            ("BENCH_BUFFER", self.buffer.to_string()),
-            ("BENCH_EVENTS", self.events.to_string()),
-            ("BENCH_WARMUP", self.warmup.to_string()),
-            ("BENCH_EVENT_SIZE", self.event_bytes.to_string()),
+            ("MYELON_BENCH_SEGMENT_NAME", segment.clone()),
+            ("MYELON_BENCH_NUM_CONSUMERS", self.consumers.to_string()),
+            ("MYELON_BENCH_BUFFER", self.buffer.to_string()),
+            ("MYELON_BENCH_EVENTS", self.events.to_string()),
+            ("MYELON_BENCH_WARMUP", self.warmup.to_string()),
+            ("MYELON_BENCH_EVENT_SIZE", self.event_bytes.to_string()),
             (
-                "PERF_BENCH_SIGNAL_LATENCY_MODE",
+                "MYELON_BENCH_SIGNAL_LATENCY_MODE",
                 signal_mode.as_str().to_string(),
             ),
             (
-                "PERF_BENCH_SIGNAL_SAMPLE_EVERY",
+                "MYELON_BENCH_SIGNAL_SAMPLE_EVERY",
                 signal_sample_every.to_string(),
             ),
         ];
@@ -1368,12 +1368,12 @@ impl IpcBenchmark for Scenario {
             && signal_mode.uses_sidecar()
         {
             envs.push((
-                "PERF_BENCH_SIGNAL_SIDECAR_SHM_ID",
+                "MYELON_BENCH_SIGNAL_SIDECAR_SHM_ID",
                 format!("{segment}_signal_timestamps"),
             ));
         }
         if self.target_rate > 0 {
-            envs.push(("BENCH_TARGET_RATE", self.target_rate.to_string()));
+            envs.push(("MYELON_BENCH_TARGET_RATE", self.target_rate.to_string()));
         }
 
         let producer = infra::spawn_child(exe, self.producer_role, &envs);
@@ -1381,9 +1381,9 @@ impl IpcBenchmark for Scenario {
             .map(|consumer_id| {
                 let mut consumer_envs = envs.clone();
                 if self.record_latency || self.target_rate > 0 {
-                    consumer_envs.push(("BENCH_RECORD_LATENCY", "1".to_string()));
+                    consumer_envs.push(("MYELON_BENCH_RECORD_LATENCY", "1".to_string()));
                 }
-                consumer_envs.push(("BENCH_CONSUMER_ID", consumer_id.to_string()));
+                consumer_envs.push(("MYELON_BENCH_CONSUMER_ID", consumer_id.to_string()));
                 infra::spawn_child(exe, self.consumer_role, &consumer_envs)
             })
             .collect();

@@ -98,7 +98,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 fn dispatch_child(args: &[String]) -> Result<(), Box<dyn Error>> {
     use perf_bench::infra::BenchHarness;
 
-    let harness_key = std::env::var("PERF_BENCH_BROADCAST_HARNESS").unwrap_or_default();
+    let harness_key = std::env::var("MYELON_BENCH_BROADCAST_HARNESS").unwrap_or_default();
 
     let harness: Option<&dyn BenchHarness> = match harness_key.as_str() {
         "raw_ring_shm" => {
@@ -150,17 +150,17 @@ fn run_signal(args: &Args) -> Result<(), Box<dyn Error>> {
     if args.observe_sequences {
         return run_signal_with_sequence_observer(args, latency_mode);
     }
-    std::env::set_var("PERF_BENCH_SIGNAL_LATENCY_MODE", latency_mode.as_str());
-    std::env::set_var("PERF_BENCH_SIGNAL_SAMPLE_EVERY", "1");
-    std::env::remove_var("PERF_BENCH_SIGNAL_TARGET_RATE");
+    std::env::set_var("MYELON_BENCH_SIGNAL_LATENCY_MODE", latency_mode.as_str());
+    std::env::set_var("MYELON_BENCH_SIGNAL_SAMPLE_EVERY", "1");
+    std::env::remove_var("MYELON_BENCH_SIGNAL_TARGET_RATE");
     if latency_mode.records_latency() {
-        std::env::set_var("PERF_BENCH_SIGNAL_RECORD_LATENCY", "1");
+        std::env::set_var("MYELON_BENCH_SIGNAL_RECORD_LATENCY", "1");
     } else {
-        std::env::remove_var("PERF_BENCH_SIGNAL_RECORD_LATENCY");
+        std::env::remove_var("MYELON_BENCH_SIGNAL_RECORD_LATENCY");
     }
 
     if args.timeout != 300 {
-        std::env::set_var("PERF_BENCH_TIMEOUT", args.timeout.to_string());
+        std::env::set_var("MYELON_BENCH_TIMEOUT", args.timeout.to_string());
     }
 
     // Build synthetic args for RawRingSelection::parse
@@ -196,12 +196,12 @@ fn run_signal(args: &Args) -> Result<(), Box<dyn Error>> {
 
     let result = match args.backend.as_str() {
         "shm" => {
-            std::env::set_var("PERF_BENCH_BROADCAST_HARNESS", "raw_ring_shm");
+            std::env::set_var("MYELON_BENCH_BROADCAST_HARNESS", "raw_ring_shm");
             let bench = perf_bench::layers::raw::disruptor_mp::broadcast_shm::RawRingShmBench;
             bench.run_orchestrator(&synthetic)
         }
         "mmap" => {
-            std::env::set_var("PERF_BENCH_BROADCAST_HARNESS", "raw_ring_mmap");
+            std::env::set_var("MYELON_BENCH_BROADCAST_HARNESS", "raw_ring_mmap");
             let bench = perf_bench::layers::raw::disruptor_mp::broadcast_mmap::RawRingMmapBench;
             bench.run_orchestrator(&synthetic)
         }
@@ -226,13 +226,13 @@ fn run_signal_with_sequence_observer(
         return Err("--observe-sequences currently supports only --consumers 1".into());
     }
 
-    std::env::set_var("PERF_BENCH_SIGNAL_LATENCY_MODE", latency_mode.as_str());
-    std::env::set_var("PERF_BENCH_SIGNAL_SAMPLE_EVERY", "1");
-    std::env::remove_var("PERF_BENCH_SIGNAL_TARGET_RATE");
+    std::env::set_var("MYELON_BENCH_SIGNAL_LATENCY_MODE", latency_mode.as_str());
+    std::env::set_var("MYELON_BENCH_SIGNAL_SAMPLE_EVERY", "1");
+    std::env::remove_var("MYELON_BENCH_SIGNAL_TARGET_RATE");
     if latency_mode.records_latency() {
-        std::env::set_var("PERF_BENCH_SIGNAL_RECORD_LATENCY", "1");
+        std::env::set_var("MYELON_BENCH_SIGNAL_RECORD_LATENCY", "1");
     } else {
-        std::env::remove_var("PERF_BENCH_SIGNAL_RECORD_LATENCY");
+        std::env::remove_var("MYELON_BENCH_SIGNAL_RECORD_LATENCY");
     }
 
     let timeout = Duration::from_secs(args.timeout);
@@ -240,19 +240,19 @@ fn run_signal_with_sequence_observer(
     let segment = unique_shm_segment("sig_seqobs");
     let exe = std::env::current_exe()?;
     let envs: Vec<(&str, String)> = vec![
-        ("BENCHMARK_SEGMENT_NAME", segment.clone()),
-        ("BENCH_NUM_CONSUMERS", "1".to_string()),
-        ("BENCH_BUFFER", args.buffer_size.to_string()),
-        ("BENCH_EVENTS", args.events.to_string()),
-        ("BENCH_WARMUP", warmup.to_string()),
+        ("MYELON_BENCH_SEGMENT_NAME", segment.clone()),
+        ("MYELON_BENCH_NUM_CONSUMERS", "1".to_string()),
+        ("MYELON_BENCH_BUFFER", args.buffer_size.to_string()),
+        ("MYELON_BENCH_EVENTS", args.events.to_string()),
+        ("MYELON_BENCH_WARMUP", warmup.to_string()),
         (
-            "PERF_BENCH_SIGNAL_LATENCY_MODE",
+            "MYELON_BENCH_SIGNAL_LATENCY_MODE",
             latency_mode.as_str().to_string(),
         ),
-        ("PERF_BENCH_SIGNAL_SAMPLE_EVERY", "1".to_string()),
+        ("MYELON_BENCH_SIGNAL_SAMPLE_EVERY", "1".to_string()),
     ];
     let mut consumer_envs = envs.clone();
-    consumer_envs.push(("BENCH_CONSUMER_ID", "0".to_string()));
+    consumer_envs.push(("MYELON_BENCH_CONSUMER_ID", "0".to_string()));
     let producer = spawn_child(&exe, "sig_producer", &envs);
     let consumer = spawn_child(&exe, "sig_consumer", &consumer_envs);
 

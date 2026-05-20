@@ -161,7 +161,7 @@ pub trait IpcBenchmark {
         let timeout = super::config::bench_timeout_override_secs()
             .map(Duration::from_secs)
             .unwrap_or_else(|| self.timeout());
-        std::env::set_var("BENCH_TIMEOUT", timeout.as_secs().to_string());
+        std::env::set_var("MYELON_BENCH_TIMEOUT", timeout.as_secs().to_string());
         let children = self.launch(&exe)?;
         let ScenarioChildren {
             producer,

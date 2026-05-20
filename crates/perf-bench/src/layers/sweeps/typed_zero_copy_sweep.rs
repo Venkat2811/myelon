@@ -42,13 +42,13 @@ fn find_flag_value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
 }
 
 fn typed_zc_shm_prod() -> Result<(), Box<dyn std::error::Error>> {
-    let segment = segment_from_env("BENCHMARK_SEGMENT_NAME");
-    let buffer_depth = read_env_usize("BENCH_BUFFER_DEPTH", 1024);
-    let num_messages = read_env_u64("BENCH_NUM_MESSAGES", 50_000);
-    let payload_bytes = read_env_usize("BENCH_PAYLOAD_BYTES", 1024);
-    let batch_size = read_env_usize("BENCH_BATCH_SIZE", 8);
-    let codec = read_env_string("BENCH_CODEC", "rkyv");
-    let num_consumers = read_env_usize("BENCH_NUM_CONSUMERS", 1);
+    let segment = segment_from_env("MYELON_BENCH_SEGMENT_NAME");
+    let buffer_depth = read_env_usize("MYELON_BENCH_BUFFER_DEPTH", 1024);
+    let num_messages = read_env_u64("MYELON_BENCH_NUM_MESSAGES", 50_000);
+    let payload_bytes = read_env_usize("MYELON_BENCH_PAYLOAD_BYTES", 1024);
+    let batch_size = read_env_usize("MYELON_BENCH_BATCH_SIZE", 8);
+    let codec = read_env_string("MYELON_BENCH_CODEC", "rkyv");
+    let num_consumers = read_env_usize("MYELON_BENCH_NUM_CONSUMERS", 1);
     let payloads = make_payloads(batch_size);
 
     let mut producer =
@@ -73,7 +73,7 @@ fn typed_zc_shm_prod() -> Result<(), Box<dyn std::error::Error>> {
                 producer.publish(&payload, (i % 256) as u8)?;
             }
         }
-        other => return Err(format!("unsupported BENCH_CODEC '{other}'").into()),
+        other => return Err(format!("unsupported MYELON_BENCH_CODEC '{other}'").into()),
     }
     let elapsed = start.elapsed();
 
@@ -86,12 +86,12 @@ fn typed_zc_shm_prod() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn typed_zc_shm_cons() -> Result<(), Box<dyn std::error::Error>> {
-    let segment = segment_from_env("BENCHMARK_SEGMENT_NAME");
-    let consumer_id = read_env_usize("BENCH_CONSUMER_ID", 0);
-    let buffer_depth = read_env_usize("BENCH_BUFFER_DEPTH", 1024);
-    let num_messages = read_env_u64("BENCH_NUM_MESSAGES", 50_000);
-    let payload_bytes = read_env_usize("BENCH_PAYLOAD_BYTES", 1024);
-    let codec = read_env_string("BENCH_CODEC", "rkyv");
+    let segment = segment_from_env("MYELON_BENCH_SEGMENT_NAME");
+    let consumer_id = read_env_usize("MYELON_BENCH_CONSUMER_ID", 0);
+    let buffer_depth = read_env_usize("MYELON_BENCH_BUFFER_DEPTH", 1024);
+    let num_messages = read_env_u64("MYELON_BENCH_NUM_MESSAGES", 50_000);
+    let payload_bytes = read_env_usize("MYELON_BENCH_PAYLOAD_BYTES", 1024);
+    let codec = read_env_string("MYELON_BENCH_CODEC", "rkyv");
 
     let coord = BenchmarkCoordination::attach_with_timeout(&segment, Duration::from_secs(30))?;
     let mut consumer =
@@ -130,7 +130,7 @@ fn typed_zc_shm_cons() -> Result<(), Box<dyn std::error::Error>> {
                     consumed += 1;
                 },
             ),
-            other => return Err(format!("unsupported BENCH_CODEC '{other}'").into()),
+            other => return Err(format!("unsupported MYELON_BENCH_CODEC '{other}'").into()),
         };
         if consumed < num_messages {
             infra::check_deadline(deadline, "typed_zc_shm_cons measured");
@@ -180,13 +180,13 @@ fn throttle_mmap_backlog(
 }
 
 fn typed_zc_mmap_prod() -> Result<(), Box<dyn std::error::Error>> {
-    let layout = mmap_layout_from_env("MMAP_ROOT", "MMAP_SEGMENT");
-    let buffer_depth = read_env_usize("BENCH_BUFFER_DEPTH", 1024);
-    let num_messages = read_env_u64("BENCH_NUM_MESSAGES", 50_000);
-    let payload_bytes = read_env_usize("BENCH_PAYLOAD_BYTES", 1024);
-    let batch_size = read_env_usize("BENCH_BATCH_SIZE", 8);
-    let codec = read_env_string("BENCH_CODEC", "rkyv");
-    let num_consumers = read_env_usize("BENCH_NUM_CONSUMERS", 1);
+    let layout = mmap_layout_from_env("MYELON_BENCH_MMAP_ROOT", "MYELON_BENCH_MMAP_SEGMENT");
+    let buffer_depth = read_env_usize("MYELON_BENCH_BUFFER_DEPTH", 1024);
+    let num_messages = read_env_u64("MYELON_BENCH_NUM_MESSAGES", 50_000);
+    let payload_bytes = read_env_usize("MYELON_BENCH_PAYLOAD_BYTES", 1024);
+    let batch_size = read_env_usize("MYELON_BENCH_BATCH_SIZE", 8);
+    let codec = read_env_string("MYELON_BENCH_CODEC", "rkyv");
+    let num_consumers = read_env_usize("MYELON_BENCH_NUM_CONSUMERS", 1);
     let payloads = make_payloads(batch_size);
 
     let mut producer = MmapTypedProducer::<ZcFrame>::create(layout, buffer_depth)?;
@@ -232,7 +232,7 @@ fn typed_zc_mmap_prod() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
-        other => return Err(format!("unsupported BENCH_CODEC '{other}'").into()),
+        other => return Err(format!("unsupported MYELON_BENCH_CODEC '{other}'").into()),
     }
     if let Some(error) = publish_error {
         return Err(error);
@@ -255,12 +255,12 @@ fn typed_zc_mmap_prod() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn typed_zc_mmap_cons() -> Result<(), Box<dyn std::error::Error>> {
-    let layout = mmap_layout_from_env("MMAP_ROOT", "MMAP_SEGMENT");
-    let consumer_id = read_env_usize("BENCH_CONSUMER_ID", 0);
-    let buffer_depth = read_env_usize("BENCH_BUFFER_DEPTH", 1024);
-    let num_messages = read_env_u64("BENCH_NUM_MESSAGES", 50_000);
-    let payload_bytes = read_env_usize("BENCH_PAYLOAD_BYTES", 1024);
-    let codec = read_env_string("BENCH_CODEC", "rkyv");
+    let layout = mmap_layout_from_env("MYELON_BENCH_MMAP_ROOT", "MYELON_BENCH_MMAP_SEGMENT");
+    let consumer_id = read_env_usize("MYELON_BENCH_CONSUMER_ID", 0);
+    let buffer_depth = read_env_usize("MYELON_BENCH_BUFFER_DEPTH", 1024);
+    let num_messages = read_env_u64("MYELON_BENCH_NUM_MESSAGES", 50_000);
+    let payload_bytes = read_env_usize("MYELON_BENCH_PAYLOAD_BYTES", 1024);
+    let codec = read_env_string("MYELON_BENCH_CODEC", "rkyv");
     let consumer_name = format!("tzc{consumer_id}_{}", std::process::id());
 
     let deadline = Instant::now() + Duration::from_secs(15);
@@ -309,7 +309,7 @@ fn typed_zc_mmap_cons() -> Result<(), Box<dyn std::error::Error>> {
                     consumed += 1;
                 },
             ),
-            other => return Err(format!("unsupported BENCH_CODEC '{other}'").into()),
+            other => return Err(format!("unsupported MYELON_BENCH_CODEC '{other}'").into()),
         };
         if consumed < num_messages {
             infra::check_deadline(deadline, "typed_zc_mmap_cons measured");
@@ -427,23 +427,23 @@ impl IpcBenchmark for Scenario {
 
     fn launch(&self, exe: &std::path::Path) -> Result<ScenarioChildren, infra::BenchError> {
         let base_envs = vec![
-            ("BENCH_PAYLOAD_BYTES", self.payload_size.to_string()),
-            ("BENCH_NUM_MESSAGES", self.events.to_string()),
-            ("BENCH_BUFFER_DEPTH", self.buffer.to_string()),
-            ("BENCH_NUM_CONSUMERS", self.consumers.to_string()),
-            ("BENCH_BATCH_SIZE", self.batch_size.to_string()),
-            ("BENCH_CODEC", self.codec.slug().to_string()),
+            ("MYELON_BENCH_PAYLOAD_BYTES", self.payload_size.to_string()),
+            ("MYELON_BENCH_NUM_MESSAGES", self.events.to_string()),
+            ("MYELON_BENCH_BUFFER_DEPTH", self.buffer.to_string()),
+            ("MYELON_BENCH_NUM_CONSUMERS", self.consumers.to_string()),
+            ("MYELON_BENCH_BATCH_SIZE", self.batch_size.to_string()),
+            ("MYELON_BENCH_CODEC", self.codec.slug().to_string()),
         ];
         if self.backend_kind == SweepBackend::Shm {
             launch_shm_group(
                 exe,
                 &format!("tzc_{}_{}", self.codec.slug(), self.size_tag),
-                "BENCHMARK_SEGMENT_NAME",
+                "MYELON_BENCH_SEGMENT_NAME",
                 MultiConsumerSpawn {
                     producer_role: self.prod_role,
                     consumer_role: self.cons_role,
                     consumers: self.consumers,
-                    consumer_id_env: "BENCH_CONSUMER_ID",
+                    consumer_id_env: "MYELON_BENCH_CONSUMER_ID",
                     base_envs,
                 },
             )
@@ -452,13 +452,13 @@ impl IpcBenchmark for Scenario {
                 exe,
                 &format!("tzc_{}_{}", self.codec.slug(), self.size_tag),
                 "tzc",
-                "MMAP_ROOT",
-                "MMAP_SEGMENT",
+                "MYELON_BENCH_MMAP_ROOT",
+                "MYELON_BENCH_MMAP_SEGMENT",
                 MultiConsumerSpawn {
                     producer_role: self.prod_role,
                     consumer_role: self.cons_role,
                     consumers: self.consumers,
-                    consumer_id_env: "BENCH_CONSUMER_ID",
+                    consumer_id_env: "MYELON_BENCH_CONSUMER_ID",
                     base_envs,
                 },
             )

@@ -109,25 +109,25 @@ fn set_intended_send_timestamp(timestamp_ns: Option<u64>) {
 }
 
 fn read_codec_env() -> (String, usize, u64, String, usize, usize, u64) {
-    let codec = env::var("BENCH_CODEC").expect("BENCH_CODEC");
-    let batch_size = env::var("BENCH_BATCH_SIZE")
-        .expect("BENCH_BATCH_SIZE")
+    let codec = env::var("MYELON_BENCH_CODEC").expect("MYELON_BENCH_CODEC");
+    let batch_size = env::var("MYELON_BENCH_BATCH_SIZE")
+        .expect("MYELON_BENCH_BATCH_SIZE")
         .parse()
         .expect("batch size");
-    let messages = env::var("BENCH_MESSAGES")
-        .expect("BENCH_MESSAGES")
+    let messages = env::var("MYELON_BENCH_MESSAGES")
+        .expect("MYELON_BENCH_MESSAGES")
         .parse()
         .expect("message count");
-    let segment = segment_from_env("BENCHMARK_SEGMENT_NAME");
-    let buffer_depth = env::var("BENCH_BUFFER_DEPTH")
+    let segment = segment_from_env("MYELON_BENCH_SEGMENT_NAME");
+    let buffer_depth = env::var("MYELON_BENCH_BUFFER_DEPTH")
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(BUFFER_DEPTH);
-    let num_consumers = env::var("BENCH_NUM_CONSUMERS")
+    let num_consumers = env::var("MYELON_BENCH_NUM_CONSUMERS")
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(1);
-    let target_rate = env::var("BENCH_TARGET_RATE")
+    let target_rate = env::var("MYELON_BENCH_TARGET_RATE")
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(0);
@@ -145,7 +145,7 @@ fn read_codec_env() -> (String, usize, u64, String, usize, usize, u64) {
 fn producer_process() -> Result<(), Box<dyn std::error::Error>> {
     let (codec, batch_size, messages, segment, buffer_depth, num_consumers, target_rate) =
         read_codec_env();
-    let phase_timing = env::var("BENCH_PHASE_TIMING")
+    let phase_timing = env::var("MYELON_BENCH_PHASE_TIMING")
         .ok()
         .is_some_and(|v| v == "1");
     let payloads = make_payloads(batch_size);
@@ -287,11 +287,11 @@ fn producer_process() -> Result<(), Box<dyn std::error::Error>> {
 fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
     let (codec, batch_size, messages, segment, buffer_depth, _num_consumers, _target_rate) =
         read_codec_env();
-    let consumer_id = env::var("CONSUMER_ID")
+    let consumer_id = env::var("MYELON_BENCH_CONSUMER_ID")
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(0);
-    let phase_timing = env::var("BENCH_PHASE_TIMING")
+    let phase_timing = env::var("MYELON_BENCH_PHASE_TIMING")
         .ok()
         .is_some_and(|v| v == "1");
     let coord = BenchmarkCoordination::attach_with_timeout(&segment, Duration::from_secs(30))?;
@@ -531,24 +531,24 @@ impl IpcBenchmark for Scenario {
             self.codec, self.batch_size, self.consumers
         ));
         let mut envs = vec![
-            ("BENCHMARK_SEGMENT_NAME", segment.clone()),
-            ("BENCH_CODEC", self.codec.to_string()),
-            ("BENCH_BATCH_SIZE", self.batch_size.to_string()),
-            ("BENCH_MESSAGES", self.messages.to_string()),
-            ("BENCH_BUFFER_DEPTH", self.buffer.to_string()),
-            ("BENCH_NUM_CONSUMERS", self.consumers.to_string()),
+            ("MYELON_BENCH_SEGMENT_NAME", segment.clone()),
+            ("MYELON_BENCH_CODEC", self.codec.to_string()),
+            ("MYELON_BENCH_BATCH_SIZE", self.batch_size.to_string()),
+            ("MYELON_BENCH_MESSAGES", self.messages.to_string()),
+            ("MYELON_BENCH_BUFFER_DEPTH", self.buffer.to_string()),
+            ("MYELON_BENCH_NUM_CONSUMERS", self.consumers.to_string()),
         ];
         if self.phase_timing {
-            envs.push(("BENCH_PHASE_TIMING", "1".to_string()));
+            envs.push(("MYELON_BENCH_PHASE_TIMING", "1".to_string()));
         }
         if self.target_rate > 0 {
-            envs.push(("BENCH_TARGET_RATE", self.target_rate.to_string()));
+            envs.push(("MYELON_BENCH_TARGET_RATE", self.target_rate.to_string()));
         }
 
         let consumers = (0..self.consumers)
             .map(|consumer_id| {
                 let mut consumer_envs = envs.clone();
-                consumer_envs.push(("CONSUMER_ID", consumer_id.to_string()));
+                consumer_envs.push(("MYELON_BENCH_CONSUMER_ID", consumer_id.to_string()));
                 spawn_child(exe, self.consumer_role, &consumer_envs)
             })
             .collect();

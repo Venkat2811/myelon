@@ -145,12 +145,12 @@ type Ev64K = BenchEvent<{ 64 * 1024 - 16 }>;
 macro_rules! shm_nofrag_impl {
     ($slot:ty, $encode_fn:ident, $access_fn:expr, $prod:ident, $cons:ident) => {
         fn $prod() -> Result<(), Box<dyn std::error::Error>> {
-            let seg = env::var("BENCH_SEGMENT").expect("BENCH_SEGMENT");
-            let buf = read_env_usize("BENCH_BUFFER", 16384);
-            let events = read_env_u64("BENCH_EVENTS", 100_000);
-            let batch = read_env_usize("BENCH_BATCH_SIZE", 8);
-            let num_consumers = read_env_usize("BENCH_CONSUMERS", 1);
-            let target_rate = read_env_u64("BENCH_TARGET_RATE", 0);
+            let seg = env::var("MYELON_BENCH_SEGMENT").expect("MYELON_BENCH_SEGMENT");
+            let buf = read_env_usize("MYELON_BENCH_BUFFER", 16384);
+            let events = read_env_u64("MYELON_BENCH_EVENTS", 100_000);
+            let batch = read_env_usize("MYELON_BENCH_BATCH_SIZE", 8);
+            let num_consumers = read_env_usize("MYELON_BENCH_CONSUMERS", 1);
+            let target_rate = read_env_u64("MYELON_BENCH_TARGET_RATE", 0);
             let payloads = make_payloads(batch);
             let mut producer = build_shared_single_producer::<$slot>(&seg, buf)
                 .enable_discovery(num_consumers)
@@ -200,10 +200,10 @@ macro_rules! shm_nofrag_impl {
         }
 
         fn $cons() -> Result<(), Box<dyn std::error::Error>> {
-            let seg = env::var("BENCH_SEGMENT").expect("BENCH_SEGMENT");
-            let consumer_id = read_env_usize("BENCH_CONSUMER_ID", 0);
-            let buf = read_env_usize("BENCH_BUFFER", 16384);
-            let events = read_env_u64("BENCH_EVENTS", 100_000);
+            let seg = env::var("MYELON_BENCH_SEGMENT").expect("MYELON_BENCH_SEGMENT");
+            let consumer_id = read_env_usize("MYELON_BENCH_CONSUMER_ID", 0);
+            let buf = read_env_usize("MYELON_BENCH_BUFFER", 16384);
+            let events = read_env_u64("MYELON_BENCH_EVENTS", 100_000);
             let coord = BenchmarkCoordination::attach_with_timeout(&seg, Duration::from_secs(30))?;
             let config = SharedMemoryConfig {
                 name: seg,
@@ -322,11 +322,11 @@ shm_nofrag_impl!(
 macro_rules! raw_shm_impl {
     ($ev:ty, $prod:ident, $cons:ident) => {
         fn $prod() -> Result<(), Box<dyn std::error::Error>> {
-            let seg = env::var("BENCH_SEGMENT").expect("BENCH_SEGMENT");
-            let buf = read_env_usize("BENCH_BUFFER", 16384);
-            let events = read_env_u64("BENCH_EVENTS", 100_000);
-            let num_consumers = read_env_usize("BENCH_CONSUMERS", 1);
-            let target_rate = read_env_u64("BENCH_TARGET_RATE", 0);
+            let seg = env::var("MYELON_BENCH_SEGMENT").expect("MYELON_BENCH_SEGMENT");
+            let buf = read_env_usize("MYELON_BENCH_BUFFER", 16384);
+            let events = read_env_u64("MYELON_BENCH_EVENTS", 100_000);
+            let num_consumers = read_env_usize("MYELON_BENCH_CONSUMERS", 1);
+            let target_rate = read_env_u64("MYELON_BENCH_TARGET_RATE", 0);
             let mut producer = build_shared_single_producer::<$ev>(&seg, buf)
                 .enable_discovery(num_consumers)
                 .with_coordination(CoordinationMode::Immediate)
@@ -371,10 +371,10 @@ macro_rules! raw_shm_impl {
             Ok(())
         }
         fn $cons() -> Result<(), Box<dyn std::error::Error>> {
-            let seg = env::var("BENCH_SEGMENT").expect("BENCH_SEGMENT");
-            let consumer_id = read_env_usize("BENCH_CONSUMER_ID", 0);
-            let buf = read_env_usize("BENCH_BUFFER", 16384);
-            let events = read_env_u64("BENCH_EVENTS", 100_000);
+            let seg = env::var("MYELON_BENCH_SEGMENT").expect("MYELON_BENCH_SEGMENT");
+            let consumer_id = read_env_usize("MYELON_BENCH_CONSUMER_ID", 0);
+            let buf = read_env_usize("MYELON_BENCH_BUFFER", 16384);
+            let events = read_env_u64("MYELON_BENCH_EVENTS", 100_000);
             let coord = BenchmarkCoordination::attach_with_timeout(&seg, Duration::from_secs(30))?;
             let config = SharedMemoryConfig {
                 name: seg,
@@ -439,12 +439,12 @@ raw_shm_impl!(Ev64K, raw_shm_prod_64k, raw_shm_cons_64k);
 macro_rules! raw_mmap_impl {
     ($ev:ty, $prod:ident, $cons:ident) => {
         fn $prod() -> Result<(), Box<dyn std::error::Error>> {
-            let root = env::var("BENCH_ROOT").expect("BENCH_ROOT");
-            let seg = env::var("BENCH_SEGMENT").expect("BENCH_SEGMENT");
-            let buf = read_env_usize("BENCH_BUFFER", 16384);
-            let events = read_env_u64("BENCH_EVENTS", 100_000);
-            let num_consumers = read_env_usize("BENCH_CONSUMERS", 1);
-            let target_rate = read_env_u64("BENCH_TARGET_RATE", 0);
+            let root = env::var("MYELON_BENCH_ROOT").expect("MYELON_BENCH_ROOT");
+            let seg = env::var("MYELON_BENCH_SEGMENT").expect("MYELON_BENCH_SEGMENT");
+            let buf = read_env_usize("MYELON_BENCH_BUFFER", 16384);
+            let events = read_env_u64("MYELON_BENCH_EVENTS", 100_000);
+            let num_consumers = read_env_usize("MYELON_BENCH_CONSUMERS", 1);
+            let target_rate = read_env_u64("MYELON_BENCH_TARGET_RATE", 0);
             let layout = MmapTransportLayout::new(PathBuf::from(&root), seg).expect("layout");
             layout.ensure_directories().expect("dirs");
             let mut producer = MmapProducer::<$ev>::create(layout, buf, || <$ev>::default())?;
@@ -487,11 +487,11 @@ macro_rules! raw_mmap_impl {
             Ok(())
         }
         fn $cons() -> Result<(), Box<dyn std::error::Error>> {
-            let root = env::var("BENCH_ROOT").expect("BENCH_ROOT");
-            let seg = env::var("BENCH_SEGMENT").expect("BENCH_SEGMENT");
-            let consumer_id = read_env_usize("BENCH_CONSUMER_ID", 0);
-            let buf = read_env_usize("BENCH_BUFFER", 16384);
-            let events = read_env_u64("BENCH_EVENTS", 100_000);
+            let root = env::var("MYELON_BENCH_ROOT").expect("MYELON_BENCH_ROOT");
+            let seg = env::var("MYELON_BENCH_SEGMENT").expect("MYELON_BENCH_SEGMENT");
+            let consumer_id = read_env_usize("MYELON_BENCH_CONSUMER_ID", 0);
+            let buf = read_env_usize("MYELON_BENCH_BUFFER", 16384);
+            let events = read_env_u64("MYELON_BENCH_EVENTS", 100_000);
             let layout = MmapTransportLayout::new(PathBuf::from(&root), seg).expect("layout");
             let cid = format!("c{consumer_id}_{}", std::process::id());
             let deadline = Instant::now() + Duration::from_secs(15);
@@ -560,13 +560,13 @@ raw_mmap_impl!(Ev64K, raw_mmap_prod_64k, raw_mmap_cons_64k);
 macro_rules! mmap_nofrag_impl {
     ($slot:ty, $encode_fn:ident, $access_fn:expr, $prod:ident, $cons:ident) => {
         fn $prod() -> Result<(), Box<dyn std::error::Error>> {
-            let root = env::var("BENCH_ROOT").expect("BENCH_ROOT");
-            let seg = env::var("BENCH_SEGMENT").expect("BENCH_SEGMENT");
-            let buf = read_env_usize("BENCH_BUFFER", 16384);
-            let events = read_env_u64("BENCH_EVENTS", 100_000);
-            let batch = read_env_usize("BENCH_BATCH_SIZE", 8);
-            let num_consumers = read_env_usize("BENCH_CONSUMERS", 1);
-            let target_rate = read_env_u64("BENCH_TARGET_RATE", 0);
+            let root = env::var("MYELON_BENCH_ROOT").expect("MYELON_BENCH_ROOT");
+            let seg = env::var("MYELON_BENCH_SEGMENT").expect("MYELON_BENCH_SEGMENT");
+            let buf = read_env_usize("MYELON_BENCH_BUFFER", 16384);
+            let events = read_env_u64("MYELON_BENCH_EVENTS", 100_000);
+            let batch = read_env_usize("MYELON_BENCH_BATCH_SIZE", 8);
+            let num_consumers = read_env_usize("MYELON_BENCH_CONSUMERS", 1);
+            let target_rate = read_env_u64("MYELON_BENCH_TARGET_RATE", 0);
             let payloads = make_payloads(batch);
             let layout = MmapTransportLayout::new(PathBuf::from(&root), seg).expect("layout");
             layout.ensure_directories().expect("dirs");
@@ -614,11 +614,11 @@ macro_rules! mmap_nofrag_impl {
         }
 
         fn $cons() -> Result<(), Box<dyn std::error::Error>> {
-            let root = env::var("BENCH_ROOT").expect("BENCH_ROOT");
-            let seg = env::var("BENCH_SEGMENT").expect("BENCH_SEGMENT");
-            let consumer_id = read_env_usize("BENCH_CONSUMER_ID", 0);
-            let buf = read_env_usize("BENCH_BUFFER", 16384);
-            let events = read_env_u64("BENCH_EVENTS", 100_000);
+            let root = env::var("MYELON_BENCH_ROOT").expect("MYELON_BENCH_ROOT");
+            let seg = env::var("MYELON_BENCH_SEGMENT").expect("MYELON_BENCH_SEGMENT");
+            let consumer_id = read_env_usize("MYELON_BENCH_CONSUMER_ID", 0);
+            let buf = read_env_usize("MYELON_BENCH_BUFFER", 16384);
+            let events = read_env_u64("MYELON_BENCH_EVENTS", 100_000);
             let layout = MmapTransportLayout::new(PathBuf::from(&root), seg).expect("layout");
             let cid = format!("c{consumer_id}_{}", std::process::id());
             let deadline = Instant::now() + Duration::from_secs(15);
@@ -843,47 +843,47 @@ impl IpcBenchmark for Scenario {
     fn launch(&self, exe: &std::path::Path) -> Result<ScenarioChildren, infra::BenchError> {
         if self.backend == "shm" {
             let mut envs: Vec<(&str, String)> = vec![
-                ("BENCH_EVENTS", self.events.to_string()),
-                ("BENCH_BUFFER", self.buffer.to_string()),
-                ("BENCH_BATCH_SIZE", self.batch.to_string()),
-                ("BENCH_CONSUMERS", self.consumers.to_string()),
+                ("MYELON_BENCH_EVENTS", self.events.to_string()),
+                ("MYELON_BENCH_BUFFER", self.buffer.to_string()),
+                ("MYELON_BENCH_BATCH_SIZE", self.batch.to_string()),
+                ("MYELON_BENCH_CONSUMERS", self.consumers.to_string()),
             ];
             if self.target_rate > 0 {
-                envs.push(("BENCH_TARGET_RATE", self.target_rate.to_string()));
+                envs.push(("MYELON_BENCH_TARGET_RATE", self.target_rate.to_string()));
             }
             launch_shm_group(
                 exe,
                 &format!("nfa_{}", self.layer),
-                "BENCH_SEGMENT",
+                "MYELON_BENCH_SEGMENT",
                 MultiConsumerSpawn {
                     producer_role: self.prod_role,
                     consumer_role: self.cons_role,
                     consumers: self.consumers,
-                    consumer_id_env: "BENCH_CONSUMER_ID",
+                    consumer_id_env: "MYELON_BENCH_CONSUMER_ID",
                     base_envs: envs,
                 },
             )
         } else {
             let mut envs: Vec<(&str, String)> = vec![
-                ("BENCH_EVENTS", self.events.to_string()),
-                ("BENCH_BUFFER", self.buffer.to_string()),
-                ("BENCH_BATCH_SIZE", self.batch.to_string()),
-                ("BENCH_CONSUMERS", self.consumers.to_string()),
+                ("MYELON_BENCH_EVENTS", self.events.to_string()),
+                ("MYELON_BENCH_BUFFER", self.buffer.to_string()),
+                ("MYELON_BENCH_BATCH_SIZE", self.batch.to_string()),
+                ("MYELON_BENCH_CONSUMERS", self.consumers.to_string()),
             ];
             if self.target_rate > 0 {
-                envs.push(("BENCH_TARGET_RATE", self.target_rate.to_string()));
+                envs.push(("MYELON_BENCH_TARGET_RATE", self.target_rate.to_string()));
             }
             launch_mmap_group(
                 exe,
                 &format!("nfa_mmap_{}", self.layer),
                 &format!("nfa_{}", self.layer),
-                "BENCH_ROOT",
-                "BENCH_SEGMENT",
+                "MYELON_BENCH_ROOT",
+                "MYELON_BENCH_SEGMENT",
                 MultiConsumerSpawn {
                     producer_role: self.prod_role,
                     consumer_role: self.cons_role,
                     consumers: self.consumers,
-                    consumer_id_env: "BENCH_CONSUMER_ID",
+                    consumer_id_env: "MYELON_BENCH_CONSUMER_ID",
                     base_envs: envs,
                 },
             )

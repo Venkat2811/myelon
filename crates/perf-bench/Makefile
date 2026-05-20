@@ -119,7 +119,7 @@ super-tiny:
 		$(BC) --layer framed --backend $$backend --size 1024 --consumers $(SIMPLE_BC_CONSUMERS) -n $(SIMPLE_MSGS) -w $(SIMPLE_WARMUP) --timeout 180; \
 		$(BC) --layer codec --backend $$backend --codec rkyv --consumers $(SIMPLE_BC_CONSUMERS) --batch-size 8 -n $(SIMPLE_MSGS) -w $(SIMPLE_WARMUP) --timeout 180; \
 		$(BC) --layer codec --backend $$backend --codec rkyv --consumers $(SIMPLE_BC_CONSUMERS) --batch-size 8 -n $(SIMPLE_MSGS) -w $(SIMPLE_WARMUP) --mode co --target-rate $(SIMPLE_CO_RATE) --timeout 180; \
-		PERF_BENCH_WAIT_NUM_EVENTS=$(SIMPLE_MSGS) $(BC) --layer wait_strategy --backend $$backend --timeout 180; \
+		MYELON_BENCH_WAIT_NUM_EVENTS=$(SIMPLE_MSGS) $(BC) --layer wait_strategy --backend $$backend --timeout 180; \
 	done
 	@# Sweep and layout families (single representative point each)
 	$(BC) --layer myelon_layers --backend mmap --size 1024 --consumers $(SIMPLE_BC_CONSUMERS) --num-messages $(SIMPLE_MSGS) --quick --timeout 180
@@ -128,7 +128,7 @@ super-tiny:
 	$(BC) --layer framed_sweep --backend mmap --size 1024 --consumers $(SIMPLE_BC_CONSUMERS) --num-messages $(SIMPLE_MSGS) --quick --timeout 180
 	$(BC) --layer typed_zc_sweep --backend mmap --size 1024 --consumers $(SIMPLE_BC_CONSUMERS) --num-messages $(SIMPLE_MSGS) --quick --timeout 180
 	$(BC) --layer nofrag --backend mmap --size 1024 --consumers $(SIMPLE_BC_CONSUMERS) --num-messages $(SIMPLE_MSGS) --quick --timeout 180
-	PERF_BENCH_LAYOUT_ITERATIONS=10 $(BC) --layer layout --timeout 180
+	MYELON_BENCH_LAYOUT_ITERATIONS=10 $(BC) --layer layout --timeout 180
 	@echo "=== SUPER-TINY PASSED ==="
 
 # ============================================================

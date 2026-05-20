@@ -70,18 +70,19 @@ impl MmapEnv {
 
 fn read_env() -> MmapEnv {
     MmapEnv {
-        root: PathBuf::from(env::var("MMAP_ROOT").expect("MMAP_ROOT")),
-        ping_segment: env::var("PING_SEGMENT").expect("PING_SEGMENT"),
-        pong_segment: env::var("PONG_SEGMENT").expect("PONG_SEGMENT"),
-        coordination_segment: env::var("COORDINATION_SEGMENT").expect("COORDINATION_SEGMENT"),
-        codec: env::var("BENCH_CODEC").expect("BENCH_CODEC"),
-        batch_size: infra::read_env_usize("BENCH_BATCH_SIZE", 1),
-        encoded_bytes: infra::read_env_usize("BENCH_ENCODED_BYTES", 1),
-        messages: infra::read_env_u64("BENCH_MESSAGES", 100_000),
-        warmup: infra::read_env_u64("BENCH_WARMUP", 10_000),
-        buffer_depth: infra::read_env_usize("BENCH_BUFFER_DEPTH", 4096),
-        wait_strategy: env::var("BENCH_WAIT_STRATEGY").unwrap_or_else(|_| "busyspin".into()),
-        target_rate: infra::read_env_u64("BENCH_TARGET_RATE", 0),
+        root: PathBuf::from(env::var("MYELON_BENCH_MMAP_ROOT").expect("MYELON_BENCH_MMAP_ROOT")),
+        ping_segment: env::var("MYELON_BENCH_PING_SEGMENT").expect("MYELON_BENCH_PING_SEGMENT"),
+        pong_segment: env::var("MYELON_BENCH_PONG_SEGMENT").expect("MYELON_BENCH_PONG_SEGMENT"),
+        coordination_segment: env::var("MYELON_BENCH_COORDINATION_SEGMENT")
+            .expect("MYELON_BENCH_COORDINATION_SEGMENT"),
+        codec: env::var("MYELON_BENCH_CODEC").expect("MYELON_BENCH_CODEC"),
+        batch_size: infra::read_env_usize("MYELON_BENCH_BATCH_SIZE", 1),
+        encoded_bytes: infra::read_env_usize("MYELON_BENCH_ENCODED_BYTES", 1),
+        messages: infra::read_env_u64("MYELON_BENCH_MESSAGES", 100_000),
+        warmup: infra::read_env_u64("MYELON_BENCH_WARMUP", 10_000),
+        buffer_depth: infra::read_env_usize("MYELON_BENCH_BUFFER_DEPTH", 4096),
+        wait_strategy: env::var("MYELON_BENCH_WAIT_STRATEGY").unwrap_or_else(|_| "busyspin".into()),
+        target_rate: infra::read_env_u64("MYELON_BENCH_TARGET_RATE", 0),
     }
 }
 
@@ -418,18 +419,18 @@ impl IpcBenchmark for Scenario {
         let root = unique_mmap_root("mppc_mmap");
         let coordination_segment = unique_shm_segment("mppc_coord");
         let env_common = vec![
-            ("MMAP_ROOT", root.display().to_string()),
-            ("PING_SEGMENT", unique_mmap_segment("ping")),
-            ("PONG_SEGMENT", unique_mmap_segment("pong")),
-            ("COORDINATION_SEGMENT", coordination_segment),
-            ("BENCH_CODEC", self.codec.to_string()),
-            ("BENCH_BATCH_SIZE", self.batch_size.to_string()),
-            ("BENCH_ENCODED_BYTES", self.encoded_bytes.to_string()),
-            ("BENCH_MESSAGES", self.messages.to_string()),
-            ("BENCH_WARMUP", self.warmup.to_string()),
-            ("BENCH_BUFFER_DEPTH", self.buffer_depth.to_string()),
-            ("BENCH_WAIT_STRATEGY", self.wait_strategy.clone()),
-            ("BENCH_TARGET_RATE", self.target_rate.to_string()),
+            ("MYELON_BENCH_MMAP_ROOT", root.display().to_string()),
+            ("MYELON_BENCH_PING_SEGMENT", unique_mmap_segment("ping")),
+            ("MYELON_BENCH_PONG_SEGMENT", unique_mmap_segment("pong")),
+            ("MYELON_BENCH_COORDINATION_SEGMENT", coordination_segment),
+            ("MYELON_BENCH_CODEC", self.codec.to_string()),
+            ("MYELON_BENCH_BATCH_SIZE", self.batch_size.to_string()),
+            ("MYELON_BENCH_ENCODED_BYTES", self.encoded_bytes.to_string()),
+            ("MYELON_BENCH_MESSAGES", self.messages.to_string()),
+            ("MYELON_BENCH_WARMUP", self.warmup.to_string()),
+            ("MYELON_BENCH_BUFFER_DEPTH", self.buffer_depth.to_string()),
+            ("MYELON_BENCH_WAIT_STRATEGY", self.wait_strategy.clone()),
+            ("MYELON_BENCH_TARGET_RATE", self.target_rate.to_string()),
         ];
 
         let producer = spawn_child(exe, self.producer_role, &env_common);

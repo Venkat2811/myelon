@@ -25,7 +25,7 @@ type Event = BenchEvent<128>;
 type Frame = FixedFrame<{ 64 * 1024 - 12 }>;
 
 fn layout_iterations() -> usize {
-    std::env::var("PERF_BENCH_LAYOUT_ITERATIONS")
+    std::env::var("MYELON_BENCH_LAYOUT_ITERATIONS")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
         .filter(|value| *value > 0)

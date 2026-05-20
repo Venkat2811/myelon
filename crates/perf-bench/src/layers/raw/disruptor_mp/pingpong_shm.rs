@@ -29,7 +29,7 @@ type PingPongRunResult =
     Result<(f64, Duration, Option<latency::LatencyStats>, bool, u64), Box<dyn std::error::Error>>;
 
 /// Dispatch a publish through `publish_managed` when
-/// `PERF_BENCH_LIVENESS=on` is set, or through plain `publish`
+/// `MYELON_BENCH_LIVENESS=on` is set, or through plain `publish`
 /// otherwise. The cached flag check is one atomic load (the
 /// `OnceLock` in `infra::liveness`), and the branch resolves the
 /// same way every iteration of a hot loop, so the predictor
@@ -56,7 +56,7 @@ const MAIN_CONSUMER_ID: &str = "cp_0";
 /// `--enable-counters` was passed, so the child enables the same
 /// counters wiring. Read by `run_process_two`. Opt-in only — absent
 /// or any value other than "1" leaves the hot path counter-free.
-const COUNTERS_ENV_VAR: &str = "PERF_BENCH_PINGPONG_COUNTERS";
+const COUNTERS_ENV_VAR: &str = "MYELON_BENCH_PINGPONG_COUNTERS";
 
 /// Attach an RFC-0040 counters file to a `SharedProducer` when
 /// `enabled` is true. Allocates a private, leaked, cache-line-aligned
@@ -250,17 +250,17 @@ fn spawn_echo_process(
     let mut child_cmd = Command::new(exe);
     child_cmd
         .arg("--process-two")
-        .env("PING_SEGMENT", ping_segment)
-        .env("PONG_SEGMENT", pong_segment)
-        .env("COORDINATION_SEGMENT", coordination_name)
-        .env("MESSAGE_SIZE", message_size.to_string())
-        .env("BUFFER_SIZE", buffer_size.to_string())
-        .env("WAIT_STRATEGY", &args.wait_strategy)
+        .env("MYELON_BENCH_PING_SEGMENT", ping_segment)
+        .env("MYELON_BENCH_PONG_SEGMENT", pong_segment)
+        .env("MYELON_BENCH_COORDINATION_SEGMENT", coordination_name)
+        .env("MYELON_BENCH_MESSAGE_SIZE", message_size.to_string())
+        .env("MYELON_BENCH_BUFFER_SIZE", buffer_size.to_string())
+        .env("MYELON_BENCH_WAIT_STRATEGY", &args.wait_strategy)
         .stdout(Stdio::null())
         .stderr(Stdio::inherit());
 
     if pingpong::json_mode(args) {
-        child_cmd.env("JSON_MODE", "1");
+        child_cmd.env("MYELON_BENCH_JSON_MODE", "1");
     }
 
     if args.enable_counters {
@@ -666,7 +666,7 @@ fn run_benchmark<const SIZE: usize>(
                 .build_producer(BenchmarkEvent::default)?;
         maybe_attach_counters_producer(&mut producer_ping, args.enable_counters);
         // RFC-0017.5 wiring. The pingpong binary's `--liveness on`
-        // flag forwards `PERF_BENCH_LIVENESS=on` into the env;
+        // flag forwards `MYELON_BENCH_LIVENESS=on` into the env;
         // when set, attach the policy here so the publish loops
         // below can route through `publish_managed`. Required
         // consumer ID matches what the echo side registers as
@@ -797,12 +797,13 @@ fn run_process_one(args: Args) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn run_process_two() -> Result<(), Box<dyn std::error::Error>> {
-    let ping_segment = env::var("PING_SEGMENT")?;
-    let pong_segment = env::var("PONG_SEGMENT")?;
-    let coordination_name = env::var("COORDINATION_SEGMENT")?;
-    let message_size: usize = env::var("MESSAGE_SIZE")?.parse()?;
-    let buffer_size: usize = env::var("BUFFER_SIZE")?.parse()?;
-    let wait_strategy = env::var("WAIT_STRATEGY").unwrap_or_else(|_| "busyspin".to_string());
+    let ping_segment = env::var("MYELON_BENCH_PING_SEGMENT")?;
+    let pong_segment = env::var("MYELON_BENCH_PONG_SEGMENT")?;
+    let coordination_name = env::var("MYELON_BENCH_COORDINATION_SEGMENT")?;
+    let message_size: usize = env::var("MYELON_BENCH_MESSAGE_SIZE")?.parse()?;
+    let buffer_size: usize = env::var("MYELON_BENCH_BUFFER_SIZE")?.parse()?;
+    let wait_strategy =
+        env::var("MYELON_BENCH_WAIT_STRATEGY").unwrap_or_else(|_| "busyspin".to_string());
 
     let coordination =
         UnifiedCoordination::attach_with_timeout(&coordination_name, Duration::from_secs(30))?;

@@ -68,15 +68,15 @@ struct ShmEnv {
 
 fn read_env() -> ShmEnv {
     ShmEnv {
-        ping_segment: segment_from_env("PING_SEGMENT"),
-        pong_segment: segment_from_env("PONG_SEGMENT"),
-        coordination_segment: segment_from_env("COORDINATION_SEGMENT"),
-        payload_bytes: infra::read_env_usize("BENCH_PAYLOAD_BYTES", 64),
-        messages: infra::read_env_u64("BENCH_MESSAGES", 100_000),
-        warmup: infra::read_env_u64("BENCH_WARMUP", 10_000),
-        buffer_depth: infra::read_env_usize("BENCH_BUFFER_DEPTH", 4096),
-        wait_strategy: env::var("BENCH_WAIT_STRATEGY").unwrap_or_else(|_| "busyspin".into()),
-        target_rate: infra::read_env_u64("BENCH_TARGET_RATE", 0),
+        ping_segment: segment_from_env("MYELON_BENCH_PING_SEGMENT"),
+        pong_segment: segment_from_env("MYELON_BENCH_PONG_SEGMENT"),
+        coordination_segment: segment_from_env("MYELON_BENCH_COORDINATION_SEGMENT"),
+        payload_bytes: infra::read_env_usize("MYELON_BENCH_PAYLOAD_BYTES", 64),
+        messages: infra::read_env_u64("MYELON_BENCH_MESSAGES", 100_000),
+        warmup: infra::read_env_u64("MYELON_BENCH_WARMUP", 10_000),
+        buffer_depth: infra::read_env_usize("MYELON_BENCH_BUFFER_DEPTH", 4096),
+        wait_strategy: env::var("MYELON_BENCH_WAIT_STRATEGY").unwrap_or_else(|_| "busyspin".into()),
+        target_rate: infra::read_env_u64("MYELON_BENCH_TARGET_RATE", 0),
     }
 }
 
@@ -360,15 +360,15 @@ impl IpcBenchmark for Scenario {
         let pong_segment = unique_shm_segment("mppf_pong");
         let coordination_segment = unique_shm_segment("mppf_coord");
         let env_common = vec![
-            ("PING_SEGMENT", ping_segment),
-            ("PONG_SEGMENT", pong_segment),
-            ("COORDINATION_SEGMENT", coordination_segment),
-            ("BENCH_PAYLOAD_BYTES", self.payload_bytes.to_string()),
-            ("BENCH_MESSAGES", self.messages.to_string()),
-            ("BENCH_WARMUP", self.warmup.to_string()),
-            ("BENCH_BUFFER_DEPTH", self.buffer_depth.to_string()),
-            ("BENCH_WAIT_STRATEGY", self.wait_strategy.clone()),
-            ("BENCH_TARGET_RATE", self.target_rate.to_string()),
+            ("MYELON_BENCH_PING_SEGMENT", ping_segment),
+            ("MYELON_BENCH_PONG_SEGMENT", pong_segment),
+            ("MYELON_BENCH_COORDINATION_SEGMENT", coordination_segment),
+            ("MYELON_BENCH_PAYLOAD_BYTES", self.payload_bytes.to_string()),
+            ("MYELON_BENCH_MESSAGES", self.messages.to_string()),
+            ("MYELON_BENCH_WARMUP", self.warmup.to_string()),
+            ("MYELON_BENCH_BUFFER_DEPTH", self.buffer_depth.to_string()),
+            ("MYELON_BENCH_WAIT_STRATEGY", self.wait_strategy.clone()),
+            ("MYELON_BENCH_TARGET_RATE", self.target_rate.to_string()),
         ];
 
         let producer = spawn_child(exe, self.producer_role, &env_common);

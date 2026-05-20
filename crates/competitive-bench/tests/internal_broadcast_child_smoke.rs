@@ -29,8 +29,8 @@ fn assert_consumer_fails_gracefully(adapter: &str, size: usize) {
         .arg("0")
         .arg("--result-path")
         .arg(&result_path)
-        .env("COMP_BENCH_ATTACH_TIMEOUT_MS", "20")
-        .env("COMP_BENCH_COORD_TIMEOUT_MS", "20")
+        .env("MYELON_BENCH_ATTACH_TIMEOUT_MS", "20")
+        .env("MYELON_BENCH_COORD_TIMEOUT_MS", "20")
         .output()
         .expect("spawn internal_broadcast child consumer");
 

@@ -140,28 +140,28 @@ fn read_env() -> (
     usize,
     u64,
 ) {
-    let codec = env::var("BENCH_CODEC").expect("BENCH_CODEC");
-    let batch_size = env::var("BENCH_BATCH_SIZE")
-        .expect("BENCH_BATCH_SIZE")
+    let codec = env::var("MYELON_BENCH_CODEC").expect("MYELON_BENCH_CODEC");
+    let batch_size = env::var("MYELON_BENCH_BATCH_SIZE")
+        .expect("MYELON_BENCH_BATCH_SIZE")
         .parse()
         .expect("batch size");
-    let messages = env::var("BENCH_MESSAGES")
-        .expect("BENCH_MESSAGES")
+    let messages = env::var("MYELON_BENCH_MESSAGES")
+        .expect("MYELON_BENCH_MESSAGES")
         .parse()
         .expect("message count");
-    let root = env::var("MMAP_ROOT").expect("MMAP_ROOT");
-    let segment = env::var("MMAP_SEGMENT").expect("MMAP_SEGMENT");
+    let root = env::var("MYELON_BENCH_MMAP_ROOT").expect("MYELON_BENCH_MMAP_ROOT");
+    let segment = env::var("MYELON_BENCH_MMAP_SEGMENT").expect("MYELON_BENCH_MMAP_SEGMENT");
     let layout = disruptor_mp::MmapTransportLayout::new(PathBuf::from(root), segment.clone())
         .expect("mmap layout");
-    let buffer_depth = env::var("BENCH_BUFFER_DEPTH")
+    let buffer_depth = env::var("MYELON_BENCH_BUFFER_DEPTH")
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(BUFFER_DEPTH);
-    let num_consumers = env::var("BENCH_NUM_CONSUMERS")
+    let num_consumers = env::var("MYELON_BENCH_NUM_CONSUMERS")
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(1);
-    let target_rate = env::var("BENCH_TARGET_RATE")
+    let target_rate = env::var("MYELON_BENCH_TARGET_RATE")
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(0);
@@ -180,7 +180,7 @@ fn read_env() -> (
 fn producer_process() -> Result<(), Box<dyn std::error::Error>> {
     let (codec, batch_size, messages, layout, _segment, buffer_depth, num_consumers, target_rate) =
         read_env();
-    let phase_timing = env::var("BENCH_PHASE_TIMING")
+    let phase_timing = env::var("MYELON_BENCH_PHASE_TIMING")
         .ok()
         .is_some_and(|v| v == "1");
     let payloads = make_payloads(batch_size);
@@ -333,10 +333,10 @@ fn producer_process() -> Result<(), Box<dyn std::error::Error>> {
 fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
     let (codec, batch_size, messages, layout, _segment, buffer_depth, _num_consumers, _target_rate) =
         read_env();
-    let phase_timing = env::var("BENCH_PHASE_TIMING")
+    let phase_timing = env::var("MYELON_BENCH_PHASE_TIMING")
         .ok()
         .is_some_and(|v| v == "1");
-    let consumer_id = read_env_usize("CONSUMER_ID", 0);
+    let consumer_id = read_env_usize("MYELON_BENCH_CONSUMER_ID", 0);
     let consumer_name = format!("c{consumer_id}_{}", std::process::id());
     let encoded_bytes = encoded_len(&codec, &make_payloads(batch_size));
 
@@ -564,26 +564,26 @@ impl IpcBenchmark for Scenario {
         let segment = unique_mmap_segment("codec");
         let root_str = root.display().to_string();
         let mut envs = vec![
-            ("MMAP_ROOT", root_str.clone()),
-            ("MMAP_SEGMENT", segment.clone()),
-            ("BENCH_CODEC", self.codec.to_string()),
-            ("BENCH_BATCH_SIZE", self.batch_size.to_string()),
-            ("BENCH_MESSAGES", self.messages.to_string()),
-            ("BENCH_BUFFER_DEPTH", self.buffer.to_string()),
-            ("BENCH_NUM_CONSUMERS", self.consumers.to_string()),
+            ("MYELON_BENCH_MMAP_ROOT", root_str.clone()),
+            ("MYELON_BENCH_MMAP_SEGMENT", segment.clone()),
+            ("MYELON_BENCH_CODEC", self.codec.to_string()),
+            ("MYELON_BENCH_BATCH_SIZE", self.batch_size.to_string()),
+            ("MYELON_BENCH_MESSAGES", self.messages.to_string()),
+            ("MYELON_BENCH_BUFFER_DEPTH", self.buffer.to_string()),
+            ("MYELON_BENCH_NUM_CONSUMERS", self.consumers.to_string()),
         ];
         if self.phase_timing {
-            envs.push(("BENCH_PHASE_TIMING", "1".to_string()));
+            envs.push(("MYELON_BENCH_PHASE_TIMING", "1".to_string()));
         }
         if self.target_rate > 0 {
-            envs.push(("BENCH_TARGET_RATE", self.target_rate.to_string()));
+            envs.push(("MYELON_BENCH_TARGET_RATE", self.target_rate.to_string()));
         }
 
         let producer = spawn_child(exe, self.producer_role, &envs);
         let consumers = (0..self.consumers)
             .map(|consumer_id| {
                 let mut consumer_envs = envs.clone();
-                consumer_envs.push(("CONSUMER_ID", consumer_id.to_string()));
+                consumer_envs.push(("MYELON_BENCH_CONSUMER_ID", consumer_id.to_string()));
                 spawn_child(exe, self.consumer_role, &consumer_envs)
             })
             .collect();

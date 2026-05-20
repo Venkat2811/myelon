@@ -87,14 +87,15 @@ impl Default for Slot256K {
 macro_rules! impl_nofrag_bench {
     ($slot_type:ty, $slot_data_len:expr, $producer_fn:ident, $consumer_fn:ident) => {
         fn $producer_fn() -> Result<(), Box<dyn std::error::Error>> {
-            let layout = infra::mmap_layout_from_env("BENCH_MMAP_ROOT", "BENCH_MMAP_SEGMENT");
+            let layout =
+                infra::mmap_layout_from_env("MYELON_BENCH_MMAP_ROOT", "MYELON_BENCH_MMAP_SEGMENT");
             layout.ensure_directories().expect("mmap dirs");
-            let codec = env::var("BENCH_CODEC").expect("BENCH_CODEC");
-            let batch_size = infra::read_env_usize("BENCH_BATCH_SIZE", 8);
-            let messages = infra::read_env_u64("BENCH_MESSAGES", 50_000);
-            let buffer_depth = infra::read_env_usize("BENCH_BUFFER_DEPTH", 4096);
-            let num_consumers = infra::read_env_usize("BENCH_NUM_CONSUMERS", 1);
-            let target_rate = infra::read_env_u64("BENCH_TARGET_RATE", 0);
+            let codec = env::var("MYELON_BENCH_CODEC").expect("MYELON_BENCH_CODEC");
+            let batch_size = infra::read_env_usize("MYELON_BENCH_BATCH_SIZE", 8);
+            let messages = infra::read_env_u64("MYELON_BENCH_MESSAGES", 50_000);
+            let buffer_depth = infra::read_env_usize("MYELON_BENCH_BUFFER_DEPTH", 4096);
+            let num_consumers = infra::read_env_usize("MYELON_BENCH_NUM_CONSUMERS", 1);
+            let target_rate = infra::read_env_u64("MYELON_BENCH_TARGET_RATE", 0);
 
             let payloads = make_payloads(batch_size);
 
@@ -193,11 +194,12 @@ macro_rules! impl_nofrag_bench {
         }
 
         fn $consumer_fn() -> Result<(), Box<dyn std::error::Error>> {
-            let layout = infra::mmap_layout_from_env("BENCH_MMAP_ROOT", "BENCH_MMAP_SEGMENT");
-            let codec = env::var("BENCH_CODEC").expect("BENCH_CODEC");
-            let consumer_id = infra::read_env_usize("BENCH_CONSUMER_ID", 0);
-            let messages = infra::read_env_u64("BENCH_MESSAGES", 50_000);
-            let buffer_depth = infra::read_env_usize("BENCH_BUFFER_DEPTH", 4096);
+            let layout =
+                infra::mmap_layout_from_env("MYELON_BENCH_MMAP_ROOT", "MYELON_BENCH_MMAP_SEGMENT");
+            let codec = env::var("MYELON_BENCH_CODEC").expect("MYELON_BENCH_CODEC");
+            let consumer_id = infra::read_env_usize("MYELON_BENCH_CONSUMER_ID", 0);
+            let messages = infra::read_env_u64("MYELON_BENCH_MESSAGES", 50_000);
+            let buffer_depth = infra::read_env_usize("MYELON_BENCH_BUFFER_DEPTH", 4096);
 
             let cid = format!("c{consumer_id}_{}", std::process::id());
             let attach_deadline = Instant::now() + Duration::from_secs(15);
@@ -418,25 +420,25 @@ impl IpcBenchmark for Scenario {
 
     fn launch(&self, exe: &std::path::Path) -> Result<ScenarioChildren, infra::BenchError> {
         let envs = vec![
-            ("BENCH_TARGET_RATE", self.target_rate.to_string()),
-            ("BENCH_CODEC", self.codec.to_string()),
-            ("BENCH_BATCH_SIZE", self.batch_size.to_string()),
-            ("BENCH_MESSAGES", self.messages.to_string()),
-            ("BENCH_BUFFER_DEPTH", self.buffer_depth.to_string()),
-            ("BENCH_NUM_CONSUMERS", self.consumers.to_string()),
+            ("MYELON_BENCH_TARGET_RATE", self.target_rate.to_string()),
+            ("MYELON_BENCH_CODEC", self.codec.to_string()),
+            ("MYELON_BENCH_BATCH_SIZE", self.batch_size.to_string()),
+            ("MYELON_BENCH_MESSAGES", self.messages.to_string()),
+            ("MYELON_BENCH_BUFFER_DEPTH", self.buffer_depth.to_string()),
+            ("MYELON_BENCH_NUM_CONSUMERS", self.consumers.to_string()),
         ];
 
         infra::launch_mmap_group(
             exe,
             &format!("nf_mmap_{}_{}", self.codec, self.batch_size),
             &format!("nf_{}_{}", self.codec, self.batch_size),
-            "BENCH_MMAP_ROOT",
-            "BENCH_MMAP_SEGMENT",
+            "MYELON_BENCH_MMAP_ROOT",
+            "MYELON_BENCH_MMAP_SEGMENT",
             infra::MultiConsumerSpawn {
                 producer_role: self.producer_role(),
                 consumer_role: self.consumer_role(),
                 consumers: self.consumers,
-                consumer_id_env: "BENCH_CONSUMER_ID",
+                consumer_id_env: "MYELON_BENCH_CONSUMER_ID",
                 base_envs: envs,
             },
         )

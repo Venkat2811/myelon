@@ -6,7 +6,7 @@ fn assert_child_fails_gracefully(harness: &str, role: &str) {
     let exe = env!("CARGO_BIN_EXE_perf-bench-broadcast");
     let output = Command::new(exe)
         .arg(role)
-        .env("PERF_BENCH_BROADCAST_HARNESS", harness)
+        .env("MYELON_BENCH_BROADCAST_HARNESS", harness)
         .output()
         .expect("spawn perf-bench-broadcast child role");
 

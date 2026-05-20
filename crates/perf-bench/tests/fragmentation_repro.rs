@@ -15,7 +15,7 @@ type Frame = FixedFrame<FRAME_DATA_BYTES>;
 const BUFFER_DEPTH: usize = 512;
 
 fn get_segment() -> String {
-    if let Ok(name) = env::var("FRAG_SEGMENT") {
+    if let Ok(name) = env::var("MYELON_BENCH_FRAG_SEGMENT") {
         return name;
     }
     disruptor_mp::portable_shm_segment_name("frag")
@@ -36,7 +36,7 @@ fn test_fragmented_multiprocess_correctness() {
         .arg("frag_consumer_child")
         .arg("--ignored")
         .arg("--nocapture")
-        .env("FRAG_SEGMENT", &segment)
+        .env("MYELON_BENCH_FRAG_SEGMENT", &segment)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()

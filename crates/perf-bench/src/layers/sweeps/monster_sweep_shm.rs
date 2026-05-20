@@ -169,7 +169,7 @@ fn signal_producer() -> Result<(), Box<dyn std::error::Error>> {
 
 fn signal_consumer() -> Result<(), Box<dyn std::error::Error>> {
     let segment = infra::segment_from_env("SWEEP_SEGMENT");
-    let consumer_id = infra::read_env_usize("BENCH_CONSUMER_ID", 0);
+    let consumer_id = infra::read_env_usize("MYELON_BENCH_CONSUMER_ID", 0);
     let buffer = infra::read_env_usize("SWEEP_BUFFER", 65536);
     let events = infra::read_env_u64("SWEEP_EVENTS", 10_000_000);
     let warmup = 100_000u64;
@@ -331,7 +331,7 @@ macro_rules! sweep_impl {
 
         fn $cons_fn() -> Result<(), Box<dyn std::error::Error>> {
             let segment = infra::segment_from_env("SWEEP_SEGMENT");
-            let consumer_id = infra::read_env_usize("BENCH_CONSUMER_ID", 0);
+            let consumer_id = infra::read_env_usize("MYELON_BENCH_CONSUMER_ID", 0);
             let buffer = infra::read_env_usize("SWEEP_BUFFER", 4096);
             let events = infra::read_env_u64("SWEEP_EVENTS", 100_000);
             let num_consumers = infra::read_env_usize("SWEEP_CONSUMERS", 1);
@@ -544,7 +544,7 @@ impl IpcBenchmark for SweepPoint {
                     ("SWEEP_BUFFER", self.buffer.to_string()),
                     ("SWEEP_EVENTS", self.events.to_string()),
                     ("SWEEP_CONSUMERS", self.consumers.to_string()),
-                    ("BENCH_CONSUMER_ID", consumer_id.to_string()),
+                    ("MYELON_BENCH_CONSUMER_ID", consumer_id.to_string()),
                 ];
                 if self.target_rate > 0 {
                     envs.push(("SWEEP_TARGET_RATE", self.target_rate.to_string()));

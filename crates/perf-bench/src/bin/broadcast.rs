@@ -141,14 +141,14 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 /// Dispatch a `BenchHarness` child process.
 ///
-/// Uses `PERF_BENCH_BROADCAST_HARNESS` env var (set by the orchestrator) to
+/// Uses `MYELON_BENCH_BROADCAST_HARNESS` env var (set by the orchestrator) to
 /// select the correct harness, then dispatches against that harness's child
 /// roles only. This avoids role name collisions (e.g., both codec/shm.rs and
 /// codec/mmap.rs use "`codec_producer`" as a role name).
 fn dispatch_bench_harness_child(args: &[String]) -> Result<(), Box<dyn Error>> {
     use perf_bench::infra::BenchHarness;
 
-    let harness_key = std::env::var("PERF_BENCH_BROADCAST_HARNESS").unwrap_or_default();
+    let harness_key = std::env::var("MYELON_BENCH_BROADCAST_HARNESS").unwrap_or_default();
 
     let harness: Option<&dyn BenchHarness> = match harness_key.as_str() {
         "raw_ring_shm" => {
@@ -447,7 +447,7 @@ fn run_raw_ring(args: &Args) -> Result<(), Box<dyn Error>> {
     use perf_bench::infra::BenchHarness;
 
     if args.timeout != 300 {
-        std::env::set_var("PERF_BENCH_TIMEOUT", args.timeout.to_string());
+        std::env::set_var("MYELON_BENCH_TIMEOUT", args.timeout.to_string());
     }
 
     let synthetic = build_raw_ring_args(args);
@@ -471,20 +471,20 @@ fn run_raw_myelon(args: &Args) -> Result<(), Box<dyn Error>> {
     use perf_bench::infra::BenchHarness;
 
     if args.timeout != 300 {
-        std::env::set_var("PERF_BENCH_TIMEOUT", args.timeout.to_string());
+        std::env::set_var("MYELON_BENCH_TIMEOUT", args.timeout.to_string());
     }
 
     let synthetic = build_raw_ring_args(args);
 
     match args.backend.as_str() {
         "shm" => {
-            std::env::set_var("PERF_BENCH_BROADCAST_HARNESS", "raw_myelon_shm");
+            std::env::set_var("MYELON_BENCH_BROADCAST_HARNESS", "raw_myelon_shm");
             let bench = perf_bench::layers::raw::myelon::broadcast_shm::RawMyelonShmBench;
             bench.run_orchestrator(&synthetic)?;
             Ok(())
         }
         "mmap" => {
-            std::env::set_var("PERF_BENCH_BROADCAST_HARNESS", "raw_myelon_mmap");
+            std::env::set_var("MYELON_BENCH_BROADCAST_HARNESS", "raw_myelon_mmap");
             let bench = perf_bench::layers::raw::myelon::broadcast_mmap::RawMyelonMmapBench;
             bench.run_orchestrator(&synthetic)?;
             Ok(())
@@ -497,20 +497,20 @@ fn run_framed(args: &Args) -> Result<(), Box<dyn Error>> {
     use perf_bench::infra::BenchHarness;
 
     if args.timeout != 300 {
-        std::env::set_var("PERF_BENCH_TIMEOUT", args.timeout.to_string());
+        std::env::set_var("MYELON_BENCH_TIMEOUT", args.timeout.to_string());
     }
 
     let synthetic = build_framed_args(args);
 
     match args.backend.as_str() {
         "shm" => {
-            std::env::set_var("PERF_BENCH_BROADCAST_HARNESS", "framed_shm");
+            std::env::set_var("MYELON_BENCH_BROADCAST_HARNESS", "framed_shm");
             let bench = perf_bench::layers::framed_myelon::frag::broadcast_shm::FramedShmBench;
             bench.run_orchestrator(&synthetic)?;
             Ok(())
         }
         "mmap" => {
-            std::env::set_var("PERF_BENCH_BROADCAST_HARNESS", "framed_mmap");
+            std::env::set_var("MYELON_BENCH_BROADCAST_HARNESS", "framed_mmap");
             let bench = perf_bench::layers::framed_myelon::frag::broadcast_mmap::FramedMmapBench;
             bench.run_orchestrator(&synthetic)?;
             Ok(())
@@ -523,20 +523,20 @@ fn run_codec(args: &Args) -> Result<(), Box<dyn Error>> {
     use perf_bench::infra::BenchHarness;
 
     if args.timeout != 300 {
-        std::env::set_var("PERF_BENCH_TIMEOUT", args.timeout.to_string());
+        std::env::set_var("MYELON_BENCH_TIMEOUT", args.timeout.to_string());
     }
 
     let synthetic = build_codec_args(args);
 
     match args.backend.as_str() {
         "shm" => {
-            std::env::set_var("PERF_BENCH_BROADCAST_HARNESS", "codec_shm");
+            std::env::set_var("MYELON_BENCH_BROADCAST_HARNESS", "codec_shm");
             let bench = perf_bench::layers::framed_myelon::codec::shm::CodecE2eShmBench;
             bench.run_orchestrator(&synthetic)?;
             Ok(())
         }
         "mmap" => {
-            std::env::set_var("PERF_BENCH_BROADCAST_HARNESS", "codec_mmap");
+            std::env::set_var("MYELON_BENCH_BROADCAST_HARNESS", "codec_mmap");
             let bench = perf_bench::layers::framed_myelon::codec::mmap::CodecE2eMmapBench;
             bench.run_orchestrator(&synthetic)?;
             Ok(())
@@ -549,7 +549,7 @@ fn run_wait_strategy(args: &Args) -> Result<(), Box<dyn Error>> {
     use perf_bench::infra::BenchHarness;
 
     if args.timeout != 300 {
-        std::env::set_var("PERF_BENCH_TIMEOUT", args.timeout.to_string());
+        std::env::set_var("MYELON_BENCH_TIMEOUT", args.timeout.to_string());
     }
 
     // wait_strategy benches parse args via env vars + ReportOutputArgs::from_args
@@ -577,7 +577,7 @@ fn run_myelon_layers(args: &Args) -> Result<(), Box<dyn Error>> {
     use perf_bench::infra::BenchHarness;
 
     if args.timeout != 300 {
-        std::env::set_var("PERF_BENCH_TIMEOUT", args.timeout.to_string());
+        std::env::set_var("MYELON_BENCH_TIMEOUT", args.timeout.to_string());
     }
 
     let synthetic = build_sweep_args(args);
@@ -590,7 +590,7 @@ fn run_monster_sweep(args: &Args) -> Result<(), Box<dyn Error>> {
     use perf_bench::infra::BenchHarness;
 
     if args.timeout != 300 {
-        std::env::set_var("PERF_BENCH_TIMEOUT", args.timeout.to_string());
+        std::env::set_var("MYELON_BENCH_TIMEOUT", args.timeout.to_string());
     }
 
     let synthetic = build_sweep_args(args);
@@ -614,7 +614,7 @@ fn run_framed_sweep(args: &Args) -> Result<(), Box<dyn Error>> {
     use perf_bench::infra::BenchHarness;
 
     if args.timeout != 300 {
-        std::env::set_var("PERF_BENCH_TIMEOUT", args.timeout.to_string());
+        std::env::set_var("MYELON_BENCH_TIMEOUT", args.timeout.to_string());
     }
 
     let synthetic = build_sweep_args(args);
@@ -627,7 +627,7 @@ fn run_typed_zc_sweep(args: &Args) -> Result<(), Box<dyn Error>> {
     use perf_bench::infra::BenchHarness;
 
     if args.timeout != 300 {
-        std::env::set_var("PERF_BENCH_TIMEOUT", args.timeout.to_string());
+        std::env::set_var("MYELON_BENCH_TIMEOUT", args.timeout.to_string());
     }
 
     let synthetic = build_sweep_args(args);
@@ -640,7 +640,7 @@ fn run_nofrag(args: &Args) -> Result<(), Box<dyn Error>> {
     use perf_bench::infra::BenchHarness;
 
     if args.timeout != 300 {
-        std::env::set_var("PERF_BENCH_TIMEOUT", args.timeout.to_string());
+        std::env::set_var("MYELON_BENCH_TIMEOUT", args.timeout.to_string());
     }
 
     let synthetic = build_sweep_args(args);

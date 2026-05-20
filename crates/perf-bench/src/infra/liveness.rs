@@ -1,6 +1,6 @@
 //! Required-consumer liveness wiring for the pingpong harness.
 //!
-//! The bench binary's `--liveness on` flag forwards `PERF_BENCH_LIVENESS=on`
+//! The bench binary's `--liveness on` flag forwards `MYELON_BENCH_LIVENESS=on`
 //! into the env. Each layer reads it via [`liveness_enabled`], and when
 //! the flag is on:
 //!
@@ -21,7 +21,7 @@ use disruptor_mp::{RequiredConsumerFailureAction, RequiredConsumerLivenessConfig
 
 static LIVENESS_ON: OnceLock<bool> = OnceLock::new();
 
-/// Returns `true` if `PERF_BENCH_LIVENESS=on` is set in the
+/// Returns `true` if `MYELON_BENCH_LIVENESS=on` is set in the
 /// environment.
 ///
 /// Cached via `OnceLock` so it's safe (and cheap) to call from a
@@ -32,7 +32,7 @@ static LIVENESS_ON: OnceLock<bool> = OnceLock::new();
 /// matches everywhere.
 #[inline]
 pub fn liveness_enabled() -> bool {
-    *LIVENESS_ON.get_or_init(|| std::env::var("PERF_BENCH_LIVENESS").as_deref() == Ok("on"))
+    *LIVENESS_ON.get_or_init(|| std::env::var("MYELON_BENCH_LIVENESS").as_deref() == Ok("on"))
 }
 
 /// Build a [`RequiredConsumerLivenessConfig`] tuned for perf-bench timings.

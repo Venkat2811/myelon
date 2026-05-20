@@ -23,8 +23,8 @@
 //! ```
 //!
 //! Env vars:
-//! - `PERF_BENCH_OUT_DIR`: override the run directory (skips timestamp creation)
-//! - `BenchLog` uses `PERF_BENCH_OUT_DIR/logs` automatically
+//! - `MYELON_BENCH_OUT_DIR`: override the run directory (skips timestamp creation)
+//! - `BenchLog` uses `MYELON_BENCH_OUT_DIR/logs` automatically
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -57,11 +57,11 @@ impl RunMetadata {
 
 /// Create (or resolve) the output directory for a benchmark run.
 ///
-/// If `PERF_BENCH_OUT_DIR` is set, uses that directly.
-/// Otherwise creates `output/{timestamp}/` and sets `PERF_BENCH_OUT_DIR`
+/// If `MYELON_BENCH_OUT_DIR` is set, uses that directly.
+/// Otherwise creates `output/{timestamp}/` and sets `MYELON_BENCH_OUT_DIR`
 /// so child processes and `BenchLog` pick it up.
 pub fn resolve_run_dir(tier: Option<&str>) -> PathBuf {
-    if let Ok(dir) = std::env::var("PERF_BENCH_OUT_DIR") {
+    if let Ok(dir) = std::env::var("MYELON_BENCH_OUT_DIR") {
         let path = PathBuf::from(dir);
         std::fs::create_dir_all(&path).ok();
         return path;
@@ -82,7 +82,7 @@ pub fn resolve_run_dir(tier: Option<&str>) -> PathBuf {
     std::fs::create_dir_all(run_dir.join("logs")).ok();
 
     // Set env so child processes and BenchLog use the same dir
-    std::env::set_var("PERF_BENCH_OUT_DIR", run_dir.to_str().unwrap_or("output"));
+    std::env::set_var("MYELON_BENCH_OUT_DIR", run_dir.to_str().unwrap_or("output"));
 
     run_dir
 }

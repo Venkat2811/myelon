@@ -36,22 +36,22 @@ const DEFAULT_LOG_DIR: &str = "output/logs";
 /// Resolve the log output directory.
 ///
 /// Priority:
-/// 1. `PERF_BENCH_LOG_DIR` env var (explicit override)
-/// 2. `PERF_BENCH_OUT_DIR` env var + `/logs` suffix (run output dir)
+/// 1. `MYELON_BENCH_LOG_DIR` env var (explicit override)
+/// 2. `MYELON_BENCH_OUT_DIR` env var + `/logs` suffix (run output dir)
 /// 3. Default: `output/logs` (relative to cwd, gitignored)
 pub fn log_dir() -> String {
-    if let Ok(dir) = std::env::var("PERF_BENCH_LOG_DIR") {
+    if let Ok(dir) = std::env::var("MYELON_BENCH_LOG_DIR") {
         return dir;
     }
-    if let Ok(out_dir) = std::env::var("PERF_BENCH_OUT_DIR") {
+    if let Ok(out_dir) = std::env::var("MYELON_BENCH_OUT_DIR") {
         return format!("{out_dir}/logs");
     }
     DEFAULT_LOG_DIR.to_string()
 }
 
-/// Check if logging is enabled (default: yes, disable with `PERF_BENCH_LOG=0`).
+/// Check if logging is enabled (default: yes, disable with `MYELON_BENCH_LOG=0`).
 pub fn is_enabled() -> bool {
-    std::env::var("PERF_BENCH_LOG")
+    std::env::var("MYELON_BENCH_LOG")
         .map(|v| v != "0")
         .unwrap_or(true)
 }
@@ -62,8 +62,8 @@ pub fn is_enabled() -> bool {
 /// `write!()` (~10-50ns, memcpy only — no syscalls, no locks, no heap alloc).
 ///
 /// On `Drop`, automatically writes to `output/logs/<role>_<pid>_<ts>.jsonl`
-/// (or `PERF_BENCH_LOG_DIR` / `PERF_BENCH_OUT_DIR/logs` if set).
-/// Disable entirely with `PERF_BENCH_LOG=0`.
+/// (or `MYELON_BENCH_LOG_DIR` / `MYELON_BENCH_OUT_DIR/logs` if set).
+/// Disable entirely with `MYELON_BENCH_LOG=0`.
 pub struct BenchLog {
     buf: String,
     pid: u32,

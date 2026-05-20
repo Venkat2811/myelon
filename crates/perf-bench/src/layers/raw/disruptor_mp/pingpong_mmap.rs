@@ -156,18 +156,18 @@ fn spawn_echo_process(
     let mut child_cmd = Command::new(exe);
     child_cmd
         .arg("--process-two")
-        .env("MMAP_ROOT", root)
-        .env("PING_SEGMENT", ping_segment)
-        .env("PONG_SEGMENT", pong_segment)
-        .env("COORDINATION_SEGMENT", coordination_name)
-        .env("MESSAGE_SIZE", message_size.to_string())
-        .env("BUFFER_SIZE", buffer_size.to_string())
-        .env("WAIT_STRATEGY", &args.wait_strategy)
+        .env("MYELON_BENCH_MMAP_ROOT", root)
+        .env("MYELON_BENCH_PING_SEGMENT", ping_segment)
+        .env("MYELON_BENCH_PONG_SEGMENT", pong_segment)
+        .env("MYELON_BENCH_COORDINATION_SEGMENT", coordination_name)
+        .env("MYELON_BENCH_MESSAGE_SIZE", message_size.to_string())
+        .env("MYELON_BENCH_BUFFER_SIZE", buffer_size.to_string())
+        .env("MYELON_BENCH_WAIT_STRATEGY", &args.wait_strategy)
         .stdout(Stdio::null())
         .stderr(Stdio::inherit());
 
     if pingpong::json_mode(args) {
-        child_cmd.env("JSON_MODE", "1");
+        child_cmd.env("MYELON_BENCH_JSON_MODE", "1");
     }
 
     Ok(ChildProcessGuard::new(child_cmd.spawn()?))
@@ -666,13 +666,14 @@ fn run_process_one(args: Args) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn run_process_two() -> Result<(), Box<dyn std::error::Error>> {
-    let root = PathBuf::from(env::var("MMAP_ROOT")?);
-    let ping_segment = env::var("PING_SEGMENT")?;
-    let pong_segment = env::var("PONG_SEGMENT")?;
-    let coordination_name = env::var("COORDINATION_SEGMENT")?;
-    let message_size: usize = env::var("MESSAGE_SIZE")?.parse()?;
-    let buffer_size: usize = env::var("BUFFER_SIZE")?.parse()?;
-    let wait_strategy = env::var("WAIT_STRATEGY").unwrap_or_else(|_| "busyspin".to_string());
+    let root = PathBuf::from(env::var("MYELON_BENCH_MMAP_ROOT")?);
+    let ping_segment = env::var("MYELON_BENCH_PING_SEGMENT")?;
+    let pong_segment = env::var("MYELON_BENCH_PONG_SEGMENT")?;
+    let coordination_name = env::var("MYELON_BENCH_COORDINATION_SEGMENT")?;
+    let message_size: usize = env::var("MYELON_BENCH_MESSAGE_SIZE")?.parse()?;
+    let buffer_size: usize = env::var("MYELON_BENCH_BUFFER_SIZE")?.parse()?;
+    let wait_strategy =
+        env::var("MYELON_BENCH_WAIT_STRATEGY").unwrap_or_else(|_| "busyspin".to_string());
 
     let coordination =
         UnifiedCoordination::attach_with_timeout(&coordination_name, Duration::from_secs(30))?;
