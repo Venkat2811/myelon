@@ -74,10 +74,7 @@ fn parse_config(src: &str) -> ParityConfig {
         };
         visiting.push(key.to_string());
         let mut search_from = 0usize;
-        loop {
-            let Some(start_rel) = value[search_from..].find("$(") else {
-                break;
-            };
+        while let Some(start_rel) = value[search_from..].find("$(") {
             let start = search_from + start_rel;
             let rest = &value[start + 2..];
             let Some(end_rel) = rest.find(')') else { break };
@@ -228,7 +225,7 @@ pub fn tune_for_size(cfg: &ParityConfig, size: usize) -> SizeTuning {
 pub fn sizes_for_tier(cfg: &ParityConfig, tier: &str) -> Vec<usize> {
     match tier {
         "quick" | "smoke" => cfg.sizes_small.clone(),
-        "simple-smoke" | "super-tiny" => vec![32, 64, 128, 1024, 2048, 4096],
+        "simple-smoke" | "super-tiny" => vec![64, 128, 1024, 2048, 4096],
         "extensive" => cfg.sizes_extensive.clone(),
         "headon-smoke" | "headon-full" => cfg.headon_sizes.clone(),
         "headon-extensive" => cfg.headon_sizes_extensive.clone(),
@@ -412,11 +409,11 @@ mod tests {
         assert_eq!(sizes_for_tier(cfg, "extensive"), cfg.sizes_extensive);
         assert_eq!(
             sizes_for_tier(cfg, "simple-smoke"),
-            vec![32, 64, 128, 1024, 2048, 4096]
+            vec![64, 128, 1024, 2048, 4096]
         );
         assert_eq!(
             sizes_for_tier(cfg, "super-tiny"),
-            vec![32, 64, 128, 1024, 2048, 4096]
+            vec![64, 128, 1024, 2048, 4096]
         );
     }
 }

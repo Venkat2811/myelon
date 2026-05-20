@@ -166,7 +166,7 @@ fn run_server(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let ping_pub = aeron
         .async_add_publication(&ping_channel, PING_STREAM_ID)?
         .poll_blocking(Duration::from_secs(5))?;
-    let max_payload = ping_pub.get_constants().unwrap().max_payload_length as usize;
+    let max_payload = ping_pub.get_constants().unwrap().max_payload_length;
     let poll_limit = fragment_poll_limit(args.message_size, max_payload);
     let pong_sub = aeron
         .async_add_subscription(
@@ -240,8 +240,8 @@ fn run_client(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let mut buffer = vec![0u8; args.message_size.max(16)];
     let buffer_claim: AeronBufferClaim = Default::default();
     let constants = pong_pub.get_constants().unwrap();
-    let max_payload = constants.max_payload_length as usize;
-    let max_message_length = constants.max_message_length as usize;
+    let max_payload = constants.max_payload_length;
+    let max_message_length = constants.max_message_length;
     if args.message_size > max_message_length {
         return Err(format!(
             "message_size={} exceeds Aeron max_message_length={} for channel {}",
