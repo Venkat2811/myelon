@@ -110,7 +110,7 @@ fn run_wait_strategy_smoke(
         .with_ring_depth(2048)
         .with_payload_size(128)
         .with_consumer_count(1)
-        .with_message_count(4096)
+        .with_message_count(16384)
         .with_wait_strategy(wait_strategy);
     let mut runner = DstRunner::with_config(config);
     let started = Instant::now();
@@ -567,9 +567,9 @@ fn dst_required_consumer_liveness_rejects_wrong_id_restart() {
 #[test]
 fn dst_wait_strategy_sleep_shm_smoke_avoids_scheduler_floor() {
     let (report, elapsed) = run_wait_strategy_smoke(BackendKind::Shm, WaitStrategyKind::Sleep);
-    assert_eq!(report.consumers[0].messages.len(), 4096);
+    assert_eq!(report.consumers[0].messages.len(), 16384);
     assert!(
-        elapsed < Duration::from_secs(2),
+        elapsed < Duration::from_secs(3),
         "sleep wait smoke regressed to scheduler-floor behavior: elapsed={elapsed:?}"
     );
 }
@@ -577,9 +577,9 @@ fn dst_wait_strategy_sleep_shm_smoke_avoids_scheduler_floor() {
 #[test]
 fn dst_wait_strategy_block_shm_smoke_avoids_scheduler_floor() {
     let (report, elapsed) = run_wait_strategy_smoke(BackendKind::Shm, WaitStrategyKind::Block);
-    assert_eq!(report.consumers[0].messages.len(), 4096);
+    assert_eq!(report.consumers[0].messages.len(), 16384);
     assert!(
-        elapsed < Duration::from_secs(2),
+        elapsed < Duration::from_secs(3),
         "block wait smoke regressed to scheduler-floor behavior: elapsed={elapsed:?}"
     );
 }
@@ -587,9 +587,9 @@ fn dst_wait_strategy_block_shm_smoke_avoids_scheduler_floor() {
 #[test]
 fn dst_wait_strategy_sleep_mmap_smoke_avoids_scheduler_floor() {
     let (report, elapsed) = run_wait_strategy_smoke(BackendKind::Mmap, WaitStrategyKind::Sleep);
-    assert_eq!(report.consumers[0].messages.len(), 4096);
+    assert_eq!(report.consumers[0].messages.len(), 16384);
     assert!(
-        elapsed < Duration::from_secs(2),
+        elapsed < Duration::from_secs(3),
         "mmap sleep wait smoke regressed to scheduler-floor behavior: elapsed={elapsed:?}"
     );
 }
@@ -597,9 +597,9 @@ fn dst_wait_strategy_sleep_mmap_smoke_avoids_scheduler_floor() {
 #[test]
 fn dst_wait_strategy_block_mmap_smoke_avoids_scheduler_floor() {
     let (report, elapsed) = run_wait_strategy_smoke(BackendKind::Mmap, WaitStrategyKind::Block);
-    assert_eq!(report.consumers[0].messages.len(), 4096);
+    assert_eq!(report.consumers[0].messages.len(), 16384);
     assert!(
-        elapsed < Duration::from_secs(2),
+        elapsed < Duration::from_secs(3),
         "mmap block wait smoke regressed to scheduler-floor behavior: elapsed={elapsed:?}"
     );
 }

@@ -330,11 +330,11 @@ impl DstRunner {
         let policy = RawRingExecutionPolicy {
             spawn_consumers_first: false,
             wait_for_consumers_ready: false,
-            startup_delay_ms: 60,
-            consumer_spawn_stagger_ms: 10,
-            producer_hold_ms: 250,
-            publish_pause_every: 1,
-            publish_pause_micros: 25,
+            startup_delay_ms: 20,
+            consumer_spawn_stagger_ms: 1,
+            producer_hold_ms: 25,
+            publish_pause_every: 0,
+            publish_pause_micros: 0,
             injected_fault: None,
             required_consumer_liveness: None,
         };

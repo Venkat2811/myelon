@@ -48,6 +48,10 @@ struct Args {
     #[arg(long)]
     codec: Option<String>,
 
+    /// Inner layer / variant filter for sweep families
+    #[arg(long)]
+    variant: Option<String>,
+
     /// Number of consumers
     #[arg(long, default_value_t = 1)]
     consumers: usize,
@@ -402,6 +406,11 @@ fn build_sweep_args_inner(args: &Args, include_consumers_filter: bool) -> Vec<St
         v.push(size.to_string());
     }
 
+    if let Some(ref variant) = args.variant {
+        v.push("--layer".to_string());
+        v.push(variant.clone());
+    }
+
     if include_consumers_filter {
         v.push("--consumers".to_string());
         v.push(args.consumers.to_string());
@@ -658,6 +667,7 @@ mod tests {
             target_rate: Some(20_000),
             wait_strategy: "busyspin".to_string(),
             codec: Some("rkyv".to_string()),
+            variant: Some("framed_right".to_string()),
             consumers: 4,
             batch_size: 8,
             num_messages: 1_000,
@@ -706,6 +716,9 @@ mod tests {
         let built = build_sweep_args_inner(&args, true);
         assert!(built.windows(2).any(|pair| pair == ["--backend", "mmap"]));
         assert!(built.windows(2).any(|pair| pair == ["--size", "1KB"]));
+        assert!(built
+            .windows(2)
+            .any(|pair| pair == ["--layer", "framed_right"]));
         assert!(built.windows(2).any(|pair| pair == ["--consumers", "4"]));
         assert!(built
             .windows(2)

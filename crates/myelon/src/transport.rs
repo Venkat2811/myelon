@@ -768,7 +768,13 @@ where
                 return handler(message_meta, first.data);
             }
 
-            reassembly_buf.start(first.msg_id, first.kind, first.data, first.len);
+            reassembly_buf.start(
+                first.msg_id,
+                first.kind,
+                first.data,
+                first.len,
+                first.timestamp_ns,
+            );
             (message_meta, first.msg_id, is_last_frame(first.flags))
         };
 
@@ -834,7 +840,13 @@ where
             // Multi-frame: accumulate in reassembly buffer
             if meta.flags & 0x01 != 0 {
                 // First frame of a new message
-                reassembly_buf.start(meta.msg_id, meta.kind, meta.data, meta.len);
+                reassembly_buf.start(
+                    meta.msg_id,
+                    meta.kind,
+                    meta.data,
+                    meta.len,
+                    meta.timestamp_ns,
+                );
             } else if reassembly_buf.msg_id == meta.msg_id {
                 reassembly_buf.append(meta.data);
             }
@@ -842,6 +854,74 @@ where
 
             if is_last_frame(meta.flags) && reassembly_buf.msg_id == meta.msg_id {
                 handler(reassembly_buf.kind, reassembly_buf.bytes());
+                reassembly_buf.reset();
+                delivered += 1;
+            }
+        });
+        delivered
+    }
+
+    /// Batch-receive with per-message transport metadata.
+    ///
+    /// This keeps the single-call batch processing behavior of
+    /// [`Self::process_available_messages()`] while preserving the first
+    /// frame's timestamp for end-to-end latency measurement.
+    #[inline(always)]
+    pub fn process_available_messages_with_meta<F>(
+        &mut self,
+        reassembly_buf: &mut ReassemblyBuffer,
+        mut handler: F,
+    ) -> usize
+    where
+        F: FnMut(ReceivedMessageMeta, &[u8]),
+    {
+        let mut delivered = 0usize;
+        self.inner.process_available(|frame, _seq| {
+            let meta = frame.frame_meta();
+
+            if is_single_frame(meta.flags) {
+                handler(
+                    ReceivedMessageMeta {
+                        kind: meta.kind,
+                        msg_id: meta.msg_id,
+                        sent_timestamp_ns: meta.timestamp_ns,
+                        received_timestamp_ns: wall_clock_ns(),
+                    },
+                    meta.data,
+                );
+                delivered += 1;
+                return;
+            }
+
+            #[cfg(dst)]
+            disruptor_mp::dst::assert_sometimes(
+                true,
+                "fragmented message",
+                format!("msg_id={} len={}", meta.msg_id, meta.len),
+            );
+
+            if meta.flags & 0x01 != 0 {
+                reassembly_buf.start(
+                    meta.msg_id,
+                    meta.kind,
+                    meta.data,
+                    meta.len,
+                    meta.timestamp_ns,
+                );
+            } else if reassembly_buf.msg_id == meta.msg_id {
+                reassembly_buf.append(meta.data);
+            }
+
+            if is_last_frame(meta.flags) && reassembly_buf.msg_id == meta.msg_id {
+                handler(
+                    ReceivedMessageMeta {
+                        kind: reassembly_buf.kind,
+                        msg_id: reassembly_buf.msg_id,
+                        sent_timestamp_ns: reassembly_buf.sent_timestamp_ns,
+                        received_timestamp_ns: wall_clock_ns(),
+                    },
+                    reassembly_buf.bytes(),
+                );
                 reassembly_buf.reset();
                 delivered += 1;
             }
@@ -867,6 +947,7 @@ pub struct ReassemblyBuffer {
     len: usize,
     msg_id: u32,
     kind: u8,
+    sent_timestamp_ns: Option<u64>,
 }
 
 impl ReassemblyBuffer {
@@ -877,17 +958,26 @@ impl ReassemblyBuffer {
             len: 0,
             msg_id: 0,
             kind: 0,
+            sent_timestamp_ns: None,
         }
     }
 
     /// Start a new message reassembly.
-    fn start(&mut self, msg_id: u32, kind: u8, first_data: &[u8], total_len: usize) {
+    fn start(
+        &mut self,
+        msg_id: u32,
+        kind: u8,
+        first_data: &[u8],
+        total_len: usize,
+        sent_timestamp_ns: Option<u64>,
+    ) {
         let needed_len = total_len.max(first_data.len());
         self.ensure_capacity(needed_len);
         self.as_mut_bytes()[..first_data.len()].copy_from_slice(first_data);
         self.len = first_data.len();
         self.msg_id = msg_id;
         self.kind = kind;
+        self.sent_timestamp_ns = sent_timestamp_ns;
     }
 
     /// Append a continuation frame's data.
@@ -903,6 +993,7 @@ impl ReassemblyBuffer {
     fn reset(&mut self) {
         self.len = 0;
         self.msg_id = 0;
+        self.sent_timestamp_ns = None;
     }
 
     fn bytes(&self) -> &[u8] {
@@ -1148,7 +1239,13 @@ where
                 return handler(message_meta, first.data);
             }
 
-            reassembly_buf.start(first.msg_id, first.kind, first.data, first.len);
+            reassembly_buf.start(
+                first.msg_id,
+                first.kind,
+                first.data,
+                first.len,
+                first.timestamp_ns,
+            );
             (message_meta, first.msg_id, is_last_frame(first.flags))
         };
 
@@ -1202,13 +1299,76 @@ where
             }
 
             if meta.flags & 0x01 != 0 {
-                reassembly_buf.start(meta.msg_id, meta.kind, meta.data, meta.len);
+                reassembly_buf.start(
+                    meta.msg_id,
+                    meta.kind,
+                    meta.data,
+                    meta.len,
+                    meta.timestamp_ns,
+                );
             } else if reassembly_buf.msg_id == meta.msg_id {
                 reassembly_buf.append(meta.data);
             }
 
             if is_last_frame(meta.flags) && reassembly_buf.msg_id == meta.msg_id {
                 handler(reassembly_buf.kind, reassembly_buf.bytes());
+                reassembly_buf.reset();
+                delivered += 1;
+            }
+        });
+        delivered
+    }
+
+    /// Batch-receive with metadata for mmap-backed framed transport.
+    #[inline(always)]
+    pub fn process_available_messages_with_meta<F>(
+        &mut self,
+        reassembly_buf: &mut ReassemblyBuffer,
+        mut handler: F,
+    ) -> usize
+    where
+        F: FnMut(ReceivedMessageMeta, &[u8]),
+    {
+        let mut delivered = 0usize;
+        self.inner.process_available(|frame, _seq| {
+            let meta = frame.frame_meta();
+
+            if is_single_frame(meta.flags) {
+                handler(
+                    ReceivedMessageMeta {
+                        kind: meta.kind,
+                        msg_id: meta.msg_id,
+                        sent_timestamp_ns: meta.timestamp_ns,
+                        received_timestamp_ns: wall_clock_ns(),
+                    },
+                    meta.data,
+                );
+                delivered += 1;
+                return;
+            }
+
+            if meta.flags & 0x01 != 0 {
+                reassembly_buf.start(
+                    meta.msg_id,
+                    meta.kind,
+                    meta.data,
+                    meta.len,
+                    meta.timestamp_ns,
+                );
+            } else if reassembly_buf.msg_id == meta.msg_id {
+                reassembly_buf.append(meta.data);
+            }
+
+            if is_last_frame(meta.flags) && reassembly_buf.msg_id == meta.msg_id {
+                handler(
+                    ReceivedMessageMeta {
+                        kind: reassembly_buf.kind,
+                        msg_id: reassembly_buf.msg_id,
+                        sent_timestamp_ns: reassembly_buf.sent_timestamp_ns,
+                        received_timestamp_ns: wall_clock_ns(),
+                    },
+                    reassembly_buf.bytes(),
+                );
                 reassembly_buf.reset();
                 delivered += 1;
             }
@@ -1493,7 +1653,13 @@ where
         return handler(message_meta, first.data);
     }
 
-    reassembly_buf.start(first.msg_id, first.kind, first.data, first.len);
+    reassembly_buf.start(
+        first.msg_id,
+        first.kind,
+        first.data,
+        first.len,
+        first.timestamp_ns,
+    );
     let msg_id = first.msg_id;
 
     if is_last_frame(first.flags) {
@@ -1930,10 +2096,11 @@ mod tests {
     #[test]
     fn reassembly_buffer_storage_is_16_byte_aligned() {
         let mut reassembly = ReassemblyBuffer::new(96);
-        reassembly.start(7, 1, b"hello", 48);
+        reassembly.start(7, 1, b"hello", 48, Some(9));
 
         assert_eq!((reassembly.bytes().as_ptr() as usize) % 16, 0);
         assert_eq!(reassembly.bytes(), b"hello");
+        assert_eq!(reassembly.sent_timestamp_ns, Some(9));
     }
 
     #[test]
@@ -2095,6 +2262,74 @@ mod tests {
 
         let (kind, payload) = consumer.recv_message_blocking();
         assert_eq!(kind, 7);
+        assert_eq!(payload, b"hello world");
+    }
+
+    #[test]
+    fn process_available_messages_with_meta_preserves_fragment_timestamp() {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+        struct TinyTimedFrame {
+            len: usize,
+            kind: u8,
+            flags: u8,
+            msg_id: u32,
+            timestamp_ns: u64,
+            data: [u8; 4],
+        }
+
+        impl FramedTransportFrame for TinyTimedFrame {
+            fn payload_capacity() -> usize {
+                4
+            }
+
+            fn frame_meta(&self) -> FrameMeta<'_> {
+                FrameMeta {
+                    len: self.len,
+                    kind: self.kind,
+                    flags: self.flags,
+                    msg_id: self.msg_id,
+                    timestamp_ns: Some(self.timestamp_ns),
+                    data: &self.data[..self.len],
+                }
+            }
+
+            fn write_frame(&mut self, payload: &[u8], kind: u8, msg_id: u32, flags: u8) {
+                self.len = payload.len();
+                self.kind = kind;
+                self.flags = flags;
+                self.msg_id = msg_id;
+                self.timestamp_ns = 7;
+                self.data[..payload.len()].copy_from_slice(payload);
+            }
+        }
+
+        let ring_name = unique_ring_name("myfrmeta");
+        let mut producer =
+            FramedTransportProducer::<TinyTimedFrame>::create(&ring_name, 16).unwrap();
+        let mut consumer = FramedTransportConsumer::<TinyTimedFrame>::attach(
+            &ring_name,
+            16,
+            MyelonWaitStrategy::BusySpin,
+        )
+        .unwrap();
+        let mut reassembly = ReassemblyBuffer::new(64);
+        let mut seen = None;
+
+        producer.publish(b"hello world", 9);
+        while seen.is_none() {
+            consumer.process_available_messages_with_meta(&mut reassembly, |meta, bytes| {
+                seen = Some((meta, bytes.to_vec()));
+            });
+            if seen.is_none() {
+                std::hint::spin_loop();
+            }
+        }
+
+        let (meta, payload) = seen.unwrap();
+        assert_eq!(meta.kind, 9);
+        assert_eq!(meta.sent_timestamp_ns, Some(7));
+        assert!(meta.received_timestamp_ns >= 7);
+        assert!(meta.one_way_latency_ns().is_some());
         assert_eq!(payload, b"hello world");
     }
 

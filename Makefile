@@ -100,6 +100,7 @@ test-rust-extended:
 test-rust-perf-gate:
 	@$(PERF_BENCH_MAKE) super-tiny
 	@$(COMPETITIVE_BENCH_MAKE) super-tiny
+	@python3 crates/perf-bench/scripts/perf_floor_gate.py
 
 test-dst:
 	@RUSTFLAGS="--cfg dst" $(CARGO) test -p myelon-dst --features _runner_bin -- --test-threads=1

@@ -2,6 +2,7 @@
 //!
 //! Covers the remaining framed half of RFC 0015 T-11:
 //!   - 64KB framed transport over SHM and mmap at 1KB..1MB
+//!   - 64KB framed transport with batch consume over SHM and mmap at 1KB..1MB
 //!   - right-sized framed transport over SHM and mmap at 1KB..64KB
 //!   - 1,2,4,6,8,12 consumers
 //!   - max-throughput and explicit CO-aware modes
@@ -404,6 +405,167 @@ mmap_framed_impl!(Frame8K, mmap_frame8k_prod, mmap_frame8k_cons);
 mmap_framed_impl!(Frame32K, mmap_frame32k_prod, mmap_frame32k_cons);
 mmap_framed_impl!(Frame128K, mmap_frame128k_prod, mmap_frame128k_cons);
 
+macro_rules! shm_framed_batch_consumer_impl {
+    ($frame:ty, $cons_fn:ident) => {
+        fn $cons_fn() -> Result<(), Box<dyn std::error::Error>> {
+            use myelon::transport::ReassemblyBuffer;
+
+            let segment = segment_from_env("BENCHMARK_SEGMENT_NAME");
+            let consumer_id = read_env_usize("BENCH_CONSUMER_ID", 0);
+            let buffer_depth = read_env_usize("BENCH_BUFFER_DEPTH", 1024);
+            let num_messages = read_env_u64("BENCH_NUM_MESSAGES", 50_000);
+            let payload_bytes = read_env_usize("BENCH_PAYLOAD_BYTES", 1024);
+
+            let coord =
+                BenchmarkCoordination::attach_with_timeout(&segment, Duration::from_secs(30))?;
+            let mut consumer = FramedTransportConsumer::<$frame>::attach(
+                &segment,
+                buffer_depth,
+                MyelonWaitStrategy::BusySpin,
+            )?;
+            let mut reassembly = ReassemblyBuffer::new(256 * 1024);
+            coord.signal_consumer_ready();
+
+            let mut start: Option<Instant> = None;
+            let mut consumed = 0u64;
+            let mut checksum = 0u64;
+            let mut latency = LatencyRecorder::default_range();
+            let deadline = infra::spin_deadline();
+
+            while consumed < num_messages {
+                consumer.process_available_messages_with_meta(&mut reassembly, |meta, data| {
+                    if start.is_none() {
+                        start = Some(Instant::now());
+                    }
+                    let payload_sum = access_raw(data);
+                    black_box(payload_sum);
+                    checksum = checksum.wrapping_add(payload_sum);
+                    if let Some(lat_ns) = meta.one_way_latency_ns() {
+                        latency.record(lat_ns);
+                    }
+                    consumed += 1;
+                });
+                if consumed < num_messages {
+                    infra::check_deadline(deadline, concat!(stringify!($cons_fn), " measured"));
+                    std::hint::spin_loop();
+                }
+            }
+
+            let elapsed = start
+                .expect("consumer never received a batch frame")
+                .elapsed();
+            let output = if let Some(stats) = latency.stats() {
+                ConsumerOutput::from_elapsed(
+                    consumer_id,
+                    consumed,
+                    elapsed,
+                    payload_bytes,
+                    checksum,
+                )
+                .with_latency(stats)
+            } else {
+                ConsumerOutput::from_elapsed(
+                    consumer_id,
+                    consumed,
+                    elapsed,
+                    payload_bytes,
+                    checksum,
+                )
+            };
+            println!("{}", serde_json::to_string(&output)?);
+            coord.signal_consumer_done(consumed as i64);
+            Ok(())
+        }
+    };
+}
+
+macro_rules! mmap_framed_batch_consumer_impl {
+    ($frame:ty, $cons_fn:ident) => {
+        fn $cons_fn() -> Result<(), Box<dyn std::error::Error>> {
+            use myelon::transport::ReassemblyBuffer;
+
+            let layout = mmap_layout_from_env("MMAP_ROOT", "MMAP_SEGMENT");
+            let consumer_id = read_env_usize("BENCH_CONSUMER_ID", 0);
+            let buffer_depth = read_env_usize("BENCH_BUFFER_DEPTH", 1024);
+            let num_messages = read_env_u64("BENCH_NUM_MESSAGES", 50_000);
+            let payload_bytes = read_env_usize("BENCH_PAYLOAD_BYTES", 1024);
+            let consumer_name = format!("c{consumer_id}_{}", std::process::id());
+
+            let deadline = Instant::now() + Duration::from_secs(15);
+            let mut consumer = loop {
+                match MmapFramedTransportConsumer::<$frame>::attach(
+                    layout.clone(),
+                    buffer_depth,
+                    &consumer_name,
+                    MyelonWaitStrategy::BusySpin,
+                ) {
+                    Ok(consumer) => break consumer,
+                    Err(_) if Instant::now() < deadline => {
+                        std::thread::sleep(Duration::from_millis(25))
+                    }
+                    Err(error) => return Err(format!("consumer attach failed: {error}").into()),
+                }
+            };
+
+            let mut reassembly = ReassemblyBuffer::new(256 * 1024);
+            let mut start: Option<Instant> = None;
+            let mut consumed = 0u64;
+            let mut checksum = 0u64;
+            let mut latency = LatencyRecorder::default_range();
+            let spin_deadline = infra::spin_deadline();
+
+            while consumed < num_messages {
+                consumer.process_available_messages_with_meta(&mut reassembly, |meta, data| {
+                    if start.is_none() {
+                        start = Some(Instant::now());
+                    }
+                    let payload_sum = access_raw(data);
+                    black_box(payload_sum);
+                    checksum = checksum.wrapping_add(payload_sum);
+                    if let Some(lat_ns) = meta.one_way_latency_ns() {
+                        latency.record(lat_ns);
+                    }
+                    consumed += 1;
+                });
+                if consumed < num_messages {
+                    infra::check_deadline(
+                        spin_deadline,
+                        concat!(stringify!($cons_fn), " measured"),
+                    );
+                    std::hint::spin_loop();
+                }
+            }
+
+            let elapsed = start
+                .expect("consumer never received a batch frame")
+                .elapsed();
+            let output = if let Some(stats) = latency.stats() {
+                ConsumerOutput::from_elapsed(
+                    consumer_id,
+                    consumed,
+                    elapsed,
+                    payload_bytes,
+                    checksum,
+                )
+                .with_latency(stats)
+            } else {
+                ConsumerOutput::from_elapsed(
+                    consumer_id,
+                    consumed,
+                    elapsed,
+                    payload_bytes,
+                    checksum,
+                )
+            };
+            println!("{}", serde_json::to_string(&output)?);
+            Ok(())
+        }
+    };
+}
+
+shm_framed_batch_consumer_impl!(Frame64K, shm_frame64_batch_cons);
+mmap_framed_batch_consumer_impl!(Frame64K, mmap_frame64_batch_cons);
+
 struct Scenario {
     layer: &'static str,
     backend: &'static str,
@@ -577,6 +739,7 @@ impl IpcBenchmark for Scenario {
 const CHILD_ROLES: &[infra::ChildRole] = &[
     infra::ChildRole::new("shm_frame64_prod", shm_frame64_prod),
     infra::ChildRole::new("shm_frame64_cons", shm_frame64_cons),
+    infra::ChildRole::new("shm_frame64_batch_cons", shm_frame64_batch_cons),
     infra::ChildRole::new("shm_frame2k_prod", shm_frame2k_prod),
     infra::ChildRole::new("shm_frame2k_cons", shm_frame2k_cons),
     infra::ChildRole::new("shm_frame8k_prod", shm_frame8k_prod),
@@ -587,6 +750,7 @@ const CHILD_ROLES: &[infra::ChildRole] = &[
     infra::ChildRole::new("shm_frame128k_cons", shm_frame128k_cons),
     infra::ChildRole::new("mmap_frame64_prod", mmap_frame64_prod),
     infra::ChildRole::new("mmap_frame64_cons", mmap_frame64_cons),
+    infra::ChildRole::new("mmap_frame64_batch_cons", mmap_frame64_batch_cons),
     infra::ChildRole::new("mmap_frame2k_prod", mmap_frame2k_prod),
     infra::ChildRole::new("mmap_frame2k_cons", mmap_frame2k_cons),
     infra::ChildRole::new("mmap_frame8k_prod", mmap_frame8k_prod),
@@ -626,7 +790,7 @@ impl infra::BenchHarness for MyelonFramedSweep {
         if !output_args.json_mode {
             println!("=== Myelon Framed Sweep ===");
             println!(
-                "Layers: framed (64KB transport frame) + framed_right (single-frame right-sized)"
+                "Layers: framed (64KB transport frame) + framed_batch (64KB batch receive) + framed_right (single-frame right-sized)"
             );
             println!("Backends: SHM + mmap");
             println!("Modes: max_throughput + explicit CO-aware latency");

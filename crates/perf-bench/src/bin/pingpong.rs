@@ -258,12 +258,36 @@ fn build_raw_args(args: &Args) -> Vec<String> {
     v
 }
 
+fn cli_flag_requested(flag: &str) -> bool {
+    std::env::args().any(|arg| arg == flag)
+}
+
+fn pingpong_payload_tag(size: usize) -> Option<&'static str> {
+    match size {
+        64 => Some("64B"),
+        512 => Some("512B"),
+        1024 => Some("1KB"),
+        4096 => Some("4KB"),
+        32768 => Some("32KB"),
+        65536 => Some("64KB"),
+        131072 => Some("128KB"),
+        _ => None,
+    }
+}
+
 /// Build `FramedPingPongArgs` / CodecPingPongArgs-compatible CLI args.
-fn build_myelon_args(args: &Args) -> Vec<String> {
+fn build_myelon_args_inner(args: &Args, include_payload_filter: bool) -> Vec<String> {
     let mut v = vec!["perf-bench-pingpong".to_string()];
 
     v.push("--mode".to_string());
     v.push(args.mode.clone());
+
+    if include_payload_filter {
+        if let Some(payload_tag) = pingpong_payload_tag(args.size) {
+            v.push("--payload".to_string());
+            v.push(payload_tag.to_string());
+        }
+    }
 
     v.push("--num-messages".to_string());
     v.push(args.num_messages.to_string());
@@ -298,8 +322,15 @@ fn build_myelon_args(args: &Args) -> Vec<String> {
     v
 }
 
+fn build_myelon_args(args: &Args) -> Vec<String> {
+    build_myelon_args_inner(
+        args,
+        cli_flag_requested("--size") || cli_flag_requested("-s"),
+    )
+}
+
 /// Build codec-specific CLI args (extends myelon args).
-fn build_codec_args(args: &Args) -> Vec<String> {
+fn build_codec_args_inner(args: &Args, include_batch_filter: bool) -> Vec<String> {
     let mut v = build_myelon_args(args);
 
     if let Some(ref codec) = args.codec {
@@ -307,12 +338,16 @@ fn build_codec_args(args: &Args) -> Vec<String> {
         v.push(codec.clone());
     }
 
-    if args.batch_size > 1 {
+    if include_batch_filter || args.batch_size > 1 {
         v.push("--batch".to_string());
         v.push(args.batch_size.to_string());
     }
 
     v
+}
+
+fn build_codec_args(args: &Args) -> Vec<String> {
+    build_codec_args_inner(args, cli_flag_requested("--batch-size"))
 }
 
 fn run_raw_ring(args: &Args) -> Result<(), Box<dyn Error>> {
@@ -424,5 +459,69 @@ fn run_typed_zc(args: &Args) -> Result<(), Box<dyn Error>> {
             Ok(())
         }
         _ => Err(format!("unknown backend: {}", args.backend).into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_args() -> Args {
+        Args {
+            layer: "framed".to_string(),
+            backend: "mmap".to_string(),
+            size: 131072,
+            mode: "co".to_string(),
+            target_rate: Some(20_000),
+            wait_strategy: "busyspin".to_string(),
+            codec: Some("rkyv".to_string()),
+            frag: "frag".to_string(),
+            batch_size: 1,
+            num_messages: 1_000,
+            warmup: 100,
+            buffer_size: Some(2048),
+            timeout: 120,
+            json: false,
+            tree: true,
+            json_out: Some("out.json".to_string()),
+            liveness: "off".to_string(),
+            enable_counters: false,
+            process_two: false,
+        }
+    }
+
+    #[test]
+    fn build_myelon_args_forwards_payload_filter_when_requested() {
+        let args = sample_args();
+        let built = build_myelon_args_inner(&args, true);
+        assert!(built.windows(2).any(|pair| pair == ["--payload", "128KB"]));
+    }
+
+    #[test]
+    fn build_myelon_args_omits_payload_filter_by_default() {
+        let args = sample_args();
+        let built = build_myelon_args_inner(&args, false);
+        assert!(!built.iter().any(|arg| arg == "--payload"));
+    }
+
+    #[test]
+    fn build_codec_args_forwards_explicit_batch_one() {
+        let mut args = sample_args();
+        args.layer = "typed_zc".to_string();
+        let built = build_codec_args_inner(&args, true);
+        assert!(built.windows(2).any(|pair| pair == ["--batch", "1"]));
+    }
+
+    #[test]
+    fn build_codec_args_keeps_codec_and_target_rate() {
+        let mut args = sample_args();
+        args.layer = "codec".to_string();
+        args.batch_size = 64;
+        let built = build_codec_args_inner(&args, false);
+        assert!(built.windows(2).any(|pair| pair == ["--codec", "rkyv"]));
+        assert!(built.windows(2).any(|pair| pair == ["--batch", "64"]));
+        assert!(built
+            .windows(2)
+            .any(|pair| pair == ["--target-rate", "20000"]));
     }
 }
