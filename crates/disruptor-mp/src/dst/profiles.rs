@@ -10,15 +10,22 @@ use super::contract::FailureClass;
 /// High-level assertions each profile must satisfy in one or more test variants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProfileAssertion {
+    /// The scenario must not deadlock.
     NoDeadlock,
+    /// Shutdown or restart must finish within the configured budget.
     BoundedShutdown,
+    /// Producer and consumer cursor values must never regress.
     MonotonicCursor,
+    /// Readers must not observe stale or overwritten data.
     NoStaleOverwrite,
+    /// Delayed metadata visibility must eventually converge.
     DelayedVisibilityConverged,
+    /// Progress must resume after an injected restart.
     RecoveryProgressesAfterRestart,
 }
 
 impl ProfileAssertion {
+    /// Human-readable explanation of the assertion.
     pub fn description(self) -> &'static str {
         match self {
             Self::NoDeadlock => "Profile run must not deadlock",
@@ -31,15 +38,21 @@ impl ProfileAssertion {
     }
 }
 
+/// Seed envelope used when sampling a profile across multiple runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProfileSeedEnvelope {
+    /// Lowest seed value included in the envelope.
     pub min_seed: u64,
+    /// Highest seed value included in the envelope.
     pub max_seed: u64,
+    /// Step size between sampled seeds.
     pub step: u64,
+    /// Short note describing the purpose of the envelope.
     pub note: &'static str,
 }
 
 impl ProfileSeedEnvelope {
+    /// Create a new seed envelope.
     pub const fn new(min_seed: u64, max_seed: u64, step: u64, note: &'static str) -> Self {
         Self {
             min_seed,
@@ -49,6 +62,7 @@ impl ProfileSeedEnvelope {
         }
     }
 
+    /// Return how many samples the envelope describes.
     pub const fn sample_count(&self) -> u64 {
         if self.max_seed < self.min_seed || self.step == 0 {
             0
@@ -61,17 +75,26 @@ impl ProfileSeedEnvelope {
 /// Runtime-level profile parameters used by custom DST test runners.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProfileSpec {
+    /// Failure class represented by the profile.
     pub kind: FailureClass,
+    /// Producer process count expected by the scenario.
     pub producers: u32,
+    /// Consumer process count expected by the scenario.
     pub consumers: u32,
+    /// End-to-end timeout budget for the profile.
     pub timeout: Duration,
+    /// Assertions expected to hold during the primary run.
     pub expected_assertions: &'static [ProfileAssertion],
+    /// Assertions expected to hold when replaying or reproducing the run.
     pub replay_assertions: &'static [ProfileAssertion],
+    /// Existing tests that cover this profile today.
     pub coverage_tests: &'static [&'static str],
+    /// Seed sampling policy for the profile.
     pub seed_envelope: ProfileSeedEnvelope,
 }
 
 impl ProfileSpec {
+    /// Stable profile name used in reports and artifacts.
     pub fn name(&self) -> &'static str {
         match self.kind {
             FailureClass::ProducerBeforeConsumers => "producer_before_consumers",
@@ -84,6 +107,7 @@ impl ProfileSpec {
         }
     }
 
+    /// Timeout budget expressed in milliseconds.
     pub fn timeout_ms(&self) -> u64 {
         self.timeout.as_millis().try_into().unwrap_or(u64::MAX)
     }

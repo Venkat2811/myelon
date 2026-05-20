@@ -1,11 +1,17 @@
+//! Deterministic BUGGIFY support used by DST-enabled builds.
+
 use myelon_env::{dst::buggify as dst_env, read};
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
+/// Environment-driven BUGGIFY parameters for one process.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BuggifyConfig {
+    /// Seed used to derive deterministic call-site decisions.
     pub seed: u64,
+    /// Percentage of call sites that become active BUGGIFY sites.
     pub activation_percent: u8,
+    /// Percentage of active BUGGIFY calls that fire on a given ordinal.
     pub fire_percent: u8,
 }
 
@@ -51,6 +57,7 @@ fn callsite_hash(seed: u64, file: &'static str, line: u32, ordinal: u64) -> u64 
     mix(hash ^ ordinal.wrapping_mul(0x94d049bb133111eb))
 }
 
+/// Reset per-call-site BUGGIFY ordinals in the current process.
 pub fn reset() {
     counters()
         .lock()
@@ -58,6 +65,7 @@ pub fn reset() {
         .clear();
 }
 
+/// Scoped helper that enables deterministic BUGGIFY settings for a test.
 pub struct ScopedBuggify {
     previous_enabled: Option<String>,
     previous_seed: Option<String>,
@@ -66,6 +74,7 @@ pub struct ScopedBuggify {
 }
 
 impl ScopedBuggify {
+    /// Enable BUGGIFY for the current process with the provided seed.
     pub fn new(seed: u64) -> Self {
         let guard = Self {
             previous_enabled: std::env::var(dst_env::ENABLED).ok(),
@@ -111,6 +120,7 @@ impl Drop for ScopedBuggify {
     }
 }
 
+/// Evaluate one BUGGIFY site for the current call and ordinal.
 pub fn buggify(file: &'static str, line: u32) -> bool {
     let Some(config) = BuggifyConfig::from_env() else {
         return false;
@@ -135,6 +145,7 @@ pub fn buggify(file: &'static str, line: u32) -> bool {
     fire_roll < config.fire_percent as u64
 }
 
+/// Expand to a deterministic BUGGIFY decision for the current call site.
 #[macro_export]
 macro_rules! dst_buggify {
     () => {

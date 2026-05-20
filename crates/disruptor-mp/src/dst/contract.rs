@@ -18,7 +18,10 @@ pub enum ProcessRole {
     /// Producer process.
     Producer,
     /// Consumer process by index.
-    Consumer { index: u32 },
+    Consumer {
+        /// Zero-based consumer index within the scenario topology.
+        index: u32,
+    },
     /// Harness/controller process.
     Orchestrator,
 }
@@ -33,20 +36,30 @@ impl Display for ProcessRole {
     }
 }
 
+/// Logical action emitted by the DST scheduler.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SchedulerAction {
     /// Create a process for the next role.
     Spawn,
     /// Delay before the next action (for stable jitter simulation).
-    SleepMs(u64),
+    SleepMs(
+        /// Delay duration in milliseconds.
+        u64,
+    ),
     /// Establish attachment to shared state.
     Attach,
     /// Start the role's runtime loop.
     Start,
     /// Simulate a producer publish batch.
-    PublishBatch { events: u32 },
+    PublishBatch {
+        /// Number of events represented by the batch.
+        events: u32,
+    },
     /// Simulate consumer progress milestone.
-    ConsumeBatch { events: u32 },
+    ConsumeBatch {
+        /// Number of events represented by the batch.
+        events: u32,
+    },
     /// Simulate process exit.
     Kill,
     /// Simulate restart after explicit fault.
@@ -55,21 +68,36 @@ pub enum SchedulerAction {
     Shutdown,
 }
 
+/// Status attached to a trace event during record or replay.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TraceStatus {
+    /// The event was planned but not yet executed.
     Planned,
+    /// The event completed successfully.
     Success,
+    /// The event requested an explicit retry path.
     Retry,
-    Failed { reason: String },
+    /// The event failed with the supplied reason.
+    Failed {
+        /// Human-readable failure reason captured by the harness.
+        reason: String,
+    },
 }
 
+/// One deterministic scheduler step generated from a startup plan.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ScheduledStep {
+    /// Monotonic step index in the generated plan.
     pub step: u64,
+    /// Action the orchestrator should perform.
     pub action: SchedulerAction,
+    /// Process role targeted by the action.
     pub role: ProcessRole,
+    /// Retry attempt number for the targeted role/action.
     pub attempt: u32,
+    /// Stable plan identifier shared across all steps in the run.
     pub plan_id: String,
+    /// Human-readable profile name for this scheduling variant.
     pub profile: String,
 }
 
@@ -111,13 +139,18 @@ impl XorShift64 {
 /// Stable startup schedule generated from a seed.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StartupSchedule {
+    /// Stable identifier for the schedule.
     pub plan_id: String,
+    /// Seed used to generate the schedule.
     pub seed: u64,
+    /// Maximum number of steps requested by the caller.
     pub step_cap: u64,
+    /// Ordered scheduler steps emitted from the seed.
     pub steps: Vec<ScheduledStep>,
 }
 
 impl StartupSchedule {
+    /// Build a deterministic startup schedule for the given process count and seed.
     pub fn from_seed(
         plan_id: impl Into<String>,
         seed: u64,
@@ -205,36 +238,57 @@ impl StartupSchedule {
         }
     }
 
+    /// Returns true when the schedule contains concrete replayable steps.
     pub fn is_deterministic(&self) -> bool {
         !self.steps.is_empty()
     }
 }
 
+/// Fault kind injected by a deterministic failure plan.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum FailureKind {
-    DelayAttachMs(u64),
+    /// Delay attach or readiness progress by the supplied milliseconds.
+    DelayAttachMs(
+        /// Delay duration in milliseconds.
+        u64,
+    ),
+    /// Kill the targeted process.
     KillProcess,
+    /// Restart the targeted process after a fault.
     RestartProcess,
-    DropConsumerAttach { consumer_index: u32 },
+    /// Drop the initial attach for a specific consumer.
+    DropConsumerAttach {
+        /// Zero-based consumer index to perturb.
+        consumer_index: u32,
+    },
+    /// Reserve a step without applying a real fault.
     Noop,
 }
 
+/// One injected failure scheduled at a concrete step.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct FailureStep {
+    /// Scheduler step at which the failure should be applied.
     pub step: u64,
+    /// Role affected by the failure.
     pub role: ProcessRole,
+    /// Failure action to apply.
     pub kind: FailureKind,
 }
 
 /// Deterministic failure injector backed by seed-derived injection points.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DeterministicFaultInjector {
+    /// Seed used to generate the fault plan.
     pub seed: u64,
+    /// Highest step index eligible for injection.
     pub max_steps: u64,
+    /// Faults ordered by injection step.
     pub inject_at: Vec<FailureStep>,
 }
 
 impl DeterministicFaultInjector {
+    /// Build a deterministic fault plan for the given topology.
     pub fn from_seed(seed: u64, consumers: u32, max_steps: u64) -> Self {
         let mut rng = XorShift64::new(seed ^ 0xA5A5_5A5A_77AA_11EE);
         let mut inject_at = Vec::new();
@@ -268,6 +322,7 @@ impl DeterministicFaultInjector {
         }
     }
 
+    /// Return all failures scheduled for `step`.
     pub fn at_step(&self, step: u64) -> Vec<&FailureStep> {
         self.inject_at
             .iter()
@@ -276,26 +331,40 @@ impl DeterministicFaultInjector {
     }
 }
 
+/// One recorded event in a deterministic trace.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TraceEvent {
+    /// Monotonic event index within the trace.
     pub step: u64,
+    /// Role that executed the action.
     pub role: ProcessRole,
+    /// Action that was attempted or completed.
     pub action: SchedulerAction,
+    /// Result status recorded for the action.
     pub status: TraceStatus,
+    /// Retry attempt index associated with the event.
     pub attempt: u32,
+    /// Resource name or synthetic identifier attached to the event.
     pub resource: String,
+    /// Free-form metadata emitted by the harness.
     pub metadata: BTreeMap<String, String>,
 }
 
+/// Serializable trace artifact captured from a DST run.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TraceArtifact {
+    /// Stable run identifier selected by the caller.
     pub run_id: String,
+    /// Profile identifier used to generate the run.
     pub profile_id: String,
+    /// Seed associated with the run.
     pub seed: u64,
+    /// Ordered events recorded for the run.
     pub events: Vec<TraceEvent>,
 }
 
 impl TraceArtifact {
+    /// Create an empty trace artifact for a new run.
     pub fn new(run_id: impl Into<String>, profile_id: impl Into<String>, seed: u64) -> Self {
         Self {
             run_id: run_id.into(),
@@ -305,6 +374,7 @@ impl TraceArtifact {
         }
     }
 
+    /// Append a new trace event with the next step index.
     pub fn push(
         &mut self,
         role: ProcessRole,
@@ -324,41 +394,57 @@ impl TraceArtifact {
         });
     }
 
+    /// Attach metadata to the most recently recorded event.
     pub fn set_metadata(&mut self, key: impl Into<String>, value: impl Into<String>) {
         if let Some(last) = self.events.last_mut() {
             last.metadata.insert(key.into(), value.into());
         }
     }
 
+    /// Serialize the trace artifact to pretty-printed JSON.
     pub fn to_json(&self) -> Result<String, serde_json::Error> {
         serde_json::to_string_pretty(self)
     }
 
+    /// Parse a trace artifact from JSON.
     pub fn from_json(raw: &str) -> Result<Self, serde_json::Error> {
         serde_json::from_str(raw)
     }
 }
 
+/// Structured reason why two traces failed replay validation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReplayMismatch {
+    /// The compared traces do not refer to the same run identity.
     RunIdentity {
+        /// Expected run identifier and seed pair.
         left: (String, u64),
+        /// Actual run identifier and seed pair.
         right: (String, u64),
     },
+    /// The compared traces recorded different numbers of events.
     EventCount {
+        /// Expected event count.
         expected: usize,
+        /// Actual event count.
         actual: usize,
     },
+    /// A specific event differed between the traces.
     EventContent {
+        /// Step index of the first mismatching event.
         step: u64,
+        /// Expected event payload.
         expected: Box<TraceEvent>,
+        /// Actual event payload.
         actual: Box<TraceEvent>,
     },
 }
 
+/// Exact replay validator for two trace artifacts.
 pub struct ReplayValidator;
 
 impl ReplayValidator {
+    /// Validate that `actual` exactly matches `expected`.
     pub fn validate(
         expected: &TraceArtifact,
         actual: &TraceArtifact,
@@ -414,6 +500,7 @@ pub enum FailureClass {
 }
 
 impl FailureClass {
+    /// Return all currently supported failure classes.
     pub fn all() -> &'static [FailureClass] {
         use FailureClass::*;
         &[
@@ -427,6 +514,7 @@ impl FailureClass {
         ]
     }
 
+    /// Returns the conditions the harness must establish before injecting this class.
     pub fn preconditions(self) -> &'static [&'static str] {
         match self {
             Self::ProducerBeforeConsumers => &[
@@ -460,6 +548,7 @@ impl FailureClass {
         }
     }
 
+    /// Returns the observable guarantees expected after running this class.
     pub fn postconditions(self) -> &'static [&'static str] {
         match self {
             Self::ProducerBeforeConsumers => &[
@@ -494,13 +583,17 @@ impl FailureClass {
     }
 }
 
+/// Named lifecycle invariant that DST runs are expected to preserve.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LifecycleAssertion {
+    /// Stable assertion identifier used in reports and docs.
     pub name: &'static str,
+    /// Human-readable description of the lifecycle invariant.
     pub description: &'static str,
 }
 
 impl LifecycleAssertion {
+    /// Return the canonical lifecycle assertions checked by the DST harness.
     pub fn all() -> &'static [LifecycleAssertion] {
         &[
             LifecycleAssertion {

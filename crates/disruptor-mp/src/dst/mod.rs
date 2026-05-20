@@ -38,8 +38,6 @@
 //! sites can write `crate::dst::buggify(...)` /
 //! `crate::dst::assert_sometimes(...)`.
 
-#![allow(missing_docs)]
-
 pub mod assertions;
 pub mod buggify;
 pub mod contract;

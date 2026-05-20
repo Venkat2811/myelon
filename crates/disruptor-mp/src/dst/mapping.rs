@@ -10,13 +10,18 @@ use super::contract::FailureClass;
 /// Coverage metadata for a failure class in the existing `tests/*` suite.
 #[derive(Debug, Clone, Copy)]
 pub struct FailureClassCoverage {
+    /// Failure class described by this entry.
     pub failure_class: FailureClass,
+    /// Existing test cases that exercise the class today.
     pub test_names: &'static [&'static str],
+    /// Assertions the mapped tests are expected to demonstrate.
     pub assertions: &'static [&'static str],
+    /// Short human-readable explanation of the class.
     pub class_description: &'static str,
 }
 
 impl FailureClassCoverage {
+    /// Build a static coverage entry for one failure class.
     pub const fn new(
         failure_class: FailureClass,
         test_names: &'static [&'static str],
