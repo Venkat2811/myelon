@@ -2,33 +2,28 @@
 //!
 //! Replaces 12 identical copies of `read_env_usize`/`read_env_u64` across bench files.
 
+use myelon_env::{bench as bench_env, read};
+
 /// Read a usize from an environment variable, returning default if not set or invalid.
 pub fn read_env_usize(key: &str, default: usize) -> usize {
-    std::env::var(key)
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(default)
+    read::parse_or(key, default)
 }
 
 /// Read a u64 from an environment variable, returning default if not set or invalid.
 pub fn read_env_u64(key: &str, default: u64) -> u64 {
-    std::env::var(key)
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(default)
+    read::parse_or(key, default)
 }
 
 /// Read a bool from an environment variable (accepts "1", "true", "yes").
 pub fn read_env_bool(key: &str, default: bool) -> bool {
-    std::env::var(key)
-        .ok()
-        .map(|v| matches!(v.as_str(), "1" | "true" | "yes"))
+    read::parse(key)
+        .or_else(|| if read::flag(key) { Some(true) } else { None })
         .unwrap_or(default)
 }
 
 /// Read a string from an environment variable, returning default if not set.
 pub fn read_env_string(key: &str, default: &str) -> String {
-    std::env::var(key).unwrap_or_else(|_| default.to_string())
+    read::string_or(key, default)
 }
 
 /// Convert a target rate in ops/s to an inter-message interval in nanoseconds.
@@ -42,20 +37,17 @@ pub fn co_interval_ns(target_rate: u64) -> Option<u64> {
 
 /// Default benchmark timeout in seconds. Override with `MYELON_BENCH_TIMEOUT` env var.
 pub fn bench_timeout_secs() -> u64 {
-    read_env_u64("MYELON_BENCH_TIMEOUT", 300) // 5 minutes default
+    read_env_u64(bench_env::TIMEOUT, 300) // 5 minutes default
 }
 
 /// Read `MYELON_BENCH_TIMEOUT` with a bench-specific default.
 pub fn bench_timeout_secs_or(default_secs: u64) -> u64 {
-    read_env_u64("MYELON_BENCH_TIMEOUT", default_secs)
+    read_env_u64(bench_env::TIMEOUT, default_secs)
 }
 
 /// Read an explicit timeout override parsed from CLI flags.
 pub fn bench_timeout_override_secs() -> Option<u64> {
-    std::env::var("MYELON_BENCH_TIMEOUT_OVERRIDE")
-        .ok()
-        .and_then(|value| value.parse::<u64>().ok())
-        .filter(|value| *value > 0)
+    read::parse(bench_env::TIMEOUT_OVERRIDE).filter(|value| *value > 0)
 }
 
 /// Construct a duration from `MYELON_BENCH_TIMEOUT` with a bench-specific default.
@@ -103,8 +95,8 @@ pub fn apply_timeout_arg(args: &[String]) -> Result<Vec<String>, String> {
             if seconds == 0 {
                 return Err("--timeout must be greater than zero".to_string());
             }
-            std::env::set_var("MYELON_BENCH_TIMEOUT", seconds.to_string());
-            std::env::set_var("MYELON_BENCH_TIMEOUT_OVERRIDE", seconds.to_string());
+            std::env::set_var(bench_env::TIMEOUT, seconds.to_string());
+            std::env::set_var(bench_env::TIMEOUT_OVERRIDE, seconds.to_string());
             index += 2;
             continue;
         }
@@ -122,8 +114,8 @@ mod tests {
 
     #[test]
     fn test_apply_timeout_arg_sets_explicit_override() {
-        std::env::remove_var("MYELON_BENCH_TIMEOUT");
-        std::env::remove_var("MYELON_BENCH_TIMEOUT_OVERRIDE");
+        std::env::remove_var(bench_env::TIMEOUT);
+        std::env::remove_var(bench_env::TIMEOUT_OVERRIDE);
 
         let args = vec![
             "bench".to_string(),
@@ -135,18 +127,16 @@ mod tests {
 
         assert_eq!(filtered, vec!["bench".to_string(), "--quick".to_string()]);
         assert_eq!(
-            std::env::var("MYELON_BENCH_TIMEOUT").ok().as_deref(),
+            std::env::var(bench_env::TIMEOUT).ok().as_deref(),
             Some("45")
         );
         assert_eq!(
-            std::env::var("MYELON_BENCH_TIMEOUT_OVERRIDE")
-                .ok()
-                .as_deref(),
+            std::env::var(bench_env::TIMEOUT_OVERRIDE).ok().as_deref(),
             Some("45")
         );
 
-        std::env::remove_var("MYELON_BENCH_TIMEOUT");
-        std::env::remove_var("MYELON_BENCH_TIMEOUT_OVERRIDE");
+        std::env::remove_var(bench_env::TIMEOUT);
+        std::env::remove_var(bench_env::TIMEOUT_OVERRIDE);
     }
 
     #[test]

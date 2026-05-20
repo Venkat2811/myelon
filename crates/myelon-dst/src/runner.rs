@@ -7,6 +7,7 @@ use disruptor_mp::dst::assertions::AssertionLog;
 use disruptor_mp::dst::contract::{
     FailureClass, ProcessRole, SchedulerAction, TraceArtifact, TraceStatus,
 };
+use myelon_env::dst::runner as dst_env;
 use serde::de::DeserializeOwned;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -1028,24 +1029,30 @@ impl DstRunner {
             segment
         ));
         let mut cmd = Command::new(&harness.executable);
-        cmd.env("DST_CHILD_TRANSPORT", "raw_ring")
+        cmd.env(dst_env::CHILD_TRANSPORT, "raw_ring")
             .env(
-                "DST_CHILD_BACKEND",
+                dst_env::CHILD_BACKEND,
                 match self.config.backend {
                     BackendKind::Shm => "shm",
                     BackendKind::Mmap => "mmap",
                 },
             )
-            .env("DST_CHILD_MODE", mode)
-            .env("DST_RUN_ROOT", run_root.display().to_string())
-            .env("DST_SEGMENT", segment)
-            .env("DST_SEED", self.seed.to_string())
-            .env("DST_RING_DEPTH", ring_depth.to_string())
-            .env("DST_MESSAGE_COUNT", self.config.message_count.to_string())
-            .env("DST_PAYLOAD_SIZE", self.config.payload_size.to_string())
-            .env("DST_CONSUMER_COUNT", self.config.consumer_count.to_string())
+            .env(dst_env::CHILD_MODE, mode)
+            .env(dst_env::RUN_ROOT, run_root.display().to_string())
+            .env(dst_env::SEGMENT, segment)
+            .env(dst_env::SEED, self.seed.to_string())
+            .env(dst_env::RING_DEPTH, ring_depth.to_string())
             .env(
-                "DST_WAIT_STRATEGY",
+                dst_env::MESSAGE_COUNT,
+                self.config.message_count.to_string(),
+            )
+            .env(dst_env::PAYLOAD_SIZE, self.config.payload_size.to_string())
+            .env(
+                dst_env::CONSUMER_COUNT,
+                self.config.consumer_count.to_string(),
+            )
+            .env(
+                dst_env::WAIT_STRATEGY,
                 match self.config.wait_strategy {
                     WaitStrategyKind::BusySpin => "busyspin",
                     WaitStrategyKind::Sleep => "sleep",
@@ -1054,32 +1061,32 @@ impl DstRunner {
                 },
             )
             .env(
-                "DST_POST_PUBLISH_HOLD_MS",
+                dst_env::POST_PUBLISH_HOLD_MS,
                 policy.producer_hold_ms.to_string(),
             )
             .env(
-                "DST_PUBLISH_PAUSE_EVERY",
+                dst_env::PUBLISH_PAUSE_EVERY,
                 policy.publish_pause_every.to_string(),
             )
             .env(
-                "DST_PUBLISH_PAUSE_MICROS",
+                dst_env::PUBLISH_PAUSE_MICROS,
                 policy.publish_pause_micros.to_string(),
             )
             .env(
-                "DST_WAIT_FOR_CONSUMERS_READY",
+                dst_env::WAIT_FOR_CONSUMERS_READY,
                 if policy.wait_for_consumers_ready {
                     "1"
                 } else {
                     "0"
                 },
             )
-            .env("DST_CONSUMER_PREFIX", consumer_prefix)
+            .env(dst_env::CONSUMER_PREFIX, consumer_prefix)
             .env(
-                "DST_PRODUCER_REPORT_PATH",
+                dst_env::PRODUCER_REPORT_PATH,
                 producer_report_path.display().to_string(),
             )
-            .env("DST_CHECKPOINT_PATH", &checkpoint_path)
-            .env("DST_REPORT_PATH", &report_path)
+            .env(dst_env::CHECKPOINT_PATH, &checkpoint_path)
+            .env(dst_env::REPORT_PATH, &report_path)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
@@ -1090,47 +1097,53 @@ impl DstRunner {
             for index in 0..required.required_consumer_missing_slots {
                 required_consumer_ids.push(format!("{consumer_prefix}_missing_{index}"));
             }
-            cmd.env("DST_REQUIRED_CONSUMER_IDS", required_consumer_ids.join(","))
-                .env(
-                    "DST_REQUIRED_STARTUP_WAIT_MS",
-                    required.startup_wait_ms.to_string(),
-                )
-                .env(
-                    "DST_REQUIRED_PROGRESS_TIMEOUT_MS",
-                    required.progress_timeout_ms.to_string(),
-                )
-                .env(
-                    "DST_REQUIRED_PROGRESS_CHECK_INTERVAL_MS",
-                    required.progress_check_interval_ms.to_string(),
-                )
-                .env(
-                    "DST_REQUIRED_SHUTDOWN_GRACE_MS",
-                    required.shutdown_grace_ms.to_string(),
-                );
+            cmd.env(
+                dst_env::REQUIRED_CONSUMER_IDS,
+                required_consumer_ids.join(","),
+            )
+            .env(
+                dst_env::REQUIRED_STARTUP_WAIT_MS,
+                required.startup_wait_ms.to_string(),
+            )
+            .env(
+                dst_env::REQUIRED_PROGRESS_TIMEOUT_MS,
+                required.progress_timeout_ms.to_string(),
+            )
+            .env(
+                dst_env::REQUIRED_PROGRESS_CHECK_INTERVAL_MS,
+                required.progress_check_interval_ms.to_string(),
+            )
+            .env(
+                dst_env::REQUIRED_SHUTDOWN_GRACE_MS,
+                required.shutdown_grace_ms.to_string(),
+            );
         }
 
         if let Some(message_count) = overrides.producer_message_count {
-            cmd.env("DST_PRODUCER_MESSAGE_COUNT", message_count.to_string());
+            cmd.env(dst_env::PRODUCER_MESSAGE_COUNT, message_count.to_string());
         }
         if let Some(message_count) = overrides.consumer_message_count {
-            cmd.env("DST_CONSUMER_MESSAGE_COUNT", message_count.to_string());
+            cmd.env(dst_env::CONSUMER_MESSAGE_COUNT, message_count.to_string());
         }
         if let Some(sequence_start) = overrides.sequence_start {
-            cmd.env("DST_SEQUENCE_START", sequence_start.to_string());
+            cmd.env(dst_env::SEQUENCE_START, sequence_start.to_string());
         }
         if let Some(checkpoint_every) = overrides.checkpoint_every {
-            cmd.env("DST_CHECKPOINT_EVERY", checkpoint_every.to_string());
+            cmd.env(dst_env::CHECKPOINT_EVERY, checkpoint_every.to_string());
         }
         if let Some(corrupt_at_sequence) = overrides.corrupt_at_sequence {
-            cmd.env("DST_CORRUPT_AT_SEQUENCE", corrupt_at_sequence.to_string());
+            cmd.env(
+                dst_env::CORRUPT_AT_SEQUENCE,
+                corrupt_at_sequence.to_string(),
+            );
         }
         if overrides.allow_corruption_validation {
-            cmd.env("DST_ALLOW_CORRUPTION_VALIDATION", "1");
+            cmd.env(dst_env::ALLOW_CORRUPTION_VALIDATION, "1");
         }
 
         if let Some(index) = consumer_index {
-            cmd.env("DST_CONSUMER_INDEX", index.to_string())
-                .env("DST_CONSUMER_ID", format!("{consumer_prefix}_{index}"));
+            cmd.env(dst_env::CONSUMER_INDEX, index.to_string())
+                .env(dst_env::CONSUMER_ID, format!("{consumer_prefix}_{index}"));
         }
 
         let child = cmd.spawn().map_err(|source| DstRunnerError::Spawn {

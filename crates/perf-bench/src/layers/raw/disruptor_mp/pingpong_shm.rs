@@ -56,7 +56,7 @@ const MAIN_CONSUMER_ID: &str = "cp_0";
 /// `--enable-counters` was passed, so the child enables the same
 /// counters wiring. Read by `run_process_two`. Opt-in only — absent
 /// or any value other than "1" leaves the hot path counter-free.
-const COUNTERS_ENV_VAR: &str = "MYELON_BENCH_PINGPONG_COUNTERS";
+const COUNTERS_ENV_VAR: &str = crate::infra::env::PINGPONG_COUNTERS;
 
 /// Attach an RFC-0040 counters file to a `SharedProducer` when
 /// `enabled` is true. Allocates a private, leaked, cache-line-aligned
@@ -250,17 +250,17 @@ fn spawn_echo_process(
     let mut child_cmd = Command::new(exe);
     child_cmd
         .arg("--process-two")
-        .env("MYELON_BENCH_PING_SEGMENT", ping_segment)
-        .env("MYELON_BENCH_PONG_SEGMENT", pong_segment)
-        .env("MYELON_BENCH_COORDINATION_SEGMENT", coordination_name)
-        .env("MYELON_BENCH_MESSAGE_SIZE", message_size.to_string())
-        .env("MYELON_BENCH_BUFFER_SIZE", buffer_size.to_string())
-        .env("MYELON_BENCH_WAIT_STRATEGY", &args.wait_strategy)
+        .env(crate::infra::env::PING_SEGMENT, ping_segment)
+        .env(crate::infra::env::PONG_SEGMENT, pong_segment)
+        .env(crate::infra::env::COORDINATION_SEGMENT, coordination_name)
+        .env(crate::infra::env::MESSAGE_SIZE, message_size.to_string())
+        .env(crate::infra::env::BUFFER_SIZE, buffer_size.to_string())
+        .env(crate::infra::env::WAIT_STRATEGY, &args.wait_strategy)
         .stdout(Stdio::null())
         .stderr(Stdio::inherit());
 
     if pingpong::json_mode(args) {
-        child_cmd.env("MYELON_BENCH_JSON_MODE", "1");
+        child_cmd.env(crate::infra::env::JSON_MODE, "1");
     }
 
     if args.enable_counters {
@@ -797,13 +797,13 @@ fn run_process_one(args: Args) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn run_process_two() -> Result<(), Box<dyn std::error::Error>> {
-    let ping_segment = env::var("MYELON_BENCH_PING_SEGMENT")?;
-    let pong_segment = env::var("MYELON_BENCH_PONG_SEGMENT")?;
-    let coordination_name = env::var("MYELON_BENCH_COORDINATION_SEGMENT")?;
-    let message_size: usize = env::var("MYELON_BENCH_MESSAGE_SIZE")?.parse()?;
-    let buffer_size: usize = env::var("MYELON_BENCH_BUFFER_SIZE")?.parse()?;
+    let ping_segment = env::var(crate::infra::env::PING_SEGMENT)?;
+    let pong_segment = env::var(crate::infra::env::PONG_SEGMENT)?;
+    let coordination_name = env::var(crate::infra::env::COORDINATION_SEGMENT)?;
+    let message_size: usize = env::var(crate::infra::env::MESSAGE_SIZE)?.parse()?;
+    let buffer_size: usize = env::var(crate::infra::env::BUFFER_SIZE)?.parse()?;
     let wait_strategy =
-        env::var("MYELON_BENCH_WAIT_STRATEGY").unwrap_or_else(|_| "busyspin".to_string());
+        env::var(crate::infra::env::WAIT_STRATEGY).unwrap_or_else(|_| "busyspin".to_string());
 
     let coordination =
         UnifiedCoordination::attach_with_timeout(&coordination_name, Duration::from_secs(30))?;

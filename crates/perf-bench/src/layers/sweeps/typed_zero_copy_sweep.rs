@@ -42,13 +42,13 @@ fn find_flag_value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
 }
 
 fn typed_zc_shm_prod() -> Result<(), Box<dyn std::error::Error>> {
-    let segment = segment_from_env("MYELON_BENCH_SEGMENT_NAME");
-    let buffer_depth = read_env_usize("MYELON_BENCH_BUFFER_DEPTH", 1024);
-    let num_messages = read_env_u64("MYELON_BENCH_NUM_MESSAGES", 50_000);
-    let payload_bytes = read_env_usize("MYELON_BENCH_PAYLOAD_BYTES", 1024);
-    let batch_size = read_env_usize("MYELON_BENCH_BATCH_SIZE", 8);
-    let codec = read_env_string("MYELON_BENCH_CODEC", "rkyv");
-    let num_consumers = read_env_usize("MYELON_BENCH_NUM_CONSUMERS", 1);
+    let segment = segment_from_env(crate::infra::env::SEGMENT_NAME);
+    let buffer_depth = read_env_usize(crate::infra::env::BUFFER_DEPTH, 1024);
+    let num_messages = read_env_u64(crate::infra::env::NUM_MESSAGES, 50_000);
+    let payload_bytes = read_env_usize(crate::infra::env::PAYLOAD_BYTES, 1024);
+    let batch_size = read_env_usize(crate::infra::env::BATCH_SIZE, 8);
+    let codec = read_env_string(crate::infra::env::CODEC, "rkyv");
+    let num_consumers = read_env_usize(crate::infra::env::NUM_CONSUMERS, 1);
     let payloads = make_payloads(batch_size);
 
     let mut producer =
@@ -73,7 +73,7 @@ fn typed_zc_shm_prod() -> Result<(), Box<dyn std::error::Error>> {
                 producer.publish(&payload, (i % 256) as u8)?;
             }
         }
-        other => return Err(format!("unsupported MYELON_BENCH_CODEC '{other}'").into()),
+        other => return Err(format!("unsupported {} '{other}'", crate::infra::env::CODEC).into()),
     }
     let elapsed = start.elapsed();
 
@@ -86,12 +86,12 @@ fn typed_zc_shm_prod() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn typed_zc_shm_cons() -> Result<(), Box<dyn std::error::Error>> {
-    let segment = segment_from_env("MYELON_BENCH_SEGMENT_NAME");
-    let consumer_id = read_env_usize("MYELON_BENCH_CONSUMER_ID", 0);
-    let buffer_depth = read_env_usize("MYELON_BENCH_BUFFER_DEPTH", 1024);
-    let num_messages = read_env_u64("MYELON_BENCH_NUM_MESSAGES", 50_000);
-    let payload_bytes = read_env_usize("MYELON_BENCH_PAYLOAD_BYTES", 1024);
-    let codec = read_env_string("MYELON_BENCH_CODEC", "rkyv");
+    let segment = segment_from_env(crate::infra::env::SEGMENT_NAME);
+    let consumer_id = read_env_usize(crate::infra::env::CONSUMER_ID, 0);
+    let buffer_depth = read_env_usize(crate::infra::env::BUFFER_DEPTH, 1024);
+    let num_messages = read_env_u64(crate::infra::env::NUM_MESSAGES, 50_000);
+    let payload_bytes = read_env_usize(crate::infra::env::PAYLOAD_BYTES, 1024);
+    let codec = read_env_string(crate::infra::env::CODEC, "rkyv");
 
     let coord = BenchmarkCoordination::attach_with_timeout(&segment, Duration::from_secs(30))?;
     let mut consumer =
@@ -130,7 +130,9 @@ fn typed_zc_shm_cons() -> Result<(), Box<dyn std::error::Error>> {
                     consumed += 1;
                 },
             ),
-            other => return Err(format!("unsupported MYELON_BENCH_CODEC '{other}'").into()),
+            other => {
+                return Err(format!("unsupported {} '{other}'", crate::infra::env::CODEC).into())
+            }
         };
         if consumed < num_messages {
             infra::check_deadline(deadline, "typed_zc_shm_cons measured");
@@ -180,13 +182,16 @@ fn throttle_mmap_backlog(
 }
 
 fn typed_zc_mmap_prod() -> Result<(), Box<dyn std::error::Error>> {
-    let layout = mmap_layout_from_env("MYELON_BENCH_MMAP_ROOT", "MYELON_BENCH_MMAP_SEGMENT");
-    let buffer_depth = read_env_usize("MYELON_BENCH_BUFFER_DEPTH", 1024);
-    let num_messages = read_env_u64("MYELON_BENCH_NUM_MESSAGES", 50_000);
-    let payload_bytes = read_env_usize("MYELON_BENCH_PAYLOAD_BYTES", 1024);
-    let batch_size = read_env_usize("MYELON_BENCH_BATCH_SIZE", 8);
-    let codec = read_env_string("MYELON_BENCH_CODEC", "rkyv");
-    let num_consumers = read_env_usize("MYELON_BENCH_NUM_CONSUMERS", 1);
+    let layout = mmap_layout_from_env(
+        crate::infra::env::MMAP_ROOT,
+        crate::infra::env::MMAP_SEGMENT,
+    );
+    let buffer_depth = read_env_usize(crate::infra::env::BUFFER_DEPTH, 1024);
+    let num_messages = read_env_u64(crate::infra::env::NUM_MESSAGES, 50_000);
+    let payload_bytes = read_env_usize(crate::infra::env::PAYLOAD_BYTES, 1024);
+    let batch_size = read_env_usize(crate::infra::env::BATCH_SIZE, 8);
+    let codec = read_env_string(crate::infra::env::CODEC, "rkyv");
+    let num_consumers = read_env_usize(crate::infra::env::NUM_CONSUMERS, 1);
     let payloads = make_payloads(batch_size);
 
     let mut producer = MmapTypedProducer::<ZcFrame>::create(layout, buffer_depth)?;
@@ -232,7 +237,7 @@ fn typed_zc_mmap_prod() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
-        other => return Err(format!("unsupported MYELON_BENCH_CODEC '{other}'").into()),
+        other => return Err(format!("unsupported {} '{other}'", crate::infra::env::CODEC).into()),
     }
     if let Some(error) = publish_error {
         return Err(error);
@@ -255,12 +260,15 @@ fn typed_zc_mmap_prod() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn typed_zc_mmap_cons() -> Result<(), Box<dyn std::error::Error>> {
-    let layout = mmap_layout_from_env("MYELON_BENCH_MMAP_ROOT", "MYELON_BENCH_MMAP_SEGMENT");
-    let consumer_id = read_env_usize("MYELON_BENCH_CONSUMER_ID", 0);
-    let buffer_depth = read_env_usize("MYELON_BENCH_BUFFER_DEPTH", 1024);
-    let num_messages = read_env_u64("MYELON_BENCH_NUM_MESSAGES", 50_000);
-    let payload_bytes = read_env_usize("MYELON_BENCH_PAYLOAD_BYTES", 1024);
-    let codec = read_env_string("MYELON_BENCH_CODEC", "rkyv");
+    let layout = mmap_layout_from_env(
+        crate::infra::env::MMAP_ROOT,
+        crate::infra::env::MMAP_SEGMENT,
+    );
+    let consumer_id = read_env_usize(crate::infra::env::CONSUMER_ID, 0);
+    let buffer_depth = read_env_usize(crate::infra::env::BUFFER_DEPTH, 1024);
+    let num_messages = read_env_u64(crate::infra::env::NUM_MESSAGES, 50_000);
+    let payload_bytes = read_env_usize(crate::infra::env::PAYLOAD_BYTES, 1024);
+    let codec = read_env_string(crate::infra::env::CODEC, "rkyv");
     let consumer_name = format!("tzc{consumer_id}_{}", std::process::id());
 
     let deadline = Instant::now() + Duration::from_secs(15);
@@ -309,7 +317,9 @@ fn typed_zc_mmap_cons() -> Result<(), Box<dyn std::error::Error>> {
                     consumed += 1;
                 },
             ),
-            other => return Err(format!("unsupported MYELON_BENCH_CODEC '{other}'").into()),
+            other => {
+                return Err(format!("unsupported {} '{other}'", crate::infra::env::CODEC).into())
+            }
         };
         if consumed < num_messages {
             infra::check_deadline(deadline, "typed_zc_mmap_cons measured");
@@ -427,23 +437,26 @@ impl IpcBenchmark for Scenario {
 
     fn launch(&self, exe: &std::path::Path) -> Result<ScenarioChildren, infra::BenchError> {
         let base_envs = vec![
-            ("MYELON_BENCH_PAYLOAD_BYTES", self.payload_size.to_string()),
-            ("MYELON_BENCH_NUM_MESSAGES", self.events.to_string()),
-            ("MYELON_BENCH_BUFFER_DEPTH", self.buffer.to_string()),
-            ("MYELON_BENCH_NUM_CONSUMERS", self.consumers.to_string()),
-            ("MYELON_BENCH_BATCH_SIZE", self.batch_size.to_string()),
-            ("MYELON_BENCH_CODEC", self.codec.slug().to_string()),
+            (
+                crate::infra::env::PAYLOAD_BYTES,
+                self.payload_size.to_string(),
+            ),
+            (crate::infra::env::NUM_MESSAGES, self.events.to_string()),
+            (crate::infra::env::BUFFER_DEPTH, self.buffer.to_string()),
+            (crate::infra::env::NUM_CONSUMERS, self.consumers.to_string()),
+            (crate::infra::env::BATCH_SIZE, self.batch_size.to_string()),
+            (crate::infra::env::CODEC, self.codec.slug().to_string()),
         ];
         if self.backend_kind == SweepBackend::Shm {
             launch_shm_group(
                 exe,
                 &format!("tzc_{}_{}", self.codec.slug(), self.size_tag),
-                "MYELON_BENCH_SEGMENT_NAME",
+                crate::infra::env::SEGMENT_NAME,
                 MultiConsumerSpawn {
                     producer_role: self.prod_role,
                     consumer_role: self.cons_role,
                     consumers: self.consumers,
-                    consumer_id_env: "MYELON_BENCH_CONSUMER_ID",
+                    consumer_id_env: crate::infra::env::CONSUMER_ID,
                     base_envs,
                 },
             )
@@ -452,13 +465,13 @@ impl IpcBenchmark for Scenario {
                 exe,
                 &format!("tzc_{}_{}", self.codec.slug(), self.size_tag),
                 "tzc",
-                "MYELON_BENCH_MMAP_ROOT",
-                "MYELON_BENCH_MMAP_SEGMENT",
+                crate::infra::env::MMAP_ROOT,
+                crate::infra::env::MMAP_SEGMENT,
                 MultiConsumerSpawn {
                     producer_role: self.prod_role,
                     consumer_role: self.cons_role,
                     consumers: self.consumers,
-                    consumer_id_env: "MYELON_BENCH_CONSUMER_ID",
+                    consumer_id_env: crate::infra::env::CONSUMER_ID,
                     base_envs,
                 },
             )

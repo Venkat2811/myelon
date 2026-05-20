@@ -29,22 +29,25 @@ struct Scenario {
 }
 
 fn read_env() -> (disruptor_mp::MmapTransportLayout, usize, u64, usize) {
-    let layout = mmap_layout_from_env("MYELON_BENCH_MMAP_ROOT", "MYELON_BENCH_MMAP_SEGMENT");
-    let payload_bytes: usize = env::var("MYELON_BENCH_PAYLOAD_BYTES")
-        .expect("MYELON_BENCH_PAYLOAD_BYTES")
+    let layout = mmap_layout_from_env(
+        crate::infra::env::MMAP_ROOT,
+        crate::infra::env::MMAP_SEGMENT,
+    );
+    let payload_bytes: usize = env::var(crate::infra::env::PAYLOAD_BYTES)
+        .expect(crate::infra::env::PAYLOAD_BYTES)
         .parse()
         .expect("payload bytes");
-    let messages: u64 = env::var("MYELON_BENCH_MESSAGES")
-        .expect("MYELON_BENCH_MESSAGES")
+    let messages: u64 = env::var(crate::infra::env::MESSAGES)
+        .expect(crate::infra::env::MESSAGES)
         .parse()
         .expect("message count");
-    let buffer_depth = read_env_usize("MYELON_BENCH_BUFFER_DEPTH", 1024);
+    let buffer_depth = read_env_usize(crate::infra::env::BUFFER_DEPTH, 1024);
     (layout, payload_bytes, messages, buffer_depth)
 }
 
 fn producer_process() -> Result<(), Box<dyn std::error::Error>> {
     let (layout, payload_bytes, messages, buffer_depth) = read_env();
-    let num_consumers = read_env_usize("MYELON_BENCH_NUM_CONSUMERS", 1);
+    let num_consumers = read_env_usize(crate::infra::env::NUM_CONSUMERS, 1);
     let payload = vec![42u8; payload_bytes];
     let mut producer = MmapFramedTransportProducer::<Frame>::create(layout, buffer_depth)?;
 
@@ -73,7 +76,7 @@ fn producer_process() -> Result<(), Box<dyn std::error::Error>> {
 
 fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
     let (layout, payload_bytes, messages, buffer_depth) = read_env();
-    let consumer_id = read_env_usize("MYELON_BENCH_CONSUMER_ID", 0);
+    let consumer_id = read_env_usize(crate::infra::env::CONSUMER_ID, 0);
     let consumer_name = format!("c{consumer_id}_{}", std::process::id());
 
     let deadline = Instant::now() + Duration::from_secs(15);
@@ -169,19 +172,22 @@ impl IpcBenchmark for Scenario {
         let segment = unique_mmap_segment("framed");
         let root_str = root.display().to_string();
         let env_common: Vec<(&str, String)> = vec![
-            ("MYELON_BENCH_MMAP_ROOT", root_str),
-            ("MYELON_BENCH_MMAP_SEGMENT", segment),
-            ("MYELON_BENCH_PAYLOAD_BYTES", self.payload_bytes.to_string()),
-            ("MYELON_BENCH_MESSAGES", self.messages.to_string()),
-            ("MYELON_BENCH_BUFFER_DEPTH", self.buffer.to_string()),
-            ("MYELON_BENCH_NUM_CONSUMERS", self.consumers.to_string()),
+            (crate::infra::env::MMAP_ROOT, root_str),
+            (crate::infra::env::MMAP_SEGMENT, segment),
+            (
+                crate::infra::env::PAYLOAD_BYTES,
+                self.payload_bytes.to_string(),
+            ),
+            (crate::infra::env::MESSAGES, self.messages.to_string()),
+            (crate::infra::env::BUFFER_DEPTH, self.buffer.to_string()),
+            (crate::infra::env::NUM_CONSUMERS, self.consumers.to_string()),
         ];
 
         let producer = spawn_child(exe, self.producer_role, &env_common);
         let consumers = (0..self.consumers)
             .map(|consumer_id| {
                 let mut consumer_envs = env_common.clone();
-                consumer_envs.push(("MYELON_BENCH_CONSUMER_ID", consumer_id.to_string()));
+                consumer_envs.push((crate::infra::env::CONSUMER_ID, consumer_id.to_string()));
                 spawn_child(exe, self.consumer_role, &consumer_envs)
             })
             .collect();

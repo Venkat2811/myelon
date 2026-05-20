@@ -161,11 +161,11 @@ impl Default for RkyvSlot128K {
 macro_rules! rkyv_nofrag_impl {
     ($slot:ty, $data_len:expr, $prod_fn:ident, $cons_fn:ident) => {
         fn $prod_fn() -> Result<(), Box<dyn std::error::Error>> {
-            let segment = segment_from_env("MYELON_BENCH_SEGMENT_NAME");
-            let buffer = read_env_usize("MYELON_BENCH_BUFFER", 16384);
-            let events = read_env_u64("MYELON_BENCH_EVENTS", 100_000);
-            let batch_size = read_env_usize("MYELON_BENCH_BATCH_SIZE", 8);
-            let num_consumers = read_env_usize("MYELON_BENCH_CONSUMERS", 1);
+            let segment = segment_from_env(crate::infra::env::SEGMENT_NAME);
+            let buffer = read_env_usize(crate::infra::env::BUFFER, 16384);
+            let events = read_env_u64(crate::infra::env::EVENTS, 100_000);
+            let batch_size = read_env_usize(crate::infra::env::BATCH_SIZE, 8);
+            let num_consumers = read_env_usize(crate::infra::env::CONSUMERS, 1);
             let payloads = make_payloads(batch_size);
 
             let mut producer = build_shared_single_producer::<$slot>(&segment, buffer)
@@ -200,10 +200,10 @@ macro_rules! rkyv_nofrag_impl {
         }
 
         fn $cons_fn() -> Result<(), Box<dyn std::error::Error>> {
-            let segment = segment_from_env("MYELON_BENCH_SEGMENT_NAME");
-            let consumer_id = read_env_usize("MYELON_BENCH_CONSUMER_ID", 0);
-            let buffer = read_env_usize("MYELON_BENCH_BUFFER", 16384);
-            let events = read_env_u64("MYELON_BENCH_EVENTS", 100_000);
+            let segment = segment_from_env(crate::infra::env::SEGMENT_NAME);
+            let consumer_id = read_env_usize(crate::infra::env::CONSUMER_ID, 0);
+            let buffer = read_env_usize(crate::infra::env::BUFFER, 16384);
+            let events = read_env_u64(crate::infra::env::EVENTS, 100_000);
             let coord =
                 BenchmarkCoordination::attach_with_timeout(&segment, Duration::from_secs(30))?;
             let config = SharedMemoryConfig {
@@ -262,10 +262,10 @@ rkyv_nofrag_impl!(RkyvSlot128K, 131064, rkyv_nf_prod_128k, rkyv_nf_cons_128k);
 macro_rules! raw_impl {
     ($ev:ty, $prod_fn:ident, $cons_fn:ident) => {
         fn $prod_fn() -> Result<(), Box<dyn std::error::Error>> {
-            let segment = segment_from_env("MYELON_BENCH_SEGMENT_NAME");
-            let buffer = read_env_usize("MYELON_BENCH_BUFFER", 4096);
-            let events = read_env_u64("MYELON_BENCH_EVENTS", 100_000);
-            let num_consumers = read_env_usize("MYELON_BENCH_CONSUMERS", 1);
+            let segment = segment_from_env(crate::infra::env::SEGMENT_NAME);
+            let buffer = read_env_usize(crate::infra::env::BUFFER, 4096);
+            let events = read_env_u64(crate::infra::env::EVENTS, 100_000);
+            let num_consumers = read_env_usize(crate::infra::env::CONSUMERS, 1);
             let mut producer = build_shared_single_producer::<$ev>(&segment, buffer)
                 .enable_discovery(num_consumers)
                 .with_coordination(CoordinationMode::Immediate)
@@ -294,10 +294,10 @@ macro_rules! raw_impl {
             Ok(())
         }
         fn $cons_fn() -> Result<(), Box<dyn std::error::Error>> {
-            let segment = segment_from_env("MYELON_BENCH_SEGMENT_NAME");
-            let consumer_id = read_env_usize("MYELON_BENCH_CONSUMER_ID", 0);
-            let buffer = read_env_usize("MYELON_BENCH_BUFFER", 4096);
-            let events = read_env_u64("MYELON_BENCH_EVENTS", 100_000);
+            let segment = segment_from_env(crate::infra::env::SEGMENT_NAME);
+            let consumer_id = read_env_usize(crate::infra::env::CONSUMER_ID, 0);
+            let buffer = read_env_usize(crate::infra::env::BUFFER, 4096);
+            let events = read_env_u64(crate::infra::env::EVENTS, 100_000);
             let coord =
                 BenchmarkCoordination::attach_with_timeout(&segment, Duration::from_secs(30))?;
             let config = SharedMemoryConfig {
@@ -348,10 +348,10 @@ raw_impl!(Ev64K, raw_prod_64k, raw_cons_64k);
 macro_rules! raw_myelon_impl {
     ($ev:ty, $prod_fn:ident, $cons_fn:ident) => {
         fn $prod_fn() -> Result<(), Box<dyn std::error::Error>> {
-            let segment = segment_from_env("MYELON_BENCH_SEGMENT_NAME");
-            let buffer = read_env_usize("MYELON_BENCH_BUFFER", 4096);
-            let events = read_env_u64("MYELON_BENCH_EVENTS", 100_000);
-            let num_consumers = read_env_usize("MYELON_BENCH_CONSUMERS", 1);
+            let segment = segment_from_env(crate::infra::env::SEGMENT_NAME);
+            let buffer = read_env_usize(crate::infra::env::BUFFER, 4096);
+            let events = read_env_u64(crate::infra::env::EVENTS, 100_000);
+            let num_consumers = read_env_usize(crate::infra::env::CONSUMERS, 1);
             let mut producer = my_build_shared_single_producer::<$ev>(&segment, buffer)
                 .enable_discovery(num_consumers)
                 .with_coordination(myelon::producer::CoordinationMode::Immediate)
@@ -381,10 +381,10 @@ macro_rules! raw_myelon_impl {
         }
 
         fn $cons_fn() -> Result<(), Box<dyn std::error::Error>> {
-            let segment = segment_from_env("MYELON_BENCH_SEGMENT_NAME");
-            let consumer_id = read_env_usize("MYELON_BENCH_CONSUMER_ID", 0);
-            let buffer = read_env_usize("MYELON_BENCH_BUFFER", 4096);
-            let events = read_env_u64("MYELON_BENCH_EVENTS", 100_000);
+            let segment = segment_from_env(crate::infra::env::SEGMENT_NAME);
+            let consumer_id = read_env_usize(crate::infra::env::CONSUMER_ID, 0);
+            let buffer = read_env_usize(crate::infra::env::BUFFER, 4096);
+            let events = read_env_u64(crate::infra::env::EVENTS, 100_000);
             let coord =
                 BenchmarkCoordination::attach_with_timeout(&segment, Duration::from_secs(30))?;
             let mut consumer =
@@ -432,11 +432,11 @@ raw_myelon_impl!(Ev64K, my_raw_prod_64k, my_raw_cons_64k);
 // ============================================================
 
 fn framed_producer() -> Result<(), Box<dyn std::error::Error>> {
-    let segment = segment_from_env("MYELON_BENCH_SEGMENT_NAME");
-    let buffer = read_env_usize("MYELON_BENCH_BUFFER", 1024);
-    let events = read_env_u64("MYELON_BENCH_EVENTS", 50_000);
-    let payload_size = read_env_usize("MYELON_BENCH_PAYLOAD_SIZE", 1024);
-    let num_consumers = read_env_usize("MYELON_BENCH_CONSUMERS", 1);
+    let segment = segment_from_env(crate::infra::env::SEGMENT_NAME);
+    let buffer = read_env_usize(crate::infra::env::BUFFER, 1024);
+    let events = read_env_u64(crate::infra::env::EVENTS, 50_000);
+    let payload_size = read_env_usize(crate::infra::env::PAYLOAD_SIZE, 1024);
+    let num_consumers = read_env_usize(crate::infra::env::CONSUMERS, 1);
     let mut producer =
         FramedTransportProducer::<Frame>::create_with_consumers(&segment, buffer, num_consumers)?;
     let coord = BenchmarkCoordination::create(&segment)?;
@@ -458,11 +458,11 @@ fn framed_producer() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn framed_consumer() -> Result<(), Box<dyn std::error::Error>> {
-    let segment = segment_from_env("MYELON_BENCH_SEGMENT_NAME");
-    let consumer_id = read_env_usize("MYELON_BENCH_CONSUMER_ID", 0);
-    let buffer = read_env_usize("MYELON_BENCH_BUFFER", 1024);
-    let events = read_env_u64("MYELON_BENCH_EVENTS", 50_000);
-    let payload_size = read_env_usize("MYELON_BENCH_PAYLOAD_SIZE", 1024);
+    let segment = segment_from_env(crate::infra::env::SEGMENT_NAME);
+    let consumer_id = read_env_usize(crate::infra::env::CONSUMER_ID, 0);
+    let buffer = read_env_usize(crate::infra::env::BUFFER, 1024);
+    let events = read_env_u64(crate::infra::env::EVENTS, 50_000);
+    let payload_size = read_env_usize(crate::infra::env::PAYLOAD_SIZE, 1024);
     let coord = BenchmarkCoordination::attach_with_timeout(&segment, Duration::from_secs(30))?;
     let mut consumer =
         FramedTransportConsumer::<Frame>::attach(&segment, buffer, MyelonWaitStrategy::BusySpin)?;
@@ -497,11 +497,11 @@ fn framed_consumer() -> Result<(), Box<dyn std::error::Error>> {
 macro_rules! rightsized_framed_impl {
     ($frame:ty, $prod_fn:ident, $cons_fn:ident) => {
         fn $prod_fn() -> Result<(), Box<dyn std::error::Error>> {
-            let segment = segment_from_env("MYELON_BENCH_SEGMENT_NAME");
-            let buffer = read_env_usize("MYELON_BENCH_BUFFER", 4096);
-            let events = read_env_u64("MYELON_BENCH_EVENTS", 100_000);
-            let payload_size = read_env_usize("MYELON_BENCH_PAYLOAD_SIZE", 1024);
-            let num_consumers = read_env_usize("MYELON_BENCH_CONSUMERS", 1);
+            let segment = segment_from_env(crate::infra::env::SEGMENT_NAME);
+            let buffer = read_env_usize(crate::infra::env::BUFFER, 4096);
+            let events = read_env_u64(crate::infra::env::EVENTS, 100_000);
+            let payload_size = read_env_usize(crate::infra::env::PAYLOAD_SIZE, 1024);
+            let num_consumers = read_env_usize(crate::infra::env::CONSUMERS, 1);
             let mut producer = FramedTransportProducer::<$frame>::create_with_consumers(
                 &segment,
                 buffer,
@@ -526,11 +526,11 @@ macro_rules! rightsized_framed_impl {
         }
         fn $cons_fn() -> Result<(), Box<dyn std::error::Error>> {
             use myelon::transport::ReassemblyBuffer;
-            let segment = segment_from_env("MYELON_BENCH_SEGMENT_NAME");
-            let consumer_id = read_env_usize("MYELON_BENCH_CONSUMER_ID", 0);
-            let buffer = read_env_usize("MYELON_BENCH_BUFFER", 4096);
-            let events = read_env_u64("MYELON_BENCH_EVENTS", 100_000);
-            let payload_size = read_env_usize("MYELON_BENCH_PAYLOAD_SIZE", 1024);
+            let segment = segment_from_env(crate::infra::env::SEGMENT_NAME);
+            let consumer_id = read_env_usize(crate::infra::env::CONSUMER_ID, 0);
+            let buffer = read_env_usize(crate::infra::env::BUFFER, 4096);
+            let events = read_env_u64(crate::infra::env::EVENTS, 100_000);
+            let payload_size = read_env_usize(crate::infra::env::PAYLOAD_SIZE, 1024);
             let coord =
                 BenchmarkCoordination::attach_with_timeout(&segment, Duration::from_secs(30))?;
             let mut consumer = FramedTransportConsumer::<$frame>::attach(
@@ -583,11 +583,11 @@ rightsized_framed_impl!(Frame32K, rs_framed_prod_32k, rs_framed_cons_32k);
 // ============================================================
 
 fn framed_batch_consumer() -> Result<(), Box<dyn std::error::Error>> {
-    let segment = segment_from_env("MYELON_BENCH_SEGMENT_NAME");
-    let consumer_id = read_env_usize("MYELON_BENCH_CONSUMER_ID", 0);
-    let buffer = read_env_usize("MYELON_BENCH_BUFFER", 1024);
-    let events = read_env_u64("MYELON_BENCH_EVENTS", 50_000);
-    let payload_size = read_env_usize("MYELON_BENCH_PAYLOAD_SIZE", 1024);
+    let segment = segment_from_env(crate::infra::env::SEGMENT_NAME);
+    let consumer_id = read_env_usize(crate::infra::env::CONSUMER_ID, 0);
+    let buffer = read_env_usize(crate::infra::env::BUFFER, 1024);
+    let events = read_env_u64(crate::infra::env::EVENTS, 50_000);
+    let payload_size = read_env_usize(crate::infra::env::PAYLOAD_SIZE, 1024);
     let coord = BenchmarkCoordination::attach_with_timeout(&segment, Duration::from_secs(30))?;
     let mut consumer =
         FramedTransportConsumer::<Frame>::attach(&segment, buffer, MyelonWaitStrategy::BusySpin)?;
@@ -625,13 +625,13 @@ fn framed_batch_consumer() -> Result<(), Box<dyn std::error::Error>> {
 // ============================================================
 
 fn typed_zc_producer() -> Result<(), Box<dyn std::error::Error>> {
-    let segment = segment_from_env("MYELON_BENCH_SEGMENT_NAME");
-    let buffer = read_env_usize("MYELON_BENCH_BUFFER", 1024);
-    let events = read_env_u64("MYELON_BENCH_EVENTS", 50_000);
-    let batch_size = read_env_usize("MYELON_BENCH_BATCH_SIZE", 8);
-    let payload_size = read_env_usize("MYELON_BENCH_PAYLOAD_SIZE", 1024);
-    let codec = std::env::var("MYELON_BENCH_CODEC").unwrap_or_else(|_| "rkyv".to_string());
-    let num_consumers = read_env_usize("MYELON_BENCH_CONSUMERS", 1);
+    let segment = segment_from_env(crate::infra::env::SEGMENT_NAME);
+    let buffer = read_env_usize(crate::infra::env::BUFFER, 1024);
+    let events = read_env_u64(crate::infra::env::EVENTS, 50_000);
+    let batch_size = read_env_usize(crate::infra::env::BATCH_SIZE, 8);
+    let payload_size = read_env_usize(crate::infra::env::PAYLOAD_SIZE, 1024);
+    let codec = std::env::var(crate::infra::env::CODEC).unwrap_or_else(|_| "rkyv".to_string());
+    let num_consumers = read_env_usize(crate::infra::env::CONSUMERS, 1);
     let payloads = make_payloads(batch_size);
 
     let mut producer =
@@ -656,7 +656,7 @@ fn typed_zc_producer() -> Result<(), Box<dyn std::error::Error>> {
                 producer.publish(&payload, (i % 256) as u8)?;
             }
         }
-        other => return Err(format!("unsupported MYELON_BENCH_CODEC '{other}'").into()),
+        other => return Err(format!("unsupported {} '{other}'", crate::infra::env::CODEC).into()),
     }
     let elapsed = start.elapsed();
     let output = ProducerOutput::from_elapsed(events, elapsed, payload_size);
@@ -667,12 +667,12 @@ fn typed_zc_producer() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn typed_zc_consumer() -> Result<(), Box<dyn std::error::Error>> {
-    let segment = segment_from_env("MYELON_BENCH_SEGMENT_NAME");
-    let consumer_id = read_env_usize("MYELON_BENCH_CONSUMER_ID", 0);
-    let buffer = read_env_usize("MYELON_BENCH_BUFFER", 1024);
-    let events = read_env_u64("MYELON_BENCH_EVENTS", 50_000);
-    let payload_size = read_env_usize("MYELON_BENCH_PAYLOAD_SIZE", 1024);
-    let codec = std::env::var("MYELON_BENCH_CODEC").unwrap_or_else(|_| "rkyv".to_string());
+    let segment = segment_from_env(crate::infra::env::SEGMENT_NAME);
+    let consumer_id = read_env_usize(crate::infra::env::CONSUMER_ID, 0);
+    let buffer = read_env_usize(crate::infra::env::BUFFER, 1024);
+    let events = read_env_u64(crate::infra::env::EVENTS, 50_000);
+    let payload_size = read_env_usize(crate::infra::env::PAYLOAD_SIZE, 1024);
+    let codec = std::env::var(crate::infra::env::CODEC).unwrap_or_else(|_| "rkyv".to_string());
     let coord = BenchmarkCoordination::attach_with_timeout(&segment, Duration::from_secs(30))?;
     let mut consumer =
         TypedConsumer::<ZcFrame>::attach(&segment, buffer, MyelonWaitStrategy::BusySpin)?;
@@ -709,7 +709,9 @@ fn typed_zc_consumer() -> Result<(), Box<dyn std::error::Error>> {
                     consumed += 1;
                 },
             ),
-            other => return Err(format!("unsupported MYELON_BENCH_CODEC '{other}'").into()),
+            other => {
+                return Err(format!("unsupported {} '{other}'", crate::infra::env::CODEC).into())
+            }
         };
         if consumed < events {
             infra::check_deadline(deadline, "typed_zc_consumer measured");
@@ -736,11 +738,11 @@ fn typed_zc_consumer() -> Result<(), Box<dyn std::error::Error>> {
 macro_rules! raw_mmap_impl {
     ($ev:ty, $prod_fn:ident, $cons_fn:ident) => {
         fn $prod_fn() -> Result<(), Box<dyn std::error::Error>> {
-            let root = std::env::var("MYELON_BENCH_ROOT").expect("MYELON_BENCH_ROOT");
-            let seg = std::env::var("MYELON_BENCH_SEGMENT").expect("MYELON_BENCH_SEGMENT");
-            let buffer = read_env_usize("MYELON_BENCH_BUFFER", 4096);
-            let events = read_env_u64("MYELON_BENCH_EVENTS", 100_000);
-            let num_consumers = read_env_usize("MYELON_BENCH_CONSUMERS", 1);
+            let root = std::env::var(crate::infra::env::ROOT).expect(crate::infra::env::ROOT);
+            let seg = std::env::var(crate::infra::env::SEGMENT).expect(crate::infra::env::SEGMENT);
+            let buffer = read_env_usize(crate::infra::env::BUFFER, 4096);
+            let events = read_env_u64(crate::infra::env::EVENTS, 100_000);
+            let num_consumers = read_env_usize(crate::infra::env::CONSUMERS, 1);
             let layout = MmapTransportLayout::new(PathBuf::from(&root), seg).expect("layout");
             layout.ensure_directories().expect("dirs");
             let mut producer = MmapProducer::<$ev>::create(layout, buffer, || <$ev>::default())?;
@@ -767,11 +769,11 @@ macro_rules! raw_mmap_impl {
             Ok(())
         }
         fn $cons_fn() -> Result<(), Box<dyn std::error::Error>> {
-            let root = std::env::var("MYELON_BENCH_ROOT").expect("MYELON_BENCH_ROOT");
-            let seg = std::env::var("MYELON_BENCH_SEGMENT").expect("MYELON_BENCH_SEGMENT");
-            let consumer_id = read_env_usize("MYELON_BENCH_CONSUMER_ID", 0);
-            let buffer = read_env_usize("MYELON_BENCH_BUFFER", 4096);
-            let events = read_env_u64("MYELON_BENCH_EVENTS", 100_000);
+            let root = std::env::var(crate::infra::env::ROOT).expect(crate::infra::env::ROOT);
+            let seg = std::env::var(crate::infra::env::SEGMENT).expect(crate::infra::env::SEGMENT);
+            let consumer_id = read_env_usize(crate::infra::env::CONSUMER_ID, 0);
+            let buffer = read_env_usize(crate::infra::env::BUFFER, 4096);
+            let events = read_env_u64(crate::infra::env::EVENTS, 100_000);
             let layout = MmapTransportLayout::new(PathBuf::from(&root), seg).expect("layout");
             let cid = format!("c{consumer_id}_{}", std::process::id());
             let deadline = Instant::now() + Duration::from_secs(15);
@@ -828,11 +830,11 @@ raw_mmap_impl!(Ev64K, ml_raw_mmap_prod_64k, ml_raw_mmap_cons_64k);
 macro_rules! raw_myelon_mmap_impl {
     ($ev:ty, $prod_fn:ident, $cons_fn:ident) => {
         fn $prod_fn() -> Result<(), Box<dyn std::error::Error>> {
-            let root = std::env::var("MYELON_BENCH_ROOT").expect("MYELON_BENCH_ROOT");
-            let seg = std::env::var("MYELON_BENCH_SEGMENT").expect("MYELON_BENCH_SEGMENT");
-            let buffer = read_env_usize("MYELON_BENCH_BUFFER", 4096);
-            let events = read_env_u64("MYELON_BENCH_EVENTS", 100_000);
-            let num_consumers = read_env_usize("MYELON_BENCH_CONSUMERS", 1);
+            let root = std::env::var(crate::infra::env::ROOT).expect(crate::infra::env::ROOT);
+            let seg = std::env::var(crate::infra::env::SEGMENT).expect(crate::infra::env::SEGMENT);
+            let buffer = read_env_usize(crate::infra::env::BUFFER, 4096);
+            let events = read_env_u64(crate::infra::env::EVENTS, 100_000);
+            let num_consumers = read_env_usize(crate::infra::env::CONSUMERS, 1);
             let layout = MmapTransportLayout::new(PathBuf::from(&root), seg).expect("layout");
             layout.ensure_directories().expect("dirs");
             let mut producer = MmapProducer::<$ev>::create(layout, buffer, || <$ev>::default())?;
@@ -859,11 +861,11 @@ macro_rules! raw_myelon_mmap_impl {
             Ok(())
         }
         fn $cons_fn() -> Result<(), Box<dyn std::error::Error>> {
-            let root = std::env::var("MYELON_BENCH_ROOT").expect("MYELON_BENCH_ROOT");
-            let seg = std::env::var("MYELON_BENCH_SEGMENT").expect("MYELON_BENCH_SEGMENT");
-            let consumer_id = read_env_usize("MYELON_BENCH_CONSUMER_ID", 0);
-            let buffer = read_env_usize("MYELON_BENCH_BUFFER", 4096);
-            let events = read_env_u64("MYELON_BENCH_EVENTS", 100_000);
+            let root = std::env::var(crate::infra::env::ROOT).expect(crate::infra::env::ROOT);
+            let seg = std::env::var(crate::infra::env::SEGMENT).expect(crate::infra::env::SEGMENT);
+            let consumer_id = read_env_usize(crate::infra::env::CONSUMER_ID, 0);
+            let buffer = read_env_usize(crate::infra::env::BUFFER, 4096);
+            let events = read_env_u64(crate::infra::env::EVENTS, 100_000);
             let layout = MmapTransportLayout::new(PathBuf::from(&root), seg).expect("layout");
             let cid = format!("c{consumer_id}_{}", std::process::id());
             let deadline = Instant::now() + Duration::from_secs(15);
@@ -918,12 +920,12 @@ raw_myelon_mmap_impl!(Ev64K, ml_my_raw_mmap_prod_64k, ml_my_raw_mmap_cons_64k);
 // ============================================================
 
 fn ml_framed_mmap_producer() -> Result<(), Box<dyn std::error::Error>> {
-    let root = std::env::var("MYELON_BENCH_ROOT").expect("MYELON_BENCH_ROOT");
-    let seg = std::env::var("MYELON_BENCH_SEGMENT").expect("MYELON_BENCH_SEGMENT");
-    let buffer = read_env_usize("MYELON_BENCH_BUFFER", 1024);
-    let events = read_env_u64("MYELON_BENCH_EVENTS", 50_000);
-    let payload_size = read_env_usize("MYELON_BENCH_PAYLOAD_SIZE", 1024);
-    let num_consumers = read_env_usize("MYELON_BENCH_CONSUMERS", 1);
+    let root = std::env::var(crate::infra::env::ROOT).expect(crate::infra::env::ROOT);
+    let seg = std::env::var(crate::infra::env::SEGMENT).expect(crate::infra::env::SEGMENT);
+    let buffer = read_env_usize(crate::infra::env::BUFFER, 1024);
+    let events = read_env_u64(crate::infra::env::EVENTS, 50_000);
+    let payload_size = read_env_usize(crate::infra::env::PAYLOAD_SIZE, 1024);
+    let num_consumers = read_env_usize(crate::infra::env::CONSUMERS, 1);
     let layout = MmapTransportLayout::new(PathBuf::from(&root), seg).expect("layout");
     let mut producer = MmapFramedTransportProducer::<Frame>::create(layout, buffer)?;
     if !producer.wait_for_consumers_ready(num_consumers as i64, Duration::from_secs(30)) {
@@ -947,12 +949,12 @@ fn ml_framed_mmap_producer() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn ml_framed_mmap_consumer() -> Result<(), Box<dyn std::error::Error>> {
-    let root = std::env::var("MYELON_BENCH_ROOT").expect("MYELON_BENCH_ROOT");
-    let seg = std::env::var("MYELON_BENCH_SEGMENT").expect("MYELON_BENCH_SEGMENT");
-    let consumer_id = read_env_usize("MYELON_BENCH_CONSUMER_ID", 0);
-    let buffer = read_env_usize("MYELON_BENCH_BUFFER", 1024);
-    let events = read_env_u64("MYELON_BENCH_EVENTS", 50_000);
-    let payload_size = read_env_usize("MYELON_BENCH_PAYLOAD_SIZE", 1024);
+    let root = std::env::var(crate::infra::env::ROOT).expect(crate::infra::env::ROOT);
+    let seg = std::env::var(crate::infra::env::SEGMENT).expect(crate::infra::env::SEGMENT);
+    let consumer_id = read_env_usize(crate::infra::env::CONSUMER_ID, 0);
+    let buffer = read_env_usize(crate::infra::env::BUFFER, 1024);
+    let events = read_env_u64(crate::infra::env::EVENTS, 50_000);
+    let payload_size = read_env_usize(crate::infra::env::PAYLOAD_SIZE, 1024);
     let layout = MmapTransportLayout::new(PathBuf::from(&root), seg).expect("layout");
     let cid = format!("c{consumer_id}_{}", std::process::id());
     let deadline_attach = Instant::now() + Duration::from_secs(15);
@@ -997,12 +999,12 @@ fn ml_framed_mmap_consumer() -> Result<(), Box<dyn std::error::Error>> {
 // ============================================================
 
 fn ml_framed_batch_mmap_consumer() -> Result<(), Box<dyn std::error::Error>> {
-    let root = std::env::var("MYELON_BENCH_ROOT").expect("MYELON_BENCH_ROOT");
-    let seg = std::env::var("MYELON_BENCH_SEGMENT").expect("MYELON_BENCH_SEGMENT");
-    let consumer_id = read_env_usize("MYELON_BENCH_CONSUMER_ID", 0);
-    let buffer = read_env_usize("MYELON_BENCH_BUFFER", 1024);
-    let events = read_env_u64("MYELON_BENCH_EVENTS", 50_000);
-    let payload_size = read_env_usize("MYELON_BENCH_PAYLOAD_SIZE", 1024);
+    let root = std::env::var(crate::infra::env::ROOT).expect(crate::infra::env::ROOT);
+    let seg = std::env::var(crate::infra::env::SEGMENT).expect(crate::infra::env::SEGMENT);
+    let consumer_id = read_env_usize(crate::infra::env::CONSUMER_ID, 0);
+    let buffer = read_env_usize(crate::infra::env::BUFFER, 1024);
+    let events = read_env_u64(crate::infra::env::EVENTS, 50_000);
+    let payload_size = read_env_usize(crate::infra::env::PAYLOAD_SIZE, 1024);
     let layout = MmapTransportLayout::new(PathBuf::from(&root), seg).expect("layout");
     let cid = format!("c{consumer_id}_{}", std::process::id());
     let deadline_attach = Instant::now() + Duration::from_secs(15);
@@ -1054,12 +1056,12 @@ fn ml_framed_batch_mmap_consumer() -> Result<(), Box<dyn std::error::Error>> {
 macro_rules! rightsized_framed_mmap_impl {
     ($frame:ty, $prod_fn:ident, $cons_fn:ident) => {
         fn $prod_fn() -> Result<(), Box<dyn std::error::Error>> {
-            let root = std::env::var("MYELON_BENCH_ROOT").expect("MYELON_BENCH_ROOT");
-            let seg = std::env::var("MYELON_BENCH_SEGMENT").expect("MYELON_BENCH_SEGMENT");
-            let buffer = read_env_usize("MYELON_BENCH_BUFFER", 4096);
-            let events = read_env_u64("MYELON_BENCH_EVENTS", 100_000);
-            let payload_size = read_env_usize("MYELON_BENCH_PAYLOAD_SIZE", 1024);
-            let num_consumers = read_env_usize("MYELON_BENCH_CONSUMERS", 1);
+            let root = std::env::var(crate::infra::env::ROOT).expect(crate::infra::env::ROOT);
+            let seg = std::env::var(crate::infra::env::SEGMENT).expect(crate::infra::env::SEGMENT);
+            let buffer = read_env_usize(crate::infra::env::BUFFER, 4096);
+            let events = read_env_u64(crate::infra::env::EVENTS, 100_000);
+            let payload_size = read_env_usize(crate::infra::env::PAYLOAD_SIZE, 1024);
+            let num_consumers = read_env_usize(crate::infra::env::CONSUMERS, 1);
             let layout = MmapTransportLayout::new(PathBuf::from(&root), seg).expect("layout");
             let mut producer = MmapFramedTransportProducer::<$frame>::create(layout, buffer)?;
             if !producer.wait_for_consumers_ready(num_consumers as i64, Duration::from_secs(30)) {
@@ -1082,12 +1084,12 @@ macro_rules! rightsized_framed_mmap_impl {
             Ok(())
         }
         fn $cons_fn() -> Result<(), Box<dyn std::error::Error>> {
-            let root = std::env::var("MYELON_BENCH_ROOT").expect("MYELON_BENCH_ROOT");
-            let seg = std::env::var("MYELON_BENCH_SEGMENT").expect("MYELON_BENCH_SEGMENT");
-            let consumer_id = read_env_usize("MYELON_BENCH_CONSUMER_ID", 0);
-            let buffer = read_env_usize("MYELON_BENCH_BUFFER", 4096);
-            let events = read_env_u64("MYELON_BENCH_EVENTS", 100_000);
-            let payload_size = read_env_usize("MYELON_BENCH_PAYLOAD_SIZE", 1024);
+            let root = std::env::var(crate::infra::env::ROOT).expect(crate::infra::env::ROOT);
+            let seg = std::env::var(crate::infra::env::SEGMENT).expect(crate::infra::env::SEGMENT);
+            let consumer_id = read_env_usize(crate::infra::env::CONSUMER_ID, 0);
+            let buffer = read_env_usize(crate::infra::env::BUFFER, 4096);
+            let events = read_env_u64(crate::infra::env::EVENTS, 100_000);
+            let payload_size = read_env_usize(crate::infra::env::PAYLOAD_SIZE, 1024);
             let layout = MmapTransportLayout::new(PathBuf::from(&root), seg).expect("layout");
             let cid = format!("c{consumer_id}_{}", std::process::id());
             let deadline_attach = Instant::now() + Duration::from_secs(15);
@@ -1160,14 +1162,14 @@ rightsized_framed_mmap_impl!(
 // ============================================================
 
 fn ml_typed_zc_mmap_producer() -> Result<(), Box<dyn std::error::Error>> {
-    let root = std::env::var("MYELON_BENCH_ROOT").expect("MYELON_BENCH_ROOT");
-    let seg = std::env::var("MYELON_BENCH_SEGMENT").expect("MYELON_BENCH_SEGMENT");
-    let buffer = read_env_usize("MYELON_BENCH_BUFFER", 1024);
-    let events = read_env_u64("MYELON_BENCH_EVENTS", 50_000);
-    let batch_size = read_env_usize("MYELON_BENCH_BATCH_SIZE", 8);
-    let payload_size = read_env_usize("MYELON_BENCH_PAYLOAD_SIZE", 1024);
-    let codec = std::env::var("MYELON_BENCH_CODEC").unwrap_or_else(|_| "rkyv".to_string());
-    let num_consumers = read_env_usize("MYELON_BENCH_CONSUMERS", 1);
+    let root = std::env::var(crate::infra::env::ROOT).expect(crate::infra::env::ROOT);
+    let seg = std::env::var(crate::infra::env::SEGMENT).expect(crate::infra::env::SEGMENT);
+    let buffer = read_env_usize(crate::infra::env::BUFFER, 1024);
+    let events = read_env_u64(crate::infra::env::EVENTS, 50_000);
+    let batch_size = read_env_usize(crate::infra::env::BATCH_SIZE, 8);
+    let payload_size = read_env_usize(crate::infra::env::PAYLOAD_SIZE, 1024);
+    let codec = std::env::var(crate::infra::env::CODEC).unwrap_or_else(|_| "rkyv".to_string());
+    let num_consumers = read_env_usize(crate::infra::env::CONSUMERS, 1);
     let payloads = make_payloads(batch_size);
 
     let layout = MmapTransportLayout::new(PathBuf::from(&root), seg).expect("layout");
@@ -1193,7 +1195,7 @@ fn ml_typed_zc_mmap_producer() -> Result<(), Box<dyn std::error::Error>> {
                 producer.publish(&payload, (i % 256) as u8)?;
             }
         }
-        other => return Err(format!("unsupported MYELON_BENCH_CODEC '{other}'").into()),
+        other => return Err(format!("unsupported {} '{other}'", crate::infra::env::CODEC).into()),
     }
     let elapsed = start.elapsed();
     let output = ProducerOutput::from_elapsed(events, elapsed, payload_size);
@@ -1207,13 +1209,13 @@ fn ml_typed_zc_mmap_producer() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn ml_typed_zc_mmap_consumer() -> Result<(), Box<dyn std::error::Error>> {
-    let root = std::env::var("MYELON_BENCH_ROOT").expect("MYELON_BENCH_ROOT");
-    let seg = std::env::var("MYELON_BENCH_SEGMENT").expect("MYELON_BENCH_SEGMENT");
-    let consumer_id = read_env_usize("MYELON_BENCH_CONSUMER_ID", 0);
-    let buffer = read_env_usize("MYELON_BENCH_BUFFER", 1024);
-    let events = read_env_u64("MYELON_BENCH_EVENTS", 50_000);
-    let payload_size = read_env_usize("MYELON_BENCH_PAYLOAD_SIZE", 1024);
-    let codec = std::env::var("MYELON_BENCH_CODEC").unwrap_or_else(|_| "rkyv".to_string());
+    let root = std::env::var(crate::infra::env::ROOT).expect(crate::infra::env::ROOT);
+    let seg = std::env::var(crate::infra::env::SEGMENT).expect(crate::infra::env::SEGMENT);
+    let consumer_id = read_env_usize(crate::infra::env::CONSUMER_ID, 0);
+    let buffer = read_env_usize(crate::infra::env::BUFFER, 1024);
+    let events = read_env_u64(crate::infra::env::EVENTS, 50_000);
+    let payload_size = read_env_usize(crate::infra::env::PAYLOAD_SIZE, 1024);
+    let codec = std::env::var(crate::infra::env::CODEC).unwrap_or_else(|_| "rkyv".to_string());
     let layout = MmapTransportLayout::new(PathBuf::from(&root), seg).expect("layout");
     let cid = format!("c{consumer_id}_{}", std::process::id());
     let deadline_attach = Instant::now() + Duration::from_secs(15);
@@ -1263,7 +1265,9 @@ fn ml_typed_zc_mmap_consumer() -> Result<(), Box<dyn std::error::Error>> {
                     consumed += 1;
                 },
             ),
-            other => return Err(format!("unsupported MYELON_BENCH_CODEC '{other}'").into()),
+            other => {
+                return Err(format!("unsupported {} '{other}'", crate::infra::env::CODEC).into())
+            }
         };
         if consumed < events {
             infra::check_deadline(deadline, "ml_typed_zc_mmap_consumer measured");
@@ -1289,12 +1293,12 @@ fn ml_typed_zc_mmap_consumer() -> Result<(), Box<dyn std::error::Error>> {
 macro_rules! rkyv_nofrag_mmap_impl {
     ($slot:ty, $data_len:expr, $prod_fn:ident, $cons_fn:ident) => {
         fn $prod_fn() -> Result<(), Box<dyn std::error::Error>> {
-            let root = std::env::var("MYELON_BENCH_ROOT").expect("MYELON_BENCH_ROOT");
-            let seg = std::env::var("MYELON_BENCH_SEGMENT").expect("MYELON_BENCH_SEGMENT");
-            let buffer = read_env_usize("MYELON_BENCH_BUFFER", 16384);
-            let events = read_env_u64("MYELON_BENCH_EVENTS", 100_000);
-            let batch_size = read_env_usize("MYELON_BENCH_BATCH_SIZE", 8);
-            let num_consumers = read_env_usize("MYELON_BENCH_CONSUMERS", 1);
+            let root = std::env::var(crate::infra::env::ROOT).expect(crate::infra::env::ROOT);
+            let seg = std::env::var(crate::infra::env::SEGMENT).expect(crate::infra::env::SEGMENT);
+            let buffer = read_env_usize(crate::infra::env::BUFFER, 16384);
+            let events = read_env_u64(crate::infra::env::EVENTS, 100_000);
+            let batch_size = read_env_usize(crate::infra::env::BATCH_SIZE, 8);
+            let num_consumers = read_env_usize(crate::infra::env::CONSUMERS, 1);
             let payloads = make_payloads(batch_size);
 
             let layout = MmapTransportLayout::new(PathBuf::from(&root), seg).expect("layout");
@@ -1328,11 +1332,11 @@ macro_rules! rkyv_nofrag_mmap_impl {
         }
 
         fn $cons_fn() -> Result<(), Box<dyn std::error::Error>> {
-            let root = std::env::var("MYELON_BENCH_ROOT").expect("MYELON_BENCH_ROOT");
-            let seg = std::env::var("MYELON_BENCH_SEGMENT").expect("MYELON_BENCH_SEGMENT");
-            let consumer_id = read_env_usize("MYELON_BENCH_CONSUMER_ID", 0);
-            let buffer = read_env_usize("MYELON_BENCH_BUFFER", 16384);
-            let events = read_env_u64("MYELON_BENCH_EVENTS", 100_000);
+            let root = std::env::var(crate::infra::env::ROOT).expect(crate::infra::env::ROOT);
+            let seg = std::env::var(crate::infra::env::SEGMENT).expect(crate::infra::env::SEGMENT);
+            let consumer_id = read_env_usize(crate::infra::env::CONSUMER_ID, 0);
+            let buffer = read_env_usize(crate::infra::env::BUFFER, 16384);
+            let events = read_env_u64(crate::infra::env::EVENTS, 100_000);
             let layout = MmapTransportLayout::new(PathBuf::from(&root), seg).expect("layout");
             let cid = format!("c{consumer_id}_{}", std::process::id());
             let deadline_attach = Instant::now() + Duration::from_secs(15);
@@ -1498,17 +1502,17 @@ impl IpcBenchmark for LayerScenario {
 
     fn launch(&self, exe: &std::path::Path) -> Result<ScenarioChildren, infra::BenchError> {
         let mut base_envs = self.envs.clone();
-        base_envs.push(("MYELON_BENCH_CONSUMERS", self.consumers.to_string()));
+        base_envs.push((crate::infra::env::CONSUMERS, self.consumers.to_string()));
         match self.backend {
             SweepBackend::Shm => launch_shm_group(
                 exe,
                 &format!("{}_{}", self.segment_prefix, self.size_tag),
-                "MYELON_BENCH_SEGMENT_NAME",
+                crate::infra::env::SEGMENT_NAME,
                 MultiConsumerSpawn {
                     producer_role: self.prod_role,
                     consumer_role: self.cons_role,
                     consumers: self.consumers,
-                    consumer_id_env: "MYELON_BENCH_CONSUMER_ID",
+                    consumer_id_env: crate::infra::env::CONSUMER_ID,
                     base_envs,
                 },
             ),
@@ -1516,13 +1520,13 @@ impl IpcBenchmark for LayerScenario {
                 exe,
                 &format!("ml_mm_{}_{}", self.segment_prefix, self.size_tag),
                 &format!("{}_{}", self.segment_prefix, self.size_tag),
-                "MYELON_BENCH_ROOT",
-                "MYELON_BENCH_SEGMENT",
+                crate::infra::env::ROOT,
+                crate::infra::env::SEGMENT,
                 MultiConsumerSpawn {
                     producer_role: self.prod_role,
                     consumer_role: self.cons_role,
                     consumers: self.consumers,
-                    consumer_id_env: "MYELON_BENCH_CONSUMER_ID",
+                    consumer_id_env: crate::infra::env::CONSUMER_ID,
                     base_envs,
                 },
             ),
@@ -1563,8 +1567,8 @@ fn raw_scenario(
         prod_role,
         cons_role,
         envs: vec![
-            ("MYELON_BENCH_EVENTS", events.to_string()),
-            ("MYELON_BENCH_BUFFER", buffer.to_string()),
+            (crate::infra::env::EVENTS, events.to_string()),
+            (crate::infra::env::BUFFER, buffer.to_string()),
         ],
         backend,
     }
@@ -1597,9 +1601,9 @@ fn framed_scenario(
         prod_role,
         cons_role,
         envs: vec![
-            ("MYELON_BENCH_EVENTS", events.to_string()),
-            ("MYELON_BENCH_BUFFER", buffer.to_string()),
-            ("MYELON_BENCH_PAYLOAD_SIZE", payload_size.to_string()),
+            (crate::infra::env::EVENTS, events.to_string()),
+            (crate::infra::env::BUFFER, buffer.to_string()),
+            (crate::infra::env::PAYLOAD_SIZE, payload_size.to_string()),
         ],
         backend,
     }
@@ -1809,16 +1813,16 @@ impl infra::BenchHarness for MyelonLayersBench {
                                 include_payload_size,
                             } => {
                                 let mut envs = vec![
-                                    ("MYELON_BENCH_EVENTS", events.to_string()),
-                                    ("MYELON_BENCH_BUFFER", buffer.to_string()),
-                                    ("MYELON_BENCH_BATCH_SIZE", spec.batch_size.to_string()),
+                                    (crate::infra::env::EVENTS, events.to_string()),
+                                    (crate::infra::env::BUFFER, buffer.to_string()),
+                                    (crate::infra::env::BATCH_SIZE, spec.batch_size.to_string()),
                                 ];
                                 if let Some(codec) = codec_env {
-                                    envs.push(("MYELON_BENCH_CODEC", codec.to_string()));
+                                    envs.push((crate::infra::env::CODEC, codec.to_string()));
                                 }
                                 if include_payload_size {
                                     envs.push((
-                                        "MYELON_BENCH_PAYLOAD_SIZE",
+                                        crate::infra::env::PAYLOAD_SIZE,
                                         spec.payload_bytes.to_string(),
                                     ));
                                 }

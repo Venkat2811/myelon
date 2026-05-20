@@ -35,7 +35,10 @@ use crate::infra::events::BenchEvent;
 // ============================================================
 
 fn child_layout() -> MmapTransportLayout {
-    infra::mmap_layout_from_env("MYELON_BENCH_MMAP_ROOT", "MYELON_BENCH_MMAP_SEGMENT")
+    infra::mmap_layout_from_env(
+        crate::infra::env::MMAP_ROOT,
+        crate::infra::env::MMAP_SEGMENT,
+    )
 }
 
 fn spawn_mmap_child_with_env(
@@ -48,10 +51,10 @@ fn spawn_mmap_child_with_env(
     extra_env: &[(&str, String)],
 ) -> Child {
     let mut envs = vec![
-        ("MYELON_BENCH_MMAP_ROOT", root.to_string()),
-        ("MYELON_BENCH_MMAP_SEGMENT", segment.to_string()),
-        ("MYELON_BENCH_MMAP_BUFFER_SIZE", buffer.to_string()),
-        ("MYELON_BENCH_MMAP_EVENTS", events.to_string()),
+        (crate::infra::env::MMAP_ROOT, root.to_string()),
+        (crate::infra::env::MMAP_SEGMENT, segment.to_string()),
+        (crate::infra::env::MMAP_BUFFER_SIZE, buffer.to_string()),
+        (crate::infra::env::MMAP_EVENTS, events.to_string()),
     ];
     envs.extend(extra_env.iter().map(|(key, value)| (*key, value.clone())));
     infra::spawn_child(exe, role, &envs)
@@ -104,8 +107,8 @@ fn collect_signal_latency_offline(
 
 fn message_producer_sized<const SIZE: usize>() -> Result<(), Box<dyn std::error::Error>> {
     let layout = child_layout();
-    let buffer_size: usize = env::var("MYELON_BENCH_MMAP_BUFFER_SIZE")?.parse()?;
-    let num_events: u64 = env::var("MYELON_BENCH_MMAP_EVENTS")?.parse()?;
+    let buffer_size: usize = env::var(crate::infra::env::MMAP_BUFFER_SIZE)?.parse()?;
+    let num_events: u64 = env::var(crate::infra::env::MMAP_EVENTS)?.parse()?;
     let target_rate = infra::read_env_u64("MMAP_TARGET_RATE", 0);
     let warmup: u64 = infra::read_env_u64("MMAP_WARMUP", 1_000);
 
@@ -173,8 +176,8 @@ fn message_producer() -> Result<(), Box<dyn std::error::Error>> {
 
 fn message_consumer_sized<const SIZE: usize>() -> Result<(), Box<dyn std::error::Error>> {
     let layout = child_layout();
-    let buffer_size: usize = env::var("MYELON_BENCH_MMAP_BUFFER_SIZE")?.parse()?;
-    let num_events: u64 = env::var("MYELON_BENCH_MMAP_EVENTS")?.parse()?;
+    let buffer_size: usize = env::var(crate::infra::env::MMAP_BUFFER_SIZE)?.parse()?;
+    let num_events: u64 = env::var(crate::infra::env::MMAP_EVENTS)?.parse()?;
     let consumer_id = infra::read_env_usize("MMAP_CONSUMER_ID", 0);
     let consumer_name = format!("c{}", consumer_id);
     let warmup_target: u64 = infra::read_env_u64("MMAP_WARMUP", 1_000);
@@ -254,10 +257,10 @@ fn message_consumer() -> Result<(), Box<dyn std::error::Error>> {
 
 fn signal_producer() -> Result<(), Box<dyn std::error::Error>> {
     let layout = child_layout();
-    let buffer_size: usize = env::var("MYELON_BENCH_MMAP_BUFFER_SIZE")?.parse()?;
-    let num_events: u64 = env::var("MYELON_BENCH_MMAP_EVENTS")?.parse()?;
+    let buffer_size: usize = env::var(crate::infra::env::MMAP_BUFFER_SIZE)?.parse()?;
+    let num_events: u64 = env::var(crate::infra::env::MMAP_EVENTS)?.parse()?;
     let warmup: u64 = infra::read_env_u64("MMAP_WARMUP", 100_000);
-    let target_rate = infra::read_env_u64("MYELON_BENCH_SIGNAL_TARGET_RATE", 0);
+    let target_rate = infra::read_env_u64(crate::infra::env::SIGNAL_TARGET_RATE, 0);
     let latency_mode = mmap_signal_mode()?;
 
     if matches!(latency_mode, SignalLatencyMode::None) {
@@ -404,8 +407,8 @@ fn signal_producer() -> Result<(), Box<dyn std::error::Error>> {
 
 fn signal_consumer() -> Result<(), Box<dyn std::error::Error>> {
     let layout = child_layout();
-    let buffer_size: usize = env::var("MYELON_BENCH_MMAP_BUFFER_SIZE")?.parse()?;
-    let num_events: u64 = env::var("MYELON_BENCH_MMAP_EVENTS")?.parse()?;
+    let buffer_size: usize = env::var(crate::infra::env::MMAP_BUFFER_SIZE)?.parse()?;
+    let num_events: u64 = env::var(crate::infra::env::MMAP_EVENTS)?.parse()?;
     let consumer_id = infra::read_env_usize("MMAP_CONSUMER_ID", 0);
     let consumer_name = format!("c{}", consumer_id);
     let warmup_target: u64 = infra::read_env_u64("MMAP_WARMUP", 100_000);
@@ -591,11 +594,11 @@ fn signal_consumer() -> Result<(), Box<dyn std::error::Error>> {
 
 fn multi_signal_producer() -> Result<(), Box<dyn std::error::Error>> {
     let layout = child_layout();
-    let buffer_size: usize = env::var("MYELON_BENCH_MMAP_BUFFER_SIZE")?.parse()?;
-    let num_events: u64 = env::var("MYELON_BENCH_MMAP_EVENTS")?.parse()?;
+    let buffer_size: usize = env::var(crate::infra::env::MMAP_BUFFER_SIZE)?.parse()?;
+    let num_events: u64 = env::var(crate::infra::env::MMAP_EVENTS)?.parse()?;
     let num_consumers = infra::read_env_usize("MMAP_NUM_CONSUMERS", 2);
     let warmup: u64 = infra::read_env_u64("MMAP_WARMUP", 100_000);
-    let target_rate = infra::read_env_u64("MYELON_BENCH_SIGNAL_TARGET_RATE", 0);
+    let target_rate = infra::read_env_u64(crate::infra::env::SIGNAL_TARGET_RATE, 0);
     let latency_mode = mmap_signal_mode()?;
 
     if matches!(latency_mode, SignalLatencyMode::None) {
@@ -742,8 +745,8 @@ fn multi_signal_producer() -> Result<(), Box<dyn std::error::Error>> {
 
 fn multi_signal_consumer() -> Result<(), Box<dyn std::error::Error>> {
     let layout = child_layout();
-    let buffer_size: usize = env::var("MYELON_BENCH_MMAP_BUFFER_SIZE")?.parse()?;
-    let num_events: u64 = env::var("MYELON_BENCH_MMAP_EVENTS")?.parse()?;
+    let buffer_size: usize = env::var(crate::infra::env::MMAP_BUFFER_SIZE)?.parse()?;
+    let num_events: u64 = env::var(crate::infra::env::MMAP_EVENTS)?.parse()?;
     let consumer_id = infra::read_env_usize("MMAP_CONSUMER_ID", 0);
     let consumer_name = format!("c{}", consumer_id);
     let warmup: u64 = infra::read_env_u64("MMAP_WARMUP", 100_000);
@@ -943,8 +946,8 @@ fn multi_signal_consumer() -> Result<(), Box<dyn std::error::Error>> {
 
 fn multi_message_producer_sized<const SIZE: usize>() -> Result<(), Box<dyn std::error::Error>> {
     let layout = child_layout();
-    let buffer_size: usize = env::var("MYELON_BENCH_MMAP_BUFFER_SIZE")?.parse()?;
-    let num_events: u64 = env::var("MYELON_BENCH_MMAP_EVENTS")?.parse()?;
+    let buffer_size: usize = env::var(crate::infra::env::MMAP_BUFFER_SIZE)?.parse()?;
+    let num_events: u64 = env::var(crate::infra::env::MMAP_EVENTS)?.parse()?;
     let num_consumers = infra::read_env_usize("MMAP_NUM_CONSUMERS", 3);
     let target_rate = infra::read_env_u64("MMAP_TARGET_RATE", 0);
     let warmup: u64 = infra::read_env_u64("MMAP_WARMUP", 1_000);
@@ -1013,8 +1016,8 @@ fn multi_message_producer() -> Result<(), Box<dyn std::error::Error>> {
 
 fn multi_message_consumer_sized<const SIZE: usize>() -> Result<(), Box<dyn std::error::Error>> {
     let layout = child_layout();
-    let buffer_size: usize = env::var("MYELON_BENCH_MMAP_BUFFER_SIZE")?.parse()?;
-    let num_events: u64 = env::var("MYELON_BENCH_MMAP_EVENTS")?.parse()?;
+    let buffer_size: usize = env::var(crate::infra::env::MMAP_BUFFER_SIZE)?.parse()?;
+    let num_events: u64 = env::var(crate::infra::env::MMAP_EVENTS)?.parse()?;
     let record_latency = infra::read_env_usize("MMAP_RECORD_LATENCY", 0) == 1;
     let consumer_id = infra::read_env_usize("MMAP_CONSUMER_ID", 0);
     let consumer_name = format!("c{}", consumer_id);
@@ -1214,16 +1217,16 @@ impl IpcBenchmark for Scenario {
             {
                 let sidecar_path = root.join(format!("{segment}.signal_timestamps"));
                 envs.push((
-                    "MYELON_BENCH_SIGNAL_SIDECAR_MMAP_PATH",
+                    crate::infra::env::SIGNAL_SIDECAR_MMAP_PATH,
                     sidecar_path.display().to_string(),
                 ));
             }
             envs.push((
-                "MYELON_BENCH_SIGNAL_LATENCY_MODE",
+                crate::infra::env::SIGNAL_LATENCY_MODE,
                 signal_mode.as_str().to_string(),
             ));
             envs.push((
-                "MYELON_BENCH_SIGNAL_SAMPLE_EVERY",
+                crate::infra::env::SIGNAL_SAMPLE_EVERY,
                 signal_sample_every.to_string(),
             ));
             if self.target_rate > 0 {

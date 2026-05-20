@@ -55,7 +55,7 @@ impl SignalLatencyMode {
     }
 
     pub fn from_env() -> Result<Self, String> {
-        let raw = std::env::var("MYELON_BENCH_SIGNAL_LATENCY_MODE")
+        let raw = std::env::var(crate::infra::env::SIGNAL_LATENCY_MODE)
             .unwrap_or_else(|_| "none".to_string());
         Self::parse(&raw)
     }
@@ -120,7 +120,7 @@ impl SignalLatencyMode {
 }
 
 pub fn sample_every_from_env() -> u64 {
-    std::env::var("MYELON_BENCH_SIGNAL_SAMPLE_EVERY")
+    std::env::var(crate::infra::env::SIGNAL_SAMPLE_EVERY)
         .ok()
         .and_then(|raw| raw.parse::<u64>().ok())
         .filter(|value| *value > 0)
@@ -398,12 +398,12 @@ impl Drop for MmapTimestampSidecar {
 
 pub fn mmap_sidecar_path_from_env() -> Result<PathBuf, Box<dyn std::error::Error>> {
     Ok(PathBuf::from(std::env::var(
-        "MYELON_BENCH_SIGNAL_SIDECAR_MMAP_PATH",
+        crate::infra::env::SIGNAL_SIDECAR_MMAP_PATH,
     )?))
 }
 
 pub fn shm_sidecar_name_from_env() -> Result<String, Box<dyn std::error::Error>> {
-    Ok(std::env::var("MYELON_BENCH_SIGNAL_SIDECAR_SHM_ID")?)
+    Ok(std::env::var(crate::infra::env::SIGNAL_SIDECAR_SHM_ID)?)
 }
 
 pub struct OfflineSignalSamples {
@@ -512,9 +512,9 @@ mod tests {
 
     #[test]
     fn sample_every_zero_defaults_to_one() {
-        std::env::set_var("MYELON_BENCH_SIGNAL_SAMPLE_EVERY", "0");
+        std::env::set_var(crate::infra::env::SIGNAL_SAMPLE_EVERY, "0");
         assert_eq!(sample_every_from_env(), 1);
-        std::env::remove_var("MYELON_BENCH_SIGNAL_SAMPLE_EVERY");
+        std::env::remove_var(crate::infra::env::SIGNAL_SAMPLE_EVERY);
     }
 
     #[test]

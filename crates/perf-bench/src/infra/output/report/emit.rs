@@ -65,7 +65,7 @@ pub fn emit_report_with_extra_json(
         }
         eprintln!("Markdown written to {path}");
     }
-    if let Ok(path) = std::env::var("MYELON_BENCH_JSON_OUT") {
+    if let Ok(path) = std::env::var(crate::infra::env::JSON_OUT) {
         report.write_json(&path).expect("write JSON");
     }
     if let Some(path) = extra_json_out {

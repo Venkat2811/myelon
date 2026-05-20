@@ -1,3 +1,4 @@
+use myelon_env::{dst::buggify as dst_env, read};
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
@@ -10,23 +11,14 @@ pub struct BuggifyConfig {
 
 impl BuggifyConfig {
     fn from_env() -> Option<Self> {
-        let enabled = std::env::var("DST_BUGGIFY").ok()?;
+        let enabled = read::optional(dst_env::ENABLED)?;
         if enabled == "0" || enabled.eq_ignore_ascii_case("false") {
             return None;
         }
 
-        let seed = std::env::var("DST_BUGGIFY_SEED")
-            .ok()
-            .and_then(|raw| raw.parse().ok())
-            .unwrap_or(1);
-        let activation_percent = std::env::var("DST_BUGGIFY_ACTIVATION_PERCENT")
-            .ok()
-            .and_then(|raw| raw.parse().ok())
-            .unwrap_or(25);
-        let fire_percent = std::env::var("DST_BUGGIFY_FIRE_PERCENT")
-            .ok()
-            .and_then(|raw| raw.parse().ok())
-            .unwrap_or(25);
+        let seed = read::parse_or(dst_env::SEED, 1);
+        let activation_percent = read::parse_or(dst_env::ACTIVATION_PERCENT, 25);
+        let fire_percent = read::parse_or(dst_env::FIRE_PERCENT, 25);
 
         Some(Self {
             seed,
@@ -76,14 +68,14 @@ pub struct ScopedBuggify {
 impl ScopedBuggify {
     pub fn new(seed: u64) -> Self {
         let guard = Self {
-            previous_enabled: std::env::var("DST_BUGGIFY").ok(),
-            previous_seed: std::env::var("DST_BUGGIFY_SEED").ok(),
-            previous_activation_percent: std::env::var("DST_BUGGIFY_ACTIVATION_PERCENT").ok(),
-            previous_fire_percent: std::env::var("DST_BUGGIFY_FIRE_PERCENT").ok(),
+            previous_enabled: std::env::var(dst_env::ENABLED).ok(),
+            previous_seed: std::env::var(dst_env::SEED).ok(),
+            previous_activation_percent: std::env::var(dst_env::ACTIVATION_PERCENT).ok(),
+            previous_fire_percent: std::env::var(dst_env::FIRE_PERCENT).ok(),
         };
 
-        std::env::set_var("DST_BUGGIFY", "1");
-        std::env::set_var("DST_BUGGIFY_SEED", seed.to_string());
+        std::env::set_var(dst_env::ENABLED, "1");
+        std::env::set_var(dst_env::SEED, seed.to_string());
         reset();
         guard
     }
@@ -92,27 +84,27 @@ impl ScopedBuggify {
 impl Drop for ScopedBuggify {
     fn drop(&mut self) {
         if let Some(value) = &self.previous_enabled {
-            std::env::set_var("DST_BUGGIFY", value);
+            std::env::set_var(dst_env::ENABLED, value);
         } else {
-            std::env::remove_var("DST_BUGGIFY");
+            std::env::remove_var(dst_env::ENABLED);
         }
 
         if let Some(value) = &self.previous_seed {
-            std::env::set_var("DST_BUGGIFY_SEED", value);
+            std::env::set_var(dst_env::SEED, value);
         } else {
-            std::env::remove_var("DST_BUGGIFY_SEED");
+            std::env::remove_var(dst_env::SEED);
         }
 
         if let Some(value) = &self.previous_activation_percent {
-            std::env::set_var("DST_BUGGIFY_ACTIVATION_PERCENT", value);
+            std::env::set_var(dst_env::ACTIVATION_PERCENT, value);
         } else {
-            std::env::remove_var("DST_BUGGIFY_ACTIVATION_PERCENT");
+            std::env::remove_var(dst_env::ACTIVATION_PERCENT);
         }
 
         if let Some(value) = &self.previous_fire_percent {
-            std::env::set_var("DST_BUGGIFY_FIRE_PERCENT", value);
+            std::env::set_var(dst_env::FIRE_PERCENT, value);
         } else {
-            std::env::remove_var("DST_BUGGIFY_FIRE_PERCENT");
+            std::env::remove_var(dst_env::FIRE_PERCENT);
         }
 
         reset();
@@ -163,8 +155,8 @@ mod tests {
     #[test]
     fn disabled_without_env() {
         let _guard = env_lock().lock().expect("env lock");
-        std::env::remove_var("DST_BUGGIFY");
-        std::env::remove_var("DST_BUGGIFY_SEED");
+        std::env::remove_var(dst_env::ENABLED);
+        std::env::remove_var(dst_env::SEED);
         reset();
         assert!(!buggify(file!(), line!()));
     }
@@ -172,10 +164,10 @@ mod tests {
     #[test]
     fn deterministic_with_seed() {
         let _guard = env_lock().lock().expect("env lock");
-        std::env::set_var("DST_BUGGIFY", "1");
-        std::env::set_var("DST_BUGGIFY_SEED", "42");
-        std::env::set_var("DST_BUGGIFY_ACTIVATION_PERCENT", "100");
-        std::env::set_var("DST_BUGGIFY_FIRE_PERCENT", "50");
+        std::env::set_var(dst_env::ENABLED, "1");
+        std::env::set_var(dst_env::SEED, "42");
+        std::env::set_var(dst_env::ACTIVATION_PERCENT, "100");
+        std::env::set_var(dst_env::FIRE_PERCENT, "50");
 
         reset();
         let first = (0..8).map(|_| buggify("a.rs", 10)).collect::<Vec<_>>();
@@ -183,10 +175,10 @@ mod tests {
         let second = (0..8).map(|_| buggify("a.rs", 10)).collect::<Vec<_>>();
         assert_eq!(first, second);
 
-        std::env::remove_var("DST_BUGGIFY");
-        std::env::remove_var("DST_BUGGIFY_SEED");
-        std::env::remove_var("DST_BUGGIFY_ACTIVATION_PERCENT");
-        std::env::remove_var("DST_BUGGIFY_FIRE_PERCENT");
+        std::env::remove_var(dst_env::ENABLED);
+        std::env::remove_var(dst_env::SEED);
+        std::env::remove_var(dst_env::ACTIVATION_PERCENT);
+        std::env::remove_var(dst_env::FIRE_PERCENT);
         reset();
     }
 }

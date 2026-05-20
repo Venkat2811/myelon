@@ -71,6 +71,7 @@ use super::consumer_barrier::{auto_consumer_id, consumer_registration_cursor_nam
 use super::producer::{CoordinationMode, SharedProducer};
 use crate::{MultiProcessResult, SharedCursor, SharedMemoryConfig, SharedRingBuffer};
 use disruptor_core::Sequence;
+use myelon_env::{read, runtime as runtime_env};
 use std::env;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread::{self, JoinHandle};
@@ -200,34 +201,30 @@ impl AutoWaitStrategy {
     /// Create wait strategy from environment variables with fallback
     ///
     /// Checks these environment variables in order:
-    /// 1. `AUTO_WAIT_DELAY_NS` - nanosecond precision (`0` = `spin_loop`)
-    /// 2. `AUTO_WAIT_DELAY_US` - microsecond precision (`0` = `spin_loop`)
+    /// 1. `MYELON_AUTO_WAIT_DELAY_NS` - nanosecond precision (`0` = `spin_loop`)
+    /// 2. `MYELON_AUTO_WAIT_DELAY_US` - microsecond precision (`0` = `spin_loop`)
     /// 3. Falls back to the provided default
     ///
     /// # Examples
     /// ```bash
     /// # Use spin_loop (maximum performance)
-    /// export AUTO_WAIT_DELAY_NS=0
+    /// export MYELON_AUTO_WAIT_DELAY_NS=0
     ///
     /// # Sleep for 100 nanoseconds
-    /// export AUTO_WAIT_DELAY_NS=100
+    /// export MYELON_AUTO_WAIT_DELAY_NS=100
     ///
     /// # Sleep for 10 microseconds
-    /// export AUTO_WAIT_DELAY_US=10
+    /// export MYELON_AUTO_WAIT_DELAY_US=10
     /// ```
     pub fn from_env_or(default: AutoWaitStrategy) -> Self {
         // Check for nanosecond precision first
-        if let Ok(nanos_str) = std::env::var("AUTO_WAIT_DELAY_NS") {
-            if let Ok(nanos) = nanos_str.parse::<u64>() {
-                return Self::sleep_nanos(nanos);
-            }
+        if let Some(nanos) = read::parse::<u64>(runtime_env::AUTO_WAIT_DELAY_NS) {
+            return Self::sleep_nanos(nanos);
         }
 
         // Check for microsecond precision
-        if let Ok(micros_str) = std::env::var("AUTO_WAIT_DELAY_US") {
-            if let Ok(micros) = micros_str.parse::<u64>() {
-                return Self::sleep_micros(micros);
-            }
+        if let Some(micros) = read::parse::<u64>(runtime_env::AUTO_WAIT_DELAY_US) {
+            return Self::sleep_micros(micros);
         }
 
         // Fall back to default
@@ -373,8 +370,8 @@ enum ProcessRole {
 impl ProcessRole {
     fn env_var(self) -> &'static str {
         match self {
-            ProcessRole::Producer => "DISRUPTOR_MP_PRODUCER_CORE",
-            ProcessRole::Consumer => "DISRUPTOR_MP_CONSUMER_CORE",
+            ProcessRole::Producer => runtime_env::PRODUCER_CORE,
+            ProcessRole::Consumer => runtime_env::CONSUMER_CORE,
         }
     }
 
@@ -574,7 +571,7 @@ where
     ///
     /// The builder resolves the effective affinity order:
     /// 1. Explicit builder value.
-    /// 2. `DISRUPTOR_MP_AUTO_CONSUMER_CORE` environment variable (if set).
+    /// 2. `MYELON_AUTO_CONSUMER_CORE` environment variable (if set).
     pub fn with_consumer_core(mut self, core_id: usize) -> Self {
         self.consumer_core = Some(core_id);
         self
@@ -591,9 +588,9 @@ where
     ///
     /// Resolution order:
     /// 1. Explicit builder value via `with_process_core()`
-    /// 2. Role specific env var (`DISRUPTOR_MP_PRODUCER_CORE`
-    ///    or `DISRUPTOR_MP_CONSUMER_CORE`)
-    /// 3. Generic env var `DISRUPTOR_MP_PROCESS_CORE`
+    /// 2. Role specific env var (`MYELON_PRODUCER_CORE`
+    ///    or `MYELON_CONSUMER_CORE`)
+    /// 3. Generic env var `MYELON_PROCESS_CORE`
     pub fn with_process_core(mut self, core_id: usize) -> Self {
         self.process_core = Some(core_id);
         self
@@ -934,7 +931,7 @@ fn resolve_auto_consumer_core(consumer_core: Option<usize>) -> Option<usize> {
         return Some(core_id);
     }
 
-    resolve_core_from_env_vars(&["DISRUPTOR_MP_AUTO_CONSUMER_CORE"])
+    resolve_core_from_env_vars(&[runtime_env::AUTO_CONSUMER_CORE])
 }
 
 fn resolve_process_core(process_core: Option<usize>, role: ProcessRole) -> Option<usize> {
@@ -942,7 +939,7 @@ fn resolve_process_core(process_core: Option<usize>, role: ProcessRole) -> Optio
         return Some(core_id);
     }
 
-    resolve_core_from_env_vars(&[role.env_var(), "DISRUPTOR_MP_PROCESS_CORE"])
+    resolve_core_from_env_vars(&[role.env_var(), runtime_env::PROCESS_CORE])
 }
 
 fn resolve_core_from_env_vars(env_vars: &[&str]) -> Option<usize> {
@@ -1452,7 +1449,7 @@ mod tests {
 
     #[test]
     fn test_consumer_core_resolve_from_env_var() {
-        with_env_vars([("DISRUPTOR_MP_AUTO_CONSUMER_CORE", Some("9"))], || {
+        with_env_vars([(runtime_env::AUTO_CONSUMER_CORE, Some("9"))], || {
             let resolved = resolve_auto_consumer_core(None);
             assert_eq!(resolved, Some(9));
         });
@@ -1460,13 +1457,10 @@ mod tests {
 
     #[test]
     fn test_consumer_core_resolve_from_invalid_env_var() {
-        with_env_vars(
-            [("DISRUPTOR_MP_AUTO_CONSUMER_CORE", Some("invalid"))],
-            || {
-                let resolved = resolve_auto_consumer_core(None);
-                assert_eq!(resolved, None);
-            },
-        );
+        with_env_vars([(runtime_env::AUTO_CONSUMER_CORE, Some("invalid"))], || {
+            let resolved = resolve_auto_consumer_core(None);
+            assert_eq!(resolved, None);
+        });
     }
 
     #[test]
@@ -1483,8 +1477,8 @@ mod tests {
     fn test_process_core_resolve_from_builder_overrides_env() {
         with_env_vars(
             [
-                ("DISRUPTOR_MP_PRODUCER_CORE", Some("7")),
-                ("DISRUPTOR_MP_PROCESS_CORE", Some("9")),
+                (runtime_env::PRODUCER_CORE, Some("7")),
+                (runtime_env::PROCESS_CORE, Some("9")),
             ],
             || {
                 let resolved = resolve_process_core(Some(11), ProcessRole::Producer);
@@ -1497,8 +1491,8 @@ mod tests {
     fn test_process_core_resolve_from_role_specific_env_var() {
         with_env_vars(
             [
-                ("DISRUPTOR_MP_PRODUCER_CORE", Some("6")),
-                ("DISRUPTOR_MP_PROCESS_CORE", Some("8")),
+                (runtime_env::PRODUCER_CORE, Some("6")),
+                (runtime_env::PROCESS_CORE, Some("8")),
             ],
             || {
                 let resolved = resolve_process_core(None, ProcessRole::Producer);
@@ -1511,8 +1505,8 @@ mod tests {
     fn test_process_core_resolve_from_generic_env_var() {
         with_env_vars(
             [
-                ("DISRUPTOR_MP_PRODUCER_CORE", None),
-                ("DISRUPTOR_MP_PROCESS_CORE", Some("10")),
+                (runtime_env::PRODUCER_CORE, None),
+                (runtime_env::PROCESS_CORE, Some("10")),
             ],
             || {
                 let resolved = resolve_process_core(None, ProcessRole::Producer);
@@ -1525,8 +1519,8 @@ mod tests {
     fn test_process_core_resolve_from_invalid_role_specific_env_var() {
         with_env_vars(
             [
-                ("DISRUPTOR_MP_CONSUMER_CORE", Some("invalid")),
-                ("DISRUPTOR_MP_PROCESS_CORE", Some("12")),
+                (runtime_env::CONSUMER_CORE, Some("invalid")),
+                (runtime_env::PROCESS_CORE, Some("12")),
             ],
             || {
                 let resolved = resolve_process_core(None, ProcessRole::Consumer);

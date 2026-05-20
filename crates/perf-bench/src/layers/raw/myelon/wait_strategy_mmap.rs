@@ -21,7 +21,7 @@ const NUM_EVENTS: u64 = 100_000;
 const ELEMENT_SIZE: usize = 128;
 
 fn num_events() -> u64 {
-    std::env::var("MYELON_BENCH_WAIT_NUM_EVENTS")
+    std::env::var(crate::infra::env::WAIT_NUM_EVENTS)
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
         .filter(|value| *value > 0)
@@ -60,9 +60,12 @@ fn apply_wait_strategy(wait_strategy: &str) {
 }
 
 fn producer_process() -> Result<(), Box<dyn std::error::Error>> {
-    let layout = mmap_layout_from_env("MYELON_BENCH_MMAP_ROOT", "MYELON_BENCH_MMAP_SEGMENT");
+    let layout = mmap_layout_from_env(
+        crate::infra::env::MMAP_ROOT,
+        crate::infra::env::MMAP_SEGMENT,
+    );
     let num_consumers: usize = read_env_string("NUM_CONSUMERS", "1").parse()?;
-    let wait_strategy = read_env_string("MYELON_BENCH_WAIT_STRATEGY", "Block");
+    let wait_strategy = read_env_string(crate::infra::env::WAIT_STRATEGY, "Block");
     layout.ensure_directories()?;
 
     let mut producer =
@@ -100,9 +103,12 @@ fn producer_process() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
-    let layout = mmap_layout_from_env("MYELON_BENCH_MMAP_ROOT", "MYELON_BENCH_MMAP_SEGMENT");
-    let wait_strategy = read_env_string("MYELON_BENCH_WAIT_STRATEGY", "Block");
-    let consumer_id = read_env_string("MYELON_BENCH_CONSUMER_ID", "0").parse::<usize>()?;
+    let layout = mmap_layout_from_env(
+        crate::infra::env::MMAP_ROOT,
+        crate::infra::env::MMAP_SEGMENT,
+    );
+    let wait_strategy = read_env_string(crate::infra::env::WAIT_STRATEGY, "Block");
+    let consumer_id = read_env_string(crate::infra::env::CONSUMER_ID, "0").parse::<usize>()?;
     let consumer_name = format!("c{}", consumer_id);
 
     let deadline = Instant::now() + Duration::from_secs(15);
@@ -222,17 +228,20 @@ impl IpcBenchmark for Scenario {
         let segment = unique_mmap_segment("mywait");
         let root_str = root.display().to_string();
         let envs: Vec<(&str, String)> = vec![
-            ("MYELON_BENCH_MMAP_ROOT", root_str.clone()),
-            ("MYELON_BENCH_MMAP_SEGMENT", segment.clone()),
+            (crate::infra::env::MMAP_ROOT, root_str.clone()),
+            (crate::infra::env::MMAP_SEGMENT, segment.clone()),
             ("NUM_CONSUMERS", self.consumers.to_string()),
-            ("MYELON_BENCH_WAIT_STRATEGY", self.wait_strategy.to_string()),
+            (
+                crate::infra::env::WAIT_STRATEGY,
+                self.wait_strategy.to_string(),
+            ),
         ];
 
         let producer = spawn_child(exe, self.producer_role, &envs);
         let consumers = (0..self.consumers)
             .map(|index| {
                 let mut consumer_envs = envs.clone();
-                consumer_envs.push(("MYELON_BENCH_CONSUMER_ID", index.to_string()));
+                consumer_envs.push((crate::infra::env::CONSUMER_ID, index.to_string()));
                 spawn_child(exe, self.consumer_role, &consumer_envs)
             })
             .collect();
@@ -258,7 +267,7 @@ impl infra::BenchHarness for WaitStrategyMyelonMmapBench {
     }
 
     fn run_orchestrator(&self, args: &[String]) -> infra::BenchRunResult {
-        let mode_owned = env::var("MYELON_BENCH_MODE")
+        let mode_owned = env::var(crate::infra::env::MODE)
             .ok()
             .or_else(|| {
                 args.iter()

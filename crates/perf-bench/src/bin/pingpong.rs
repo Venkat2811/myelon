@@ -121,7 +121,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // Forward --liveness flag as env var for executor integration
     if args.liveness == "on" {
-        std::env::set_var("MYELON_BENCH_LIVENESS", "on");
+        std::env::set_var(perf_bench::infra::env::LIVENESS, "on");
     }
 
     match args.layer.as_str() {
@@ -179,7 +179,7 @@ fn dispatch_bench_harness_child(args: &[String]) -> Result<(), Box<dyn Error>> {
 /// The orchestrator sets `MYELON_BENCH_DISPATCH` so the child knows which
 /// executor module to invoke.
 fn dispatch_raw_child() -> Result<(), Box<dyn Error>> {
-    let dispatch = std::env::var("MYELON_BENCH_DISPATCH").map_err(|_| {
+    let dispatch = std::env::var(perf_bench::infra::env::DISPATCH).map_err(|_| {
         "child invoked with --process-two but MYELON_BENCH_DISPATCH env var is not set"
     })?;
 
@@ -352,10 +352,10 @@ fn build_codec_args(args: &Args) -> Vec<String> {
 
 fn run_raw_ring(args: &Args) -> Result<(), Box<dyn Error>> {
     let dispatch_key = format!("raw_ring_{}", args.backend);
-    std::env::set_var("MYELON_BENCH_DISPATCH", &dispatch_key);
+    std::env::set_var(perf_bench::infra::env::DISPATCH, &dispatch_key);
 
     if args.timeout != 300 {
-        std::env::set_var("MYELON_BENCH_TIMEOUT", args.timeout.to_string());
+        std::env::set_var(perf_bench::infra::env::TIMEOUT, args.timeout.to_string());
     }
 
     let synthetic = build_raw_args(args);
@@ -371,10 +371,10 @@ fn run_raw_ring(args: &Args) -> Result<(), Box<dyn Error>> {
 
 fn run_raw_myelon(args: &Args) -> Result<(), Box<dyn Error>> {
     let dispatch_key = format!("raw_myelon_{}", args.backend);
-    std::env::set_var("MYELON_BENCH_DISPATCH", &dispatch_key);
+    std::env::set_var(perf_bench::infra::env::DISPATCH, &dispatch_key);
 
     if args.timeout != 300 {
-        std::env::set_var("MYELON_BENCH_TIMEOUT", args.timeout.to_string());
+        std::env::set_var(perf_bench::infra::env::TIMEOUT, args.timeout.to_string());
     }
 
     let synthetic = build_raw_args(args);
@@ -390,7 +390,7 @@ fn run_framed(args: &Args) -> Result<(), Box<dyn Error>> {
     use perf_bench::infra::BenchHarness;
 
     if args.timeout != 300 {
-        std::env::set_var("MYELON_BENCH_TIMEOUT", args.timeout.to_string());
+        std::env::set_var(perf_bench::infra::env::TIMEOUT, args.timeout.to_string());
     }
 
     let synthetic = build_myelon_args(args);
@@ -416,7 +416,7 @@ fn run_codec(args: &Args) -> Result<(), Box<dyn Error>> {
     use perf_bench::infra::BenchHarness;
 
     if args.timeout != 300 {
-        std::env::set_var("MYELON_BENCH_TIMEOUT", args.timeout.to_string());
+        std::env::set_var(perf_bench::infra::env::TIMEOUT, args.timeout.to_string());
     }
 
     let synthetic = build_codec_args(args);
@@ -442,7 +442,7 @@ fn run_typed_zc(args: &Args) -> Result<(), Box<dyn Error>> {
     use perf_bench::infra::BenchHarness;
 
     if args.timeout != 300 {
-        std::env::set_var("MYELON_BENCH_TIMEOUT", args.timeout.to_string());
+        std::env::set_var(perf_bench::infra::env::TIMEOUT, args.timeout.to_string());
     }
 
     let synthetic = build_codec_args(args);

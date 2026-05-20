@@ -167,24 +167,22 @@ fn consumer_result_path(base: &str, consumer_id: usize) -> PathBuf {
 }
 
 fn debug_enabled() -> bool {
-    std::env::var("MYELON_BENCH_DEBUG").ok().as_deref() == Some("1")
+    std::env::var(myelon_env::bench::DEBUG).ok().as_deref() == Some("1")
 }
 
 fn env_duration_ms(key: &str, default: Duration) -> Duration {
-    std::env::var(key)
-        .ok()
-        .and_then(|value| value.parse::<u64>().ok())
+    myelon_env::read::parse::<u64>(key)
         .filter(|value| *value > 0)
         .map(Duration::from_millis)
         .unwrap_or(default)
 }
 
 fn attach_timeout() -> Duration {
-    env_duration_ms("MYELON_BENCH_ATTACH_TIMEOUT_MS", ATTACH_TIMEOUT)
+    env_duration_ms(myelon_env::bench::ATTACH_TIMEOUT_MS, ATTACH_TIMEOUT)
 }
 
 fn coordination_timeout() -> Duration {
-    env_duration_ms("MYELON_BENCH_COORD_TIMEOUT_MS", COORD_TIMEOUT)
+    env_duration_ms(myelon_env::bench::COORD_TIMEOUT_MS, COORD_TIMEOUT)
 }
 
 fn append_debug_line(message: &str) {

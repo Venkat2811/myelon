@@ -94,11 +94,11 @@ struct SignalEvent {
 // ============================================================
 
 fn message_producer_sized<const SIZE: usize>() -> Result<(), Box<dyn std::error::Error>> {
-    let segment = infra::segment_from_env("MYELON_BENCH_SEGMENT_NAME");
-    let target_rate = infra::read_env_u64("MYELON_BENCH_TARGET_RATE", 0);
-    let buffer = infra::read_env_usize("MYELON_BENCH_BUFFER", 1024);
-    let events = infra::read_env_u64("MYELON_BENCH_EVENTS", 100_000);
-    let warmup = infra::read_env_u64("MYELON_BENCH_WARMUP", 1_000);
+    let segment = infra::segment_from_env(crate::infra::env::SEGMENT_NAME);
+    let target_rate = infra::read_env_u64(crate::infra::env::TARGET_RATE, 0);
+    let buffer = infra::read_env_usize(crate::infra::env::BUFFER, 1024);
+    let events = infra::read_env_u64(crate::infra::env::EVENTS, 100_000);
+    let warmup = infra::read_env_u64(crate::infra::env::WARMUP, 1_000);
 
     let mut producer = build_shared_single_producer::<BenchEvent<SIZE>>(&segment, buffer)
         .enable_discovery(1)
@@ -161,17 +161,17 @@ fn message_producer_sized<const SIZE: usize>() -> Result<(), Box<dyn std::error:
 }
 
 fn message_producer() -> Result<(), Box<dyn std::error::Error>> {
-    let event_bytes = infra::read_env_usize("MYELON_BENCH_EVENT_SIZE", 144);
+    let event_bytes = infra::read_env_usize(crate::infra::env::EVENT_SIZE, 144);
     crate::dispatch_bench_event!(event_bytes, |<SIZE>| {
         message_producer_sized::<SIZE>()
     })
 }
 
 fn message_consumer_sized<const SIZE: usize>() -> Result<(), Box<dyn std::error::Error>> {
-    let segment = infra::segment_from_env("MYELON_BENCH_SEGMENT_NAME");
-    let consumer_id = infra::read_env_usize("MYELON_BENCH_CONSUMER_ID", 0);
-    let buffer = infra::read_env_usize("MYELON_BENCH_BUFFER", 1024);
-    let warmup_target = infra::read_env_u64("MYELON_BENCH_WARMUP", 1_000);
+    let segment = infra::segment_from_env(crate::infra::env::SEGMENT_NAME);
+    let consumer_id = infra::read_env_usize(crate::infra::env::CONSUMER_ID, 0);
+    let buffer = infra::read_env_usize(crate::infra::env::BUFFER, 1024);
+    let warmup_target = infra::read_env_u64(crate::infra::env::WARMUP, 1_000);
 
     let coord = BenchmarkCoordination::attach_with_timeout(&segment, Duration::from_secs(30))?;
 
@@ -247,7 +247,7 @@ fn message_consumer_sized<const SIZE: usize>() -> Result<(), Box<dyn std::error:
 }
 
 fn message_consumer() -> Result<(), Box<dyn std::error::Error>> {
-    let event_bytes = infra::read_env_usize("MYELON_BENCH_EVENT_SIZE", 144);
+    let event_bytes = infra::read_env_usize(crate::infra::env::EVENT_SIZE, 144);
     crate::dispatch_bench_event!(event_bytes, |<SIZE>| {
         message_consumer_sized::<SIZE>()
     })
@@ -258,10 +258,10 @@ fn message_consumer() -> Result<(), Box<dyn std::error::Error>> {
 // ============================================================
 
 fn signal_producer() -> Result<(), Box<dyn std::error::Error>> {
-    let segment = infra::segment_from_env("MYELON_BENCH_SEGMENT_NAME");
-    let buffer = infra::read_env_usize("MYELON_BENCH_BUFFER", 65_536);
-    let events = infra::read_env_u64("MYELON_BENCH_EVENTS", 10_000_000);
-    let warmup = infra::read_env_u64("MYELON_BENCH_WARMUP", 100_000);
+    let segment = infra::segment_from_env(crate::infra::env::SEGMENT_NAME);
+    let buffer = infra::read_env_usize(crate::infra::env::BUFFER, 65_536);
+    let events = infra::read_env_u64(crate::infra::env::EVENTS, 10_000_000);
+    let warmup = infra::read_env_u64(crate::infra::env::WARMUP, 100_000);
 
     let mut producer = build_shared_single_producer::<SignalEvent>(&segment, buffer)
         .enable_discovery(1)
@@ -305,10 +305,10 @@ fn signal_producer() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn signal_consumer() -> Result<(), Box<dyn std::error::Error>> {
-    let segment = infra::segment_from_env("MYELON_BENCH_SEGMENT_NAME");
-    let consumer_id = infra::read_env_usize("MYELON_BENCH_CONSUMER_ID", 0);
-    let buffer = infra::read_env_usize("MYELON_BENCH_BUFFER", 65_536);
-    let warmup_target = infra::read_env_u64("MYELON_BENCH_WARMUP", 100_000);
+    let segment = infra::segment_from_env(crate::infra::env::SEGMENT_NAME);
+    let consumer_id = infra::read_env_usize(crate::infra::env::CONSUMER_ID, 0);
+    let buffer = infra::read_env_usize(crate::infra::env::BUFFER, 65_536);
+    let warmup_target = infra::read_env_u64(crate::infra::env::WARMUP, 100_000);
 
     let coord = BenchmarkCoordination::attach_with_timeout(&segment, Duration::from_secs(30))?;
 
@@ -368,11 +368,11 @@ fn signal_consumer() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn multi_signal_producer() -> Result<(), Box<dyn std::error::Error>> {
-    let segment = infra::segment_from_env("MYELON_BENCH_SEGMENT_NAME");
-    let num_consumers = infra::read_env_usize("MYELON_BENCH_NUM_CONSUMERS", 2);
-    let buffer = infra::read_env_usize("MYELON_BENCH_BUFFER", 65_536);
-    let events = infra::read_env_u64("MYELON_BENCH_EVENTS", 10_000_000);
-    let warmup = infra::read_env_u64("MYELON_BENCH_WARMUP", 100_000);
+    let segment = infra::segment_from_env(crate::infra::env::SEGMENT_NAME);
+    let num_consumers = infra::read_env_usize(crate::infra::env::NUM_CONSUMERS, 2);
+    let buffer = infra::read_env_usize(crate::infra::env::BUFFER, 65_536);
+    let events = infra::read_env_u64(crate::infra::env::EVENTS, 10_000_000);
+    let warmup = infra::read_env_u64(crate::infra::env::WARMUP, 100_000);
 
     let mut producer = build_shared_single_producer::<SignalEvent>(&segment, buffer)
         .discover_consumer_with_prefix_and_interval(
@@ -418,11 +418,11 @@ fn multi_signal_producer() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn multi_signal_consumer() -> Result<(), Box<dyn std::error::Error>> {
-    let segment = infra::segment_from_env("MYELON_BENCH_SEGMENT_NAME");
-    let consumer_id = infra::read_env_usize("MYELON_BENCH_CONSUMER_ID", 0);
-    let buffer = infra::read_env_usize("MYELON_BENCH_BUFFER", 65_536);
-    let events = infra::read_env_u64("MYELON_BENCH_EVENTS", 10_000_000);
-    let warmup = infra::read_env_u64("MYELON_BENCH_WARMUP", 100_000);
+    let segment = infra::segment_from_env(crate::infra::env::SEGMENT_NAME);
+    let consumer_id = infra::read_env_usize(crate::infra::env::CONSUMER_ID, 0);
+    let buffer = infra::read_env_usize(crate::infra::env::BUFFER, 65_536);
+    let events = infra::read_env_u64(crate::infra::env::EVENTS, 10_000_000);
+    let warmup = infra::read_env_u64(crate::infra::env::WARMUP, 100_000);
 
     let consumer_name = multi_consumer_id(consumer_id);
     let mut consumer = attach_consumer_with_timeout::<SignalEvent>(
@@ -496,12 +496,12 @@ fn multi_signal_consumer() -> Result<(), Box<dyn std::error::Error>> {
 // ============================================================
 
 fn multi_message_producer_sized<const SIZE: usize>() -> Result<(), Box<dyn std::error::Error>> {
-    let segment = infra::segment_from_env("MYELON_BENCH_SEGMENT_NAME");
-    let num_consumers = infra::read_env_usize("MYELON_BENCH_NUM_CONSUMERS", 3);
-    let buffer = infra::read_env_usize("MYELON_BENCH_BUFFER", 4096);
-    let events = infra::read_env_u64("MYELON_BENCH_EVENTS", 100_000);
-    let warmup = infra::read_env_u64("MYELON_BENCH_WARMUP", 1_000);
-    let target_rate = infra::read_env_u64("MYELON_BENCH_TARGET_RATE", 0);
+    let segment = infra::segment_from_env(crate::infra::env::SEGMENT_NAME);
+    let num_consumers = infra::read_env_usize(crate::infra::env::NUM_CONSUMERS, 3);
+    let buffer = infra::read_env_usize(crate::infra::env::BUFFER, 4096);
+    let events = infra::read_env_u64(crate::infra::env::EVENTS, 100_000);
+    let warmup = infra::read_env_u64(crate::infra::env::WARMUP, 1_000);
+    let target_rate = infra::read_env_u64(crate::infra::env::TARGET_RATE, 0);
 
     let mut producer = build_shared_single_producer::<BenchEvent<SIZE>>(&segment, buffer)
         .discover_consumer_with_prefix_and_interval(
@@ -568,19 +568,19 @@ fn multi_message_producer_sized<const SIZE: usize>() -> Result<(), Box<dyn std::
 }
 
 fn multi_message_producer() -> Result<(), Box<dyn std::error::Error>> {
-    let event_bytes = infra::read_env_usize("MYELON_BENCH_EVENT_SIZE", 144);
+    let event_bytes = infra::read_env_usize(crate::infra::env::EVENT_SIZE, 144);
     crate::dispatch_bench_event!(event_bytes, |<SIZE>| {
         multi_message_producer_sized::<SIZE>()
     })
 }
 
 fn multi_message_consumer_sized<const SIZE: usize>() -> Result<(), Box<dyn std::error::Error>> {
-    let segment = infra::segment_from_env("MYELON_BENCH_SEGMENT_NAME");
-    let consumer_id = infra::read_env_usize("MYELON_BENCH_CONSUMER_ID", 0);
-    let buffer = infra::read_env_usize("MYELON_BENCH_BUFFER", 4096);
-    let events = infra::read_env_u64("MYELON_BENCH_EVENTS", 100_000);
-    let warmup = infra::read_env_u64("MYELON_BENCH_WARMUP", 1_000);
-    let record_latency = infra::read_env_usize("MYELON_BENCH_RECORD_LATENCY", 0) == 1;
+    let segment = infra::segment_from_env(crate::infra::env::SEGMENT_NAME);
+    let consumer_id = infra::read_env_usize(crate::infra::env::CONSUMER_ID, 0);
+    let buffer = infra::read_env_usize(crate::infra::env::BUFFER, 4096);
+    let events = infra::read_env_u64(crate::infra::env::EVENTS, 100_000);
+    let warmup = infra::read_env_u64(crate::infra::env::WARMUP, 1_000);
+    let record_latency = infra::read_env_usize(crate::infra::env::RECORD_LATENCY, 0) == 1;
 
     let consumer_name = multi_consumer_id(consumer_id);
     let mut consumer = attach_consumer_with_timeout::<BenchEvent<SIZE>>(
@@ -681,7 +681,7 @@ fn multi_message_consumer_sized<const SIZE: usize>() -> Result<(), Box<dyn std::
 }
 
 fn multi_message_consumer() -> Result<(), Box<dyn std::error::Error>> {
-    let event_bytes = infra::read_env_usize("MYELON_BENCH_EVENT_SIZE", 144);
+    let event_bytes = infra::read_env_usize(crate::infra::env::EVENT_SIZE, 144);
     crate::dispatch_bench_event!(event_bytes, |<SIZE>| {
         multi_message_consumer_sized::<SIZE>()
     })
@@ -784,15 +784,15 @@ impl IpcBenchmark for Scenario {
         };
         let segment = infra::unique_shm_segment(prefix);
         let mut envs: Vec<(&str, String)> = vec![
-            ("MYELON_BENCH_SEGMENT_NAME", segment.clone()),
-            ("MYELON_BENCH_NUM_CONSUMERS", self.consumers.to_string()),
-            ("MYELON_BENCH_EVENT_SIZE", self.event_bytes.to_string()),
-            ("MYELON_BENCH_BUFFER", self.buffer.to_string()),
-            ("MYELON_BENCH_EVENTS", self.events.to_string()),
-            ("MYELON_BENCH_WARMUP", self.warmup.to_string()),
+            (crate::infra::env::SEGMENT_NAME, segment.clone()),
+            (crate::infra::env::NUM_CONSUMERS, self.consumers.to_string()),
+            (crate::infra::env::EVENT_SIZE, self.event_bytes.to_string()),
+            (crate::infra::env::BUFFER, self.buffer.to_string()),
+            (crate::infra::env::EVENTS, self.events.to_string()),
+            (crate::infra::env::WARMUP, self.warmup.to_string()),
         ];
         if self.target_rate > 0 {
-            envs.push(("MYELON_BENCH_TARGET_RATE", self.target_rate.to_string()));
+            envs.push((crate::infra::env::TARGET_RATE, self.target_rate.to_string()));
         }
 
         let producer = infra::spawn_child(exe, self.producer_role, &envs);
@@ -800,9 +800,9 @@ impl IpcBenchmark for Scenario {
             .map(|consumer_id| {
                 let mut consumer_envs = envs.clone();
                 if self.record_latency || self.target_rate > 0 {
-                    consumer_envs.push(("MYELON_BENCH_RECORD_LATENCY", "1".to_string()));
+                    consumer_envs.push((crate::infra::env::RECORD_LATENCY, "1".to_string()));
                 }
-                consumer_envs.push(("MYELON_BENCH_CONSUMER_ID", consumer_id.to_string()));
+                consumer_envs.push((crate::infra::env::CONSUMER_ID, consumer_id.to_string()));
                 infra::spawn_child(exe, self.consumer_role, &consumer_envs)
             })
             .collect();

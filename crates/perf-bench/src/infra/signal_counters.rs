@@ -14,8 +14,8 @@ use std::sync::{
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-pub const SIGNAL_COUNTERS_SHM_ENV: &str = "MYELON_BENCH_SIGNAL_COUNTERS_SHM_ID";
-pub const SIGNAL_COUNTERS_MODE_ENV: &str = "MYELON_BENCH_SIGNAL_COUNTERS_MODE";
+pub const SIGNAL_COUNTERS_SHM_ENV: &str = crate::infra::env::SIGNAL_COUNTERS_SHM_ID;
+pub const SIGNAL_COUNTERS_MODE_ENV: &str = crate::infra::env::SIGNAL_COUNTERS_MODE;
 pub const SIGNAL_SINGLE_CONSUMER_ID: &str = "ad_0";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

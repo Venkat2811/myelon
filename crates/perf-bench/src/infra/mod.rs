@@ -10,6 +10,9 @@
 pub mod bench;
 pub mod child_runner;
 pub mod config;
+pub mod env {
+    pub use myelon_env::bench::*;
+}
 pub mod launch;
 pub mod naming;
 pub mod output;

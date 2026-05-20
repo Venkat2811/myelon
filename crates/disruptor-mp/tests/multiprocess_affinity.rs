@@ -3,6 +3,7 @@
 use disruptor_mp::{
     attach_shared_consumer, build_shared_single_producer, portable_shm_segment_name,
 };
+use myelon_env::runtime as runtime_env;
 use std::sync::{Mutex, MutexGuard};
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -86,9 +87,9 @@ fn builder_affinity_requests_do_not_break_auto_consumer_bringup_on_non_linux(
 fn env_affinity_requests_do_not_break_bringup_on_non_linux(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let _env = AffinityEnvGuard::set(&[
-        ("DISRUPTOR_MP_PRODUCER_CORE", "3"),
-        ("DISRUPTOR_MP_CONSUMER_CORE", "4"),
-        ("DISRUPTOR_MP_AUTO_CONSUMER_CORE", "5"),
+        (runtime_env::PRODUCER_CORE, "3"),
+        (runtime_env::CONSUMER_CORE, "4"),
+        (runtime_env::AUTO_CONSUMER_CORE, "5"),
     ]);
 
     let name = unique_name("afenv");

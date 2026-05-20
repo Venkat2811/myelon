@@ -32,11 +32,11 @@ type Frame = FixedFrame<FRAME_DATA_BYTES>;
 // ============================================================
 
 fn producer_process() -> Result<(), Box<dyn std::error::Error>> {
-    let segment = segment_from_env("MYELON_BENCH_SEGMENT_NAME");
-    let payload_size = read_env_usize("MYELON_BENCH_PAYLOAD_SIZE", 1024);
-    let num_messages = read_env_u64("MYELON_BENCH_NUM_MESSAGES", 50_000);
-    let buffer_depth = read_env_usize("MYELON_BENCH_BUFFER_DEPTH", 1024);
-    let num_consumers = read_env_usize("MYELON_BENCH_NUM_CONSUMERS", 1);
+    let segment = segment_from_env(crate::infra::env::SEGMENT_NAME);
+    let payload_size = read_env_usize(crate::infra::env::PAYLOAD_SIZE, 1024);
+    let num_messages = read_env_u64(crate::infra::env::NUM_MESSAGES, 50_000);
+    let buffer_depth = read_env_usize(crate::infra::env::BUFFER_DEPTH, 1024);
+    let num_consumers = read_env_usize(crate::infra::env::NUM_CONSUMERS, 1);
 
     let mut producer = FramedTransportProducer::<Frame>::create_with_consumers(
         &segment,
@@ -72,10 +72,10 @@ fn producer_process() -> Result<(), Box<dyn std::error::Error>> {
 // ============================================================
 
 fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
-    let segment = segment_from_env("MYELON_BENCH_SEGMENT_NAME");
-    let consumer_id = read_env_usize("MYELON_BENCH_CONSUMER_ID", 0);
-    let buffer_depth = read_env_usize("MYELON_BENCH_BUFFER_DEPTH", 1024);
-    let num_messages = read_env_u64("MYELON_BENCH_NUM_MESSAGES", 50_000);
+    let segment = segment_from_env(crate::infra::env::SEGMENT_NAME);
+    let consumer_id = read_env_usize(crate::infra::env::CONSUMER_ID, 0);
+    let buffer_depth = read_env_usize(crate::infra::env::BUFFER_DEPTH, 1024);
+    let num_messages = read_env_u64(crate::infra::env::NUM_MESSAGES, 50_000);
 
     let coord = BenchmarkCoordination::attach_with_timeout(&segment, Duration::from_secs(30))?;
 
@@ -90,8 +90,9 @@ fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
     let mut start: Option<Instant> = None;
     let mut consumed = 0u64;
     let mut checksum = 0u64;
-    let mut reassembly =
-        ReassemblyBuffer::new(read_env_usize("MYELON_BENCH_PAYLOAD_SIZE", 1024).max(256 * 1024));
+    let mut reassembly = ReassemblyBuffer::new(
+        read_env_usize(crate::infra::env::PAYLOAD_SIZE, 1024).max(256 * 1024),
+    );
 
     // Consume exactly num_messages — avoids deadlock from calling
     // recv_message_blocking after all messages are consumed.
@@ -112,7 +113,7 @@ fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
         consumer_id,
         consumed,
         elapsed,
-        read_env_usize("MYELON_BENCH_PAYLOAD_SIZE", 1024),
+        read_env_usize(crate::infra::env::PAYLOAD_SIZE, 1024),
         checksum,
     );
     println!("{}", serde_json::to_string(&output)?);
@@ -190,18 +191,18 @@ impl IpcBenchmark for Scenario {
     fn launch(&self, exe: &std::path::Path) -> Result<ScenarioChildren, infra::BenchError> {
         let segment = unique_shm_segment(&format!("fr_{}", self.scenario_name()));
         let env_common: Vec<(&str, String)> = vec![
-            ("MYELON_BENCH_SEGMENT_NAME", segment.clone()),
-            ("MYELON_BENCH_PAYLOAD_SIZE", self.payload.to_string()),
-            ("MYELON_BENCH_NUM_MESSAGES", self.messages.to_string()),
-            ("MYELON_BENCH_BUFFER_DEPTH", self.buffer.to_string()),
-            ("MYELON_BENCH_NUM_CONSUMERS", self.consumers.to_string()),
+            (crate::infra::env::SEGMENT_NAME, segment.clone()),
+            (crate::infra::env::PAYLOAD_SIZE, self.payload.to_string()),
+            (crate::infra::env::NUM_MESSAGES, self.messages.to_string()),
+            (crate::infra::env::BUFFER_DEPTH, self.buffer.to_string()),
+            (crate::infra::env::NUM_CONSUMERS, self.consumers.to_string()),
         ];
 
         let producer = spawn_child(exe, self.producer_role, &env_common);
         let consumers = (0..self.consumers)
             .map(|consumer_id| {
                 let mut consumer_envs = env_common.clone();
-                consumer_envs.push(("MYELON_BENCH_CONSUMER_ID", consumer_id.to_string()));
+                consumer_envs.push((crate::infra::env::CONSUMER_ID, consumer_id.to_string()));
                 spawn_child(exe, self.consumer_role, &consumer_envs)
             })
             .collect();

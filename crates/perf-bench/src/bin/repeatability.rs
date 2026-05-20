@@ -20,7 +20,7 @@ struct Args {
     threshold_pct: f64,
 
     /// Environment variable that benchmark command uses for canonical JSON export
-    #[arg(long, default_value = "MYELON_BENCH_JSON_OUT")]
+    #[arg(long, default_value = perf_bench::infra::env::JSON_OUT)]
     json_env: String,
 
     /// Write aggregated repeatability report as JSON

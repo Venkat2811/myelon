@@ -17,6 +17,7 @@ workspace = true
 # Transport layers
 disruptor_mp = { package = "disruptor-mp", path = "../disruptor-mp" }
 myelon = { path = "../myelon", features = ["rkyv", "flatbuffers"] }
+myelon-env = { path = "../myelon-env", version = "0.1.0-alpha.1" }
 
 # Serialization (for codec e2e benchmarks)
 rkyv = { version = "0.8", features = ["bytecheck"] }

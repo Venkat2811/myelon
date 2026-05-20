@@ -40,10 +40,10 @@ const DEFAULT_LOG_DIR: &str = "output/logs";
 /// 2. `MYELON_BENCH_OUT_DIR` env var + `/logs` suffix (run output dir)
 /// 3. Default: `output/logs` (relative to cwd, gitignored)
 pub fn log_dir() -> String {
-    if let Ok(dir) = std::env::var("MYELON_BENCH_LOG_DIR") {
+    if let Ok(dir) = std::env::var(crate::infra::env::LOG_DIR) {
         return dir;
     }
-    if let Ok(out_dir) = std::env::var("MYELON_BENCH_OUT_DIR") {
+    if let Ok(out_dir) = std::env::var(crate::infra::env::OUT_DIR) {
         return format!("{out_dir}/logs");
     }
     DEFAULT_LOG_DIR.to_string()
@@ -51,7 +51,7 @@ pub fn log_dir() -> String {
 
 /// Check if logging is enabled (default: yes, disable with `MYELON_BENCH_LOG=0`).
 pub fn is_enabled() -> bool {
-    std::env::var("MYELON_BENCH_LOG")
+    std::env::var(crate::infra::env::LOG)
         .map(|v| v != "0")
         .unwrap_or(true)
 }

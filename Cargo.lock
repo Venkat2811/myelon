@@ -460,6 +460,7 @@ dependencies = [
  "iceoryx2",
  "libc",
  "myelon",
+ "myelon-env",
  "perf-bench",
  "rusteron-client",
  "rusteron-media-driver",
@@ -746,6 +747,7 @@ dependencies = [
  "metrics-exporter-prometheus",
  "metrics-util 0.19.1",
  "myelon-dst",
+ "myelon-env",
  "nix 0.31.3",
  "num-format",
  "once_cell",
@@ -2051,10 +2053,15 @@ version = "0.1.0"
 dependencies = [
  "disruptor-mp",
  "libc",
+ "myelon-env",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
 ]
+
+[[package]]
+name = "myelon-env"
+version = "0.1.0-alpha.1"
 
 [[package]]
 name = "myelon-pulse-vanity"
@@ -2365,6 +2372,7 @@ dependencies = [
  "hdrhistogram",
  "libc",
  "myelon",
+ "myelon-env",
  "num-format",
  "rkyv",
  "serde",

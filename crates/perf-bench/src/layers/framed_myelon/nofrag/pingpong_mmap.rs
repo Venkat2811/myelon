@@ -76,17 +76,22 @@ impl MmapEnv {
 
 fn read_env() -> MmapEnv {
     MmapEnv {
-        root: PathBuf::from(env::var("MYELON_BENCH_MMAP_ROOT").expect("MYELON_BENCH_MMAP_ROOT")),
-        ping_segment: env::var("MYELON_BENCH_PING_SEGMENT").expect("MYELON_BENCH_PING_SEGMENT"),
-        pong_segment: env::var("MYELON_BENCH_PONG_SEGMENT").expect("MYELON_BENCH_PONG_SEGMENT"),
-        coordination_segment: env::var("MYELON_BENCH_COORDINATION_SEGMENT")
-            .expect("MYELON_BENCH_COORDINATION_SEGMENT"),
-        payload_bytes: infra::read_env_usize("MYELON_BENCH_PAYLOAD_BYTES", 64),
-        messages: infra::read_env_u64("MYELON_BENCH_MESSAGES", 100_000),
-        warmup: infra::read_env_u64("MYELON_BENCH_WARMUP", 10_000),
-        buffer_depth: infra::read_env_usize("MYELON_BENCH_BUFFER_DEPTH", 4096),
-        wait_strategy: env::var("MYELON_BENCH_WAIT_STRATEGY").unwrap_or_else(|_| "busyspin".into()),
-        target_rate: infra::read_env_u64("MYELON_BENCH_TARGET_RATE", 0),
+        root: PathBuf::from(
+            env::var(crate::infra::env::MMAP_ROOT).expect(crate::infra::env::MMAP_ROOT),
+        ),
+        ping_segment: env::var(crate::infra::env::PING_SEGMENT)
+            .expect(crate::infra::env::PING_SEGMENT),
+        pong_segment: env::var(crate::infra::env::PONG_SEGMENT)
+            .expect(crate::infra::env::PONG_SEGMENT),
+        coordination_segment: env::var(crate::infra::env::COORDINATION_SEGMENT)
+            .expect(crate::infra::env::COORDINATION_SEGMENT),
+        payload_bytes: infra::read_env_usize(crate::infra::env::PAYLOAD_BYTES, 64),
+        messages: infra::read_env_u64(crate::infra::env::MESSAGES, 100_000),
+        warmup: infra::read_env_u64(crate::infra::env::WARMUP, 10_000),
+        buffer_depth: infra::read_env_usize(crate::infra::env::BUFFER_DEPTH, 4096),
+        wait_strategy: env::var(crate::infra::env::WAIT_STRATEGY)
+            .unwrap_or_else(|_| "busyspin".into()),
+        target_rate: infra::read_env_u64(crate::infra::env::TARGET_RATE, 0),
     }
 }
 
@@ -396,16 +401,25 @@ impl IpcBenchmark for Scenario {
         let root = unique_mmap_root("nfpp_mmap");
         let coordination_segment = unique_shm_segment("nfpp_coord");
         let env_common = vec![
-            ("MYELON_BENCH_MMAP_ROOT", root.display().to_string()),
-            ("MYELON_BENCH_PING_SEGMENT", unique_mmap_segment("ping")),
-            ("MYELON_BENCH_PONG_SEGMENT", unique_mmap_segment("pong")),
-            ("MYELON_BENCH_COORDINATION_SEGMENT", coordination_segment),
-            ("MYELON_BENCH_PAYLOAD_BYTES", self.payload_bytes.to_string()),
-            ("MYELON_BENCH_MESSAGES", self.messages.to_string()),
-            ("MYELON_BENCH_WARMUP", self.warmup.to_string()),
-            ("MYELON_BENCH_BUFFER_DEPTH", self.buffer_depth.to_string()),
-            ("MYELON_BENCH_WAIT_STRATEGY", self.wait_strategy.clone()),
-            ("MYELON_BENCH_TARGET_RATE", self.target_rate.to_string()),
+            (crate::infra::env::MMAP_ROOT, root.display().to_string()),
+            (crate::infra::env::PING_SEGMENT, unique_mmap_segment("ping")),
+            (crate::infra::env::PONG_SEGMENT, unique_mmap_segment("pong")),
+            (
+                crate::infra::env::COORDINATION_SEGMENT,
+                coordination_segment,
+            ),
+            (
+                crate::infra::env::PAYLOAD_BYTES,
+                self.payload_bytes.to_string(),
+            ),
+            (crate::infra::env::MESSAGES, self.messages.to_string()),
+            (crate::infra::env::WARMUP, self.warmup.to_string()),
+            (
+                crate::infra::env::BUFFER_DEPTH,
+                self.buffer_depth.to_string(),
+            ),
+            (crate::infra::env::WAIT_STRATEGY, self.wait_strategy.clone()),
+            (crate::infra::env::TARGET_RATE, self.target_rate.to_string()),
         ];
 
         let producer = spawn_child(exe, self.producer_role, &env_common);

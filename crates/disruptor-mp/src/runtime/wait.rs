@@ -4,8 +4,8 @@
 //! in the multiprocess implementation. Values can be configured via environment
 //! variables with sensible defaults.
 
+use myelon_env::{read, runtime as runtime_env};
 use once_cell::sync::Lazy;
-use std::env;
 use std::time::Duration;
 
 /// Sleep configuration for multiprocess operations
@@ -47,50 +47,36 @@ impl SleepConfig {
         let mut config = Self::default();
 
         // Parse shutdown grace period
-        if let Ok(val) = env::var("DISRUPTOR_SHUTDOWN_GRACE_MS") {
-            if let Ok(ms) = val.parse::<u64>() {
-                config.shutdown_grace_ms = ms;
-            }
+        if let Some(ms) = read::parse::<u64>(runtime_env::SHUTDOWN_GRACE_MS) {
+            config.shutdown_grace_ms = ms;
         }
 
         // Parse block strategy sleep (microsecond override first for sane low-latency tuning).
-        if let Ok(val) = env::var("DISRUPTOR_BLOCK_STRATEGY_US") {
-            if let Ok(us) = val.parse::<u64>() {
-                config.block_strategy_ms = us as f64 / 1000.0;
-            }
-        } else if let Ok(val) = env::var("DISRUPTOR_BLOCK_STRATEGY_MS") {
-            if let Ok(ms) = val.parse::<f64>() {
-                if ms >= 0.0 {
-                    config.block_strategy_ms = ms;
-                }
+        if let Some(us) = read::parse::<u64>(runtime_env::BLOCK_STRATEGY_US) {
+            config.block_strategy_ms = us as f64 / 1000.0;
+        } else if let Some(ms) = read::parse::<f64>(runtime_env::BLOCK_STRATEGY_MS) {
+            if ms >= 0.0 {
+                config.block_strategy_ms = ms;
             }
         }
 
         // Parse discovery poll interval
-        if let Ok(val) = env::var("DISRUPTOR_DISCOVERY_POLL_MS") {
-            if let Ok(ms) = val.parse::<u64>() {
-                config.discovery_poll_ms = ms;
-            }
+        if let Some(ms) = read::parse::<u64>(runtime_env::DISCOVERY_POLL_MS) {
+            config.discovery_poll_ms = ms;
         }
 
         // Parse consume sleep
-        if let Ok(val) = env::var("DISRUPTOR_CONSUME_SLEEP_US") {
-            if let Ok(us) = val.parse::<u64>() {
-                config.consume_sleep_us = us;
-            }
+        if let Some(us) = read::parse::<u64>(runtime_env::CONSUME_SLEEP_US) {
+            config.consume_sleep_us = us;
         }
 
-        if let Ok(val) = env::var("DISRUPTOR_SLEEP_YIELD_THRESHOLD_US") {
-            if let Ok(us) = val.parse::<u64>() {
-                config.sleep_yield_threshold_us = us;
-            }
+        if let Some(us) = read::parse::<u64>(runtime_env::SLEEP_YIELD_THRESHOLD_US) {
+            config.sleep_yield_threshold_us = us;
         }
 
         // Parse consumer busy wait
-        if let Ok(val) = env::var("DISRUPTOR_CONSUMER_BUSY_WAIT_US") {
-            if let Ok(us) = val.parse::<u64>() {
-                config.consumer_busy_wait_us = us;
-            }
+        if let Some(us) = read::parse::<u64>(runtime_env::CONSUMER_BUSY_WAIT_US) {
+            config.consumer_busy_wait_us = us;
         }
 
         config

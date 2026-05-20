@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "crates/disruptor-mp",
+  "crates/myelon-env",
   "crates/myelon",
   "crates/myelon-dst",
   "crates/perf-bench",

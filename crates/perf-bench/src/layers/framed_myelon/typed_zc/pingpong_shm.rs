@@ -74,17 +74,18 @@ struct ShmEnv {
 
 fn read_env() -> ShmEnv {
     ShmEnv {
-        ping_segment: segment_from_env("MYELON_BENCH_PING_SEGMENT"),
-        pong_segment: segment_from_env("MYELON_BENCH_PONG_SEGMENT"),
-        coordination_segment: segment_from_env("MYELON_BENCH_COORDINATION_SEGMENT"),
-        codec: env::var("MYELON_BENCH_CODEC").expect("MYELON_BENCH_CODEC"),
-        batch_size: infra::read_env_usize("MYELON_BENCH_BATCH_SIZE", 1),
-        encoded_bytes: infra::read_env_usize("MYELON_BENCH_ENCODED_BYTES", 1),
-        messages: infra::read_env_u64("MYELON_BENCH_MESSAGES", 100_000),
-        warmup: infra::read_env_u64("MYELON_BENCH_WARMUP", 10_000),
-        buffer_depth: infra::read_env_usize("MYELON_BENCH_BUFFER_DEPTH", 4096),
-        wait_strategy: env::var("MYELON_BENCH_WAIT_STRATEGY").unwrap_or_else(|_| "busyspin".into()),
-        target_rate: infra::read_env_u64("MYELON_BENCH_TARGET_RATE", 0),
+        ping_segment: segment_from_env(crate::infra::env::PING_SEGMENT),
+        pong_segment: segment_from_env(crate::infra::env::PONG_SEGMENT),
+        coordination_segment: segment_from_env(crate::infra::env::COORDINATION_SEGMENT),
+        codec: env::var(crate::infra::env::CODEC).expect(crate::infra::env::CODEC),
+        batch_size: infra::read_env_usize(crate::infra::env::BATCH_SIZE, 1),
+        encoded_bytes: infra::read_env_usize(crate::infra::env::ENCODED_BYTES, 1),
+        messages: infra::read_env_u64(crate::infra::env::MESSAGES, 100_000),
+        warmup: infra::read_env_u64(crate::infra::env::WARMUP, 10_000),
+        buffer_depth: infra::read_env_usize(crate::infra::env::BUFFER_DEPTH, 4096),
+        wait_strategy: env::var(crate::infra::env::WAIT_STRATEGY)
+            .unwrap_or_else(|_| "busyspin".into()),
+        target_rate: infra::read_env_u64(crate::infra::env::TARGET_RATE, 0),
     }
 }
 
@@ -422,17 +423,26 @@ impl IpcBenchmark for Scenario {
         let pong_segment = unique_shm_segment("mpzc_pong");
         let coordination_segment = unique_shm_segment("mpzc_coord");
         let env_common = vec![
-            ("MYELON_BENCH_PING_SEGMENT", ping_segment),
-            ("MYELON_BENCH_PONG_SEGMENT", pong_segment),
-            ("MYELON_BENCH_COORDINATION_SEGMENT", coordination_segment),
-            ("MYELON_BENCH_CODEC", self.codec.to_string()),
-            ("MYELON_BENCH_BATCH_SIZE", self.batch_size.to_string()),
-            ("MYELON_BENCH_ENCODED_BYTES", self.encoded_bytes.to_string()),
-            ("MYELON_BENCH_MESSAGES", self.messages.to_string()),
-            ("MYELON_BENCH_WARMUP", self.warmup.to_string()),
-            ("MYELON_BENCH_BUFFER_DEPTH", self.buffer_depth.to_string()),
-            ("MYELON_BENCH_WAIT_STRATEGY", self.wait_strategy.clone()),
-            ("MYELON_BENCH_TARGET_RATE", self.target_rate.to_string()),
+            (crate::infra::env::PING_SEGMENT, ping_segment),
+            (crate::infra::env::PONG_SEGMENT, pong_segment),
+            (
+                crate::infra::env::COORDINATION_SEGMENT,
+                coordination_segment,
+            ),
+            (crate::infra::env::CODEC, self.codec.to_string()),
+            (crate::infra::env::BATCH_SIZE, self.batch_size.to_string()),
+            (
+                crate::infra::env::ENCODED_BYTES,
+                self.encoded_bytes.to_string(),
+            ),
+            (crate::infra::env::MESSAGES, self.messages.to_string()),
+            (crate::infra::env::WARMUP, self.warmup.to_string()),
+            (
+                crate::infra::env::BUFFER_DEPTH,
+                self.buffer_depth.to_string(),
+            ),
+            (crate::infra::env::WAIT_STRATEGY, self.wait_strategy.clone()),
+            (crate::infra::env::TARGET_RATE, self.target_rate.to_string()),
         ];
 
         let producer = spawn_child(exe, self.producer_role, &env_common);

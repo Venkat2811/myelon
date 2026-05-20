@@ -32,7 +32,7 @@ static LIVENESS_ON: OnceLock<bool> = OnceLock::new();
 /// matches everywhere.
 #[inline]
 pub fn liveness_enabled() -> bool {
-    *LIVENESS_ON.get_or_init(|| std::env::var("MYELON_BENCH_LIVENESS").as_deref() == Ok("on"))
+    *LIVENESS_ON.get_or_init(|| std::env::var(crate::infra::env::LIVENESS).as_deref() == Ok("on"))
 }
 
 /// Build a [`RequiredConsumerLivenessConfig`] tuned for perf-bench timings.

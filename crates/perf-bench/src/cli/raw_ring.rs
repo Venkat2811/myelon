@@ -267,7 +267,7 @@ impl RawRingSelection {
         }
         // Allow the signal binary (or any caller) to force latency recording
         // for signal scenarios via env var.
-        if std::env::var("MYELON_BENCH_SIGNAL_RECORD_LATENCY")
+        if std::env::var(crate::infra::env::SIGNAL_RECORD_LATENCY)
             .ok()
             .as_deref()
             == Some("1")

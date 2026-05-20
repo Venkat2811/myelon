@@ -240,7 +240,7 @@ pub fn benchmark_json_output_path() -> Option<String> {
 }
 
 pub fn legacy_json_output_path() -> Option<String> {
-    env::var("MYELON_BENCH_JSON_OUT")
+    env::var(crate::infra::env::JSON_OUT)
         .ok()
         .filter(|value| !value.trim().is_empty())
 }
@@ -512,12 +512,12 @@ mod tests {
     #[test]
     fn should_emit_report_honors_legacy_json_env() {
         unsafe {
-            env::set_var("MYELON_BENCH_JSON_OUT", "/tmp/out.json");
+            env::set_var(crate::infra::env::JSON_OUT, "/tmp/out.json");
         }
         let args = PingPongArgs::parse_from(["bench"]);
         assert!(should_emit_report(&args));
         unsafe {
-            env::remove_var("MYELON_BENCH_JSON_OUT");
+            env::remove_var(crate::infra::env::JSON_OUT);
         }
     }
 }

@@ -20,7 +20,7 @@ const MYELON_BENCH_BUFFER_SIZE: usize = 64 * 1024;
 const NUM_EVENTS: u64 = 100_000;
 
 fn num_events() -> u64 {
-    std::env::var("MYELON_BENCH_WAIT_NUM_EVENTS")
+    std::env::var(crate::infra::env::WAIT_NUM_EVENTS)
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
         .filter(|value| *value > 0)
@@ -49,7 +49,7 @@ impl Default for Event {
 // ============================================================
 
 fn producer_process() -> Result<(), Box<dyn std::error::Error>> {
-    let segment = infra::segment_from_env("MYELON_BENCH_SEGMENT_NAME");
+    let segment = infra::segment_from_env(crate::infra::env::SEGMENT_NAME);
     let num_consumers = read_env_usize("NUM_CONSUMERS", 1);
 
     let mut producer = build_shared_single_producer::<Event>(&segment, MYELON_BENCH_BUFFER_SIZE)
@@ -91,9 +91,9 @@ fn producer_process() -> Result<(), Box<dyn std::error::Error>> {
 // ============================================================
 
 fn consumer_process() -> Result<(), Box<dyn std::error::Error>> {
-    let segment = infra::segment_from_env("MYELON_BENCH_SEGMENT_NAME");
-    let consumer_id = read_env_usize("MYELON_BENCH_CONSUMER_ID", 0);
-    let wait_strategy = infra::read_env_string("MYELON_BENCH_WAIT_STRATEGY", "BusySpin");
+    let segment = infra::segment_from_env(crate::infra::env::SEGMENT_NAME);
+    let consumer_id = read_env_usize(crate::infra::env::CONSUMER_ID, 0);
+    let wait_strategy = infra::read_env_string(crate::infra::env::WAIT_STRATEGY, "BusySpin");
 
     let coord = BenchmarkCoordination::attach_with_timeout(&segment, Duration::from_secs(30))?;
     let config = SharedMemoryConfig {
@@ -223,16 +223,19 @@ impl IpcBenchmark for Scenario {
         let segment =
             infra::unique_shm_segment(&format!("ws_{}_{}c", self.wait_strategy, self.consumers));
         let envs: Vec<(&str, String)> = vec![
-            ("MYELON_BENCH_SEGMENT_NAME", segment.clone()),
+            (crate::infra::env::SEGMENT_NAME, segment.clone()),
             ("NUM_CONSUMERS", self.consumers.to_string()),
-            ("MYELON_BENCH_WAIT_STRATEGY", self.wait_strategy.to_string()),
+            (
+                crate::infra::env::WAIT_STRATEGY,
+                self.wait_strategy.to_string(),
+            ),
         ];
 
         let producer = infra::spawn_child(exe, self.producer_role, &envs);
         let consumers = (0..self.consumers)
             .map(|consumer_id| {
                 let mut consumer_envs = envs.clone();
-                consumer_envs.push(("MYELON_BENCH_CONSUMER_ID", consumer_id.to_string()));
+                consumer_envs.push((crate::infra::env::CONSUMER_ID, consumer_id.to_string()));
                 infra::spawn_child(exe, self.consumer_role, &consumer_envs)
             })
             .collect();
@@ -259,7 +262,7 @@ impl infra::BenchHarness for WaitStrategyShmBench {
 
     fn run_orchestrator(&self, args: &[String]) -> infra::BenchRunResult {
         let mode = infra::read_env_string(
-            "MYELON_BENCH_MODE",
+            crate::infra::env::MODE,
             args.iter()
                 .skip(1)
                 .find(|a| !a.starts_with("--"))

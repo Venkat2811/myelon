@@ -21,6 +21,7 @@ disruptor_mp = { package = "disruptor-mp", path = "../disruptor-mp" }
 hdrhistogram = "7"
 libc = "0.2"
 myelon = { path = "../myelon", features = ["rkyv", "flatbuffers"] }
+myelon-env = { path = "../myelon-env", version = "0.1.0-alpha.1" }
 perf-bench = { path = "../perf-bench" }
 rusteron-client = "0.1.162"
 rusteron-media-driver = "0.1.162"
