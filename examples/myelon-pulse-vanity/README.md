@@ -20,19 +20,33 @@ This demo is the visual reading of that:
 - Pulses that travel along those branches once everything's wired up
   — action potentials racing down the cord and back.
 
-Two motion shapes that map onto real `disruptor-mp` / `myelon`
+Three motion shapes that map onto real `disruptor-mp` / `myelon`
 behaviour:
 
 - **Broadcast** — every leaf branch lights up on each pulse. Strict
   broadcast, multiprocess: one publish, every consumer sees it.
+  Travel time visible: ~0.5 s seed → leaf.
 - **Ping-pong** — every branch fires an outbound pulse simultaneously;
   each pulse hits its leaf tip and a return pulse fires back to the
   seed. All branches do the round-trip in parallel, with a brief
   pause between rounds. Rhythm: `out — back — pause — repeat`.
+- **Signal** — the whole cord (seed + every leaf) lights up in one
+  instant per beat. No propagation is drawn, because at ~275M
+  signals/s the per-event travel time is invisible to the eye.
+  Beats overlap (~11 Hz spawn, ~180 ms fade) so the cord reads as
+  continuously buzzing — that's what "signal is so fast it has no
+  visible motion" actually looks like.
 
-By default the demo alternates between the two every ~7 seconds so
-the contrast is obvious. `--mode broadcast`, `--mode pingpong`, or
-`--mode alternating` (default) to lock one in.
+By default the demo cycles through broadcast → ping-pong → signal,
+~7 s each, so the contrast between visible travel (broadcast),
+visible round-trip (ping-pong), and invisible propagation (signal)
+is obvious. `--mode broadcast`, `--mode pingpong`, `--mode signal`,
+or `--mode alternating` (default) to lock one in.
+
+A small dim line under the active mode caption names the canonical
+throughput / latency anchor for that mode (e.g.
+`275M signals/s · 21ns avg queue` for SIGNAL). Numbers come from
+the perf-bench surface, not promotional marketing.
 
 ## Aesthetic
 
@@ -60,8 +74,9 @@ Click `START` and the cord starts to grow:
    `READY` — crossfading between each.
 4. At `READY`, the seed glows brighter for a moment ("system online")
    and pulses begin travelling along the established branches.
-5. The subtitle settles to the current run mode: `BROADCAST` or
-   `PING-PONG`.
+5. The subtitle settles to the current run mode: `BROADCAST`,
+   `PING-PONG`, or `SIGNAL`. A small line under it names the
+   headline throughput / latency for that mode.
 
 `STOP` clears it back to empty.
 
@@ -108,9 +123,10 @@ absolute path. Same line prints to the terminal.
 ## Run
 
 ```bash
-cargo run --release -p myelon-pulse-vanity                       # default
+cargo run --release -p myelon-pulse-vanity                       # default (alternating)
 cargo run --release -p myelon-pulse-vanity -- --mode broadcast
 cargo run --release -p myelon-pulse-vanity -- --mode pingpong
+cargo run --release -p myelon-pulse-vanity -- --mode signal
 cargo run --release -p myelon-pulse-vanity -- --branches 9
 cargo run --release -p myelon-pulse-vanity -- --autostart        # skip START click
 cargo run --release -p myelon-pulse-vanity -- --record           # capture mode

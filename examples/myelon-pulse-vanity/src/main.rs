@@ -3,7 +3,7 @@
 //! A House-MD-titles-style angiogram. The trunk emerges from a seed
 //! at the left edge of the canvas and fractal-branches outward to the
 //! right in fine, frayed, recursive tendrils. Once fully grown,
-//! pulses travel along the branches in two demonstrable shapes:
+//! pulses travel along the branches in three demonstrable shapes:
 //!
 //! - **Broadcast**: every leaf branch lights up in lockstep on each
 //!   pulse — `disruptor-mp`'s strict-broadcast multiprocess ring.
@@ -11,10 +11,15 @@
 //!   simultaneously; each pulse hits its own leaf and a return pulse
 //!   fires back to the seed. All branches do the round-trip in
 //!   parallel; the rhythm is `out — back — pause — repeat`.
+//! - **Signal**: the whole cord — seed + every leaf — lights up in
+//!   one instant per beat. No propagation is rendered, because at
+//!   ~275M signals/s the per-event travel time is invisible to the
+//!   eye. Beats overlap (~11 Hz spawn, ~180 ms fade) so the cord
+//!   reads as continuously buzzing alive.
 //!
 //! UI: `START` grows a fresh tree from empty; `STOP` clears it back
 //! to empty. `--mode` picks the pulse motion once the tree is alive;
-//! the default `alternating` toggles between broadcast and ping-pong.
+//! the default `alternating` cycles broadcast → ping-pong → signal.
 
 use std::f32::consts::TAU;
 use std::fs::{create_dir_all, File};
@@ -87,6 +92,7 @@ struct Args {
 enum Mode {
     Broadcast,
     Pingpong,
+    Signal,
     Alternating,
 }
 
@@ -575,17 +581,43 @@ enum PathPhase {
 
 struct PulseSystem {
     pulses: Vec<Pulse>,
+    /// Signal-mode beats. Each beat is one whole-cord flash with no
+    /// path or position — the renderer reads summed beat intensity
+    /// and lights up every segment + seed in one instant. Multiple
+    /// beats overlap and decay independently so the cord reads as
+    /// continuously buzzing.
+    flashes: Vec<SignalBeat>,
     /// Used by broadcast mode only.
     broadcast_clock: f32,
+    /// Used by signal mode only. Counts up; spawns one beat every
+    /// `SIGNAL_BEAT_INTERVAL_S` and resets.
+    signal_clock: f32,
     effective_mode: Mode,
     alternation_clock: f32,
     /// One entry per leaf path. Reinitialized when path count changes.
     path_states: Vec<PathPhase>,
 }
 
+/// One in-flight signal-mode beat. The whole cord brightens by
+/// `life.powf(0.6)` (ease-out); `life` decays from 1.0 to 0.0 over
+/// `SIGNAL_BEAT_FADE_S`. Fade is intentionally longer than spawn
+/// interval so beats overlap and the cord never goes fully dim.
+#[derive(Clone, Copy, Debug)]
+struct SignalBeat {
+    life: f32,
+}
+
 const BROADCAST_INTERVAL_S: f32 = 0.55;
 const PINGPONG_REST_MIN_S: f32 = 0.18;
 const PINGPONG_REST_MAX_S: f32 = 0.45;
+/// Signal-mode beat spawn cadence (~11 Hz). Fast enough to read as
+/// "buzzing alive" rather than discrete pulses, but still below the
+/// ~16 Hz flicker-fusion threshold so the beat rhythm stays visible.
+const SIGNAL_BEAT_INTERVAL_S: f32 = 0.09;
+/// Time for one beat's brightness to decay from peak to zero. Set
+/// to 2× the spawn interval so ~2 beats overlap at any moment —
+/// the cord stays continuously hot with a visible beat rhythm.
+const SIGNAL_BEAT_FADE_S: f32 = 0.18;
 const ALTERNATION_PERIOD_S: f32 = 7.0;
 
 fn pulse_speed_for(canvas_w: f32) -> f32 {
@@ -617,7 +649,9 @@ impl PulseSystem {
     fn new(initial_mode: Mode) -> Self {
         Self {
             pulses: Vec::with_capacity(64),
+            flashes: Vec::with_capacity(8),
             broadcast_clock: 0.0,
+            signal_clock: 0.0,
             effective_mode: match initial_mode {
                 Mode::Alternating => Mode::Broadcast,
                 m => m,
@@ -636,6 +670,7 @@ impl PulseSystem {
                 self.alternation_clock = 0.0;
                 self.effective_mode = match self.effective_mode {
                     Mode::Broadcast => Mode::Pingpong,
+                    Mode::Pingpong => Mode::Signal,
                     _ => Mode::Broadcast,
                 };
             }
@@ -650,6 +685,14 @@ impl PulseSystem {
             && !matches!(prev_effective, Mode::Pingpong);
         if self.path_states.len() != tree.leaf_paths.len() || entered_pingpong {
             self.path_states = init_path_states(tree.leaf_paths.len());
+        }
+
+        // On entering signal mode, reset the spawn clock so the first
+        // beat fires one cadence interval after the handoff rather
+        // than partway through whatever broadcast/pingpong leftover
+        // was sitting in `signal_clock`.
+        if matches!(self.effective_mode, Mode::Signal) && !matches!(prev_effective, Mode::Signal) {
+            self.signal_clock = 0.0;
         }
 
         // Advance live pulses by absolute distance.
@@ -678,6 +721,10 @@ impl PulseSystem {
             Mode::Pingpong => {
                 self.broadcast_clock = 0.0;
                 self.tick_pingpong(dt, tree, canvas_w);
+            }
+            Mode::Signal => {
+                self.broadcast_clock = 0.0;
+                self.tick_signal(dt);
             }
             Mode::Alternating => unreachable!(),
         }
@@ -788,6 +835,24 @@ impl PulseSystem {
                 hot: PULSE_CORE,
             });
         }
+    }
+
+    /// Spawn signal-mode beats at a fixed cadence and decay live ones.
+    /// Each beat is a whole-cord event with no path or position; the
+    /// renderer reads summed beat intensity and lights up every
+    /// segment + seed simultaneously. This is the honest visual of
+    /// `signal` semantics — at ~275M signals/s, per-event propagation
+    /// is invisible to the eye, so we don't try to draw motion.
+    fn tick_signal(&mut self, dt: f32) {
+        self.signal_clock += dt;
+        if self.signal_clock >= SIGNAL_BEAT_INTERVAL_S {
+            self.signal_clock = 0.0;
+            self.flashes.push(SignalBeat { life: 1.0 });
+        }
+        for f in &mut self.flashes {
+            f.life -= dt / SIGNAL_BEAT_FADE_S;
+        }
+        self.flashes.retain(|f| f.life > 0.0);
     }
 }
 
@@ -1490,6 +1555,118 @@ fn draw_pulse(tree: &Tree, pulse: &Pulse, pivot_x: f32, pivot_y: f32, theta: f32
     }
 }
 
+/// Whole-cord additive overlay drawn for active signal beats. Unlike
+/// broadcast / ping-pong which spawn travelling pulses, a "signal
+/// beat" lights up seed + every segment in one instant — no
+/// propagation is rendered because at ~275M signals/s per-event
+/// travel time is invisible to the eye. Beats overlap so the cord
+/// reads as a fast continuous buzz at the spawn cadence.
+///
+/// `intensity` is the summed `life.powf(0.6)` across all live beats;
+/// the caller computes it once per frame and skips this function
+/// when the sum is below ~1e-3.
+fn draw_signal_flash(
+    tree: &Tree,
+    seed_pt: Vec2,
+    intensity: f32,
+    pivot_x: f32,
+    pivot_y: f32,
+    theta: f32,
+    focal: f32,
+) {
+    let intensity = intensity.clamp(0.0, 2.0);
+
+    // Seed flare. Drawn at the unrotated seed position so it stays
+    // anchored to the pivot just like `draw_seed` does. Slightly
+    // hotter / whiter than the base seed glow so the "signal fired"
+    // moment is clearly distinguishable from the steady warm-up
+    // glow used during Idle and Growing.
+    let seed_scale = intensity.min(1.5);
+    for (r, a) in [(50.0, 0.10), (28.0, 0.22), (12.0, 0.55)] {
+        draw_circle(
+            seed_pt.x,
+            seed_pt.y,
+            r,
+            Color::new(
+                PULSE_HOT.r,
+                PULSE_HOT.g * 0.78,
+                PULSE_HOT.b * 0.40,
+                a * seed_scale,
+            ),
+        );
+    }
+    draw_circle(
+        seed_pt.x,
+        seed_pt.y,
+        4.0,
+        Color::new(
+            PULSE_CORE.r,
+            PULSE_CORE.g,
+            PULSE_CORE.b,
+            (0.95 * seed_scale).min(1.0),
+        ),
+    );
+
+    // Per-segment additive overlay. Same projection math as
+    // `draw_segment` so the overlay rides exactly on the existing
+    // branches under any pitch rotation. Thickness tapers with
+    // depth identically to the base render so deep tendrils don't
+    // suddenly read as the same weight as the trunk.
+    for seg in &tree.segments {
+        let n_total = seg.samples.len();
+        let depth_thick = 0.78_f32.powi(seg.depth as i32);
+
+        for i in 0..(n_total - 1) {
+            let a = project_x_rot(
+                seg.samples[i],
+                seg.z_samples[i],
+                pivot_x,
+                pivot_y,
+                theta,
+                focal,
+            );
+            let b = project_x_rot(
+                seg.samples[i + 1],
+                seg.z_samples[i + 1],
+                pivot_x,
+                pivot_y,
+                theta,
+                focal,
+            );
+            let halo_w = (9.0 * depth_thick).max(3.0);
+            let glow_w = (4.0 * depth_thick).max(1.5);
+            let core_w = (1.4 * depth_thick).max(0.5);
+            let halo_a = (0.16 * intensity).min(0.45);
+            let glow_a = (0.38 * intensity).min(0.75);
+            let core_a = (0.85 * intensity).min(1.0);
+            draw_line(
+                a.x,
+                a.y,
+                b.x,
+                b.y,
+                halo_w,
+                Color::new(PULSE_HOT.r, PULSE_HOT.g * 0.62, PULSE_HOT.b * 0.28, halo_a),
+            );
+            draw_line(
+                a.x,
+                a.y,
+                b.x,
+                b.y,
+                glow_w,
+                Color::new(PULSE_HOT.r, PULSE_HOT.g, PULSE_HOT.b * 0.65, glow_a),
+            );
+            draw_line(
+                a.x,
+                a.y,
+                b.x,
+                b.y,
+                core_w,
+                Color::new(PULSE_CORE.r, PULSE_CORE.g, PULSE_CORE.b, core_a),
+            );
+        }
+    }
+}
+
 /// Pick a left-edge `x` for a text block of width `total_w` so that
 /// it visually centers around `center_frac * canvas_w` but never
 /// overflows the right margin (or the left margin, defensively).
@@ -1679,7 +1856,8 @@ fn phase_caption(app: &App) -> &'static str {
         Phase::Live => match app.pulse_system.effective_mode {
             Mode::Broadcast => "BROADCAST",
             Mode::Pingpong => "PING-PONG",
-            // Alternating resolves to one of the two by the time we
+            Mode::Signal => "SIGNAL",
+            // Alternating resolves to one of the three by the time we
             // hit Live; this branch is just defensive.
             Mode::Alternating => "READY",
         },
@@ -1733,6 +1911,58 @@ fn draw_caption(text: &str, canvas_w: f32, canvas_h: f32, alpha: f32) {
         }
         x += w + letter_pad;
     }
+}
+
+/// Headline ops/s + latency anchor for each effective mode. Drawn
+/// as a small, dim line under the lifecycle caption so the viewer
+/// has one quantitative reference per mode without the canvas
+/// turning into a stat dashboard.
+///
+/// Numbers are anchors from the perf-bench / signal-bench surface
+/// — the figures the rest of the engineering work is reporting,
+/// not promotional marketing numbers. Signal uses the
+/// uncontended-machine ceiling (275M signals/s) because that's
+/// what the surface delivers when nothing else is competing for
+/// the box; the broadcast / ping-pong rows use shm-backed alpha.10
+/// readings at the canonical small-payload sizes.
+fn mode_stat_line(mode: Mode) -> Option<&'static str> {
+    match mode {
+        Mode::Signal => Some("275M signals/s  ·  21ns avg queue"),
+        Mode::Broadcast => Some("11M frames/s  ·  1KB  ·  shm"),
+        Mode::Pingpong => Some("5.6M msg/s  ·  130ns p50  ·  64B"),
+        // No stat line during Alternating — the effective mode is
+        // already resolved to one of the three by the time the
+        // caller calls this during Live.
+        Mode::Alternating => None,
+    }
+}
+
+/// Small dim mono-ish line just under the lifecycle caption. Drops
+/// to the bottom of the title block, two pixels of warm halo behind
+/// it so it ties into the title's ember palette without competing
+/// with the main caption above. Same `clamp_text_x` rule as the
+/// title and caption so longer future stat lines slide leftward
+/// instead of overflowing.
+fn draw_stat_line(text: &str, canvas_w: f32, canvas_h: f32, alpha: f32) {
+    if alpha <= 0.0 || text.is_empty() {
+        return;
+    }
+    let font_size = (canvas_h * 0.018).round().max(11.0);
+    let dim = measure_text(text, None, font_size as u16, 1.0);
+    let start_x = clamp_text_x(canvas_w, dim.width, 0.74);
+    let y = canvas_h * 0.77;
+
+    let halo = Color::new(
+        BRANCH_GLOW.r,
+        BRANCH_GLOW.g * 0.50,
+        BRANCH_GLOW.b * 0.22,
+        0.20 * alpha,
+    );
+    draw_text(text, start_x + 0.0, y + 1.0, font_size, halo);
+    draw_text(text, start_x + 1.0, y + 0.0, font_size, halo);
+
+    let main = Color::new(0.93, 0.84, 0.66, 0.55 * alpha);
+    draw_text(text, start_x, y, font_size, main);
 }
 
 fn draw_hud(sys: &PulseSystem, leaf_paths: usize, fps: f32) {
@@ -1850,7 +2080,9 @@ impl App {
         self.live_clock = 0.0;
         self.rotation_clock = 0.0;
         self.pulse_system.pulses.clear();
+        self.pulse_system.flashes.clear();
         self.pulse_system.broadcast_clock = 0.0;
+        self.pulse_system.signal_clock = 0.0;
         self.pulse_system.alternation_clock = 0.0;
         self.pulse_system.path_states.clear();
         // Force the next caption to fade in fresh — useful when
@@ -1869,6 +2101,7 @@ impl App {
         self.live_clock = 0.0;
         self.rotation_clock = 0.0;
         self.pulse_system.pulses.clear();
+        self.pulse_system.flashes.clear();
         self.pulse_system.path_states.clear();
         self.last_caption = "";
         self.caption_fade_in = 0.0;
@@ -2150,6 +2383,32 @@ async fn main() {
             }
 
             if matches!(app.phase, Phase::Live) {
+                // Signal mode: draw the whole-cord additive flash
+                // before the (empty-in-signal-mode) pulse loop so
+                // any future per-pulse decoration would render on
+                // top. Beats from the previous mode keep decaying
+                // for ~180 ms after a mode handoff, which makes
+                // alternating transitions read continuously
+                // illuminated instead of cutting hard.
+                if !app.pulse_system.flashes.is_empty() {
+                    let beat_intensity: f32 = app
+                        .pulse_system
+                        .flashes
+                        .iter()
+                        .map(|f| f.life.powf(0.6))
+                        .sum();
+                    if beat_intensity > 1e-3 {
+                        draw_signal_flash(
+                            tree,
+                            seed_pt,
+                            beat_intensity,
+                            pivot_x,
+                            pivot_y,
+                            theta,
+                            focal,
+                        );
+                    }
+                }
                 for pulse in &app.pulse_system.pulses {
                     draw_pulse(tree, pulse, pivot_x, pivot_y, theta, focal);
                 }
@@ -2195,6 +2454,18 @@ async fn main() {
         }
         let final_caption_alpha = caption_alpha * app.caption_fade_in;
         draw_caption(current_caption, cur_size.0, cur_size.1, final_caption_alpha);
+
+        // Small stat line below the caption, naming the canonical
+        // throughput / latency anchor for the currently active mode.
+        // Only visible during Live — the Growing-phase lifecycle
+        // captions (INITIALIZE / DISCOVER / ATTACH / READY) don't
+        // have numbers attached to them, so anchoring there would
+        // be noise.
+        if matches!(app.phase, Phase::Live) {
+            if let Some(line) = mode_stat_line(app.pulse_system.effective_mode) {
+                draw_stat_line(line, cur_size.0, cur_size.1, final_caption_alpha);
+            }
+        }
 
         // ---- GIF capture happens HERE, after the brand visual is
         // drawn but before any UI chrome. Otherwise the toast
