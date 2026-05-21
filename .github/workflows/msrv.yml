@@ -24,5 +24,8 @@ jobs:
         with:
           toolchain: ${{ steps.msrv.outputs.rust_version }}
       - uses: Swatinem/rust-cache@v2
-      - name: cargo check on MSRV
-        run: cargo check --workspace --locked
+      # MSRV gate scopes to the published surface (disruptor-mp + myelon)
+      # because the workspace pulls in dev-deps (shmipc, etc.) with higher
+      # MSRVs that aren't part of the public crate contract.
+      - name: cargo check on MSRV (publishable crates, all features)
+        run: cargo check -p disruptor-mp -p myelon --locked --all-features
