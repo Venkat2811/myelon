@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Design and usage questions
+    url: https://github.com/Venkat2811/myelon/discussions
+    about: For questions about how to use the library or design discussions, please open a Discussion instead of an Issue.
+  - name: Security vulnerabilities
+    url: https://github.com/Venkat2811/myelon/security/policy
+    about: For private vulnerability reports, please see SECURITY.md instead of opening a public issue.

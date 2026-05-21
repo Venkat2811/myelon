@@ -1,0 +1,30 @@
+name: Feature request
+description: Suggest an addition or change to the public API.
+title: "feature: "
+labels: ["enhancement", "triage"]
+body:
+  - type: dropdown
+    id: crate
+    attributes:
+      label: Which crate?
+      options:
+        - myelon
+        - disruptor-mp
+        - both
+        - other
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Use case
+      description: What are you trying to accomplish that the current API can't?
+    validations:
+      required: true
+  - type: textarea
+    id: proposed-api-shape
+    attributes:
+      label: Proposed API shape
+      description: Sketch a function signature or builder call.
+  - type: textarea
+    id: alternatives-considered
+    attributes:
+      label: Alternatives considered

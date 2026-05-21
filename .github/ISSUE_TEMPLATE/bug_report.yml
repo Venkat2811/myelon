@@ -1,0 +1,74 @@
+name: Bug report
+description: Report a defect in disruptor-mp, myelon, or myelon-dst.
+title: "bug: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a defect. If this issue describes a vulnerability, please follow SECURITY.md instead of opening a public issue.
+  - type: dropdown
+    id: crate
+    attributes:
+      label: Which crate is affected?
+      options:
+        - myelon
+        - disruptor-mp
+        - myelon-dst
+        - perf-bench
+        - competitive-bench
+        - other / unsure
+  - type: input
+    id: crate-version
+    attributes:
+      label: Crate version
+      placeholder: "0.1.0-alpha.1"
+    validations:
+      required: true
+  - type: dropdown
+    id: operating-system
+    attributes:
+      label: Operating system
+      options:
+        - Linux
+        - macOS
+        - other
+  - type: input
+    id: rustc-version
+    attributes:
+      label: rustc --version output
+    validations:
+      required: true
+  - type: dropdown
+    id: backend
+    attributes:
+      label: Backend
+      options:
+        - SHM (shared memory)
+        - mmap (memory-mapped file)
+        - both
+        - not applicable
+  - type: textarea
+    id: minimal-reproduction
+    attributes:
+      label: Minimal reproduction
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected-behaviour
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: actual-behaviour
+    attributes:
+      label: Actual behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional context
+      description: Backtrace, dmesg output, ulimits, or anything else relevant.
