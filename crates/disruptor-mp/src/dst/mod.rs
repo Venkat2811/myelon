@@ -5,9 +5,9 @@
 //! call sites (in `producer`, `builder`, `consumer`, `lock_free`,
 //! `observability`) resolve into real fault-injection logic when
 //! workspace tests run with `RUSTFLAGS="--cfg dst"`, and disappear at
-//! compile time otherwise. Mirrors how TigerBeetle ships its VOPR
+//! compile time otherwise. Mirrors how `TigerBeetle` ships its VOPR
 //! primitives alongside production code (just under a build-time
-//! switch instead of a Cargo feature), and how FoundationDB ships
+//! switch instead of a Cargo feature), and how `FoundationDB` ships
 //! BUGGIFY with the production codebase rather than as an external
 //! dependency.
 //!

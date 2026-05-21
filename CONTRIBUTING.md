@@ -27,7 +27,6 @@ If those gates pass, the branch is usually in good shape for review.
 crates/
 ├── disruptor-mp/      # Publishable raw substrate.
 ├── myelon/            # Publishable layered transport crate.
-├── myelon-env/        # Internal shared env-key and env-read helpers.
 ├── myelon-dst/        # Internal deterministic-simulation runner.
 ├── perf-bench/        # Internal transport sweep harness.
 └── competitive-bench/ # Internal external-comparison harness.
@@ -36,9 +35,8 @@ examples/              # Runnable examples.
 book/                  # mdBook source, maintained separately.
 ```
 
-Only `disruptor-mp` and `myelon` are published to crates.io. `myelon-env`,
-`myelon-dst`, `perf-bench`, and `competitive-bench` are internal workspace
-support crates.
+Only `disruptor-mp` and `myelon` are published to crates.io. `myelon-dst`,
+`perf-bench`, and `competitive-bench` are internal workspace support crates.
 
 ## Filing issues
 

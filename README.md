@@ -144,7 +144,6 @@ Read next:
 crates/
 ├── disruptor-mp/        # Publishable raw multiprocess substrate.
 ├── myelon/              # Publishable layered transport crate.
-├── myelon-env/          # Internal shared env-key and env-read helpers.
 ├── myelon-dst/          # Internal deterministic-simulation runner. Inspired by FoundationDB, TigerBeetle, Turso & SlateDB.
 ├── perf-bench/          # Internal broad transport sweep harness.
 └── competitive-bench/   # Internal external-comparison harness.
@@ -220,11 +219,6 @@ Benchmark crate entry points:
   - [x] rkyv (`Archived<T>`).
   - [x] flatbuffers root tables.
 - [x] Topology helpers for inference fabrics: rank-scoped request/response, producer-owned startup, attach-time wait-strategy metadata.
-
-### `myelon-env`: internal env-key and env-read helpers
-
-- [x] Shared env-key constants for the whole workspace.
-- [x] Consistent env-var parsing for all benches and runtimes.
 
 ### `myelon-dst`: internal deterministic-simulation harness
 

@@ -1,5 +1,5 @@
 #![cfg(dst)]
-//! DST-style real multiprocess FramedTransport checks.
+//! DST-style real multiprocess `FramedTransport` checks.
 //!
 //! These tests deliberately use real OS child processes and real SHM-backed
 //! framed rings so fragmentation and backpressure behavior is exercised outside

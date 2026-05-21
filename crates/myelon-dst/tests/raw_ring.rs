@@ -1,5 +1,4 @@
 #![cfg(dst)]
-//!
 use disruptor_mp::dst::buggify::ScopedBuggify;
 use disruptor_mp::dst::contract::FailureClass;
 use myelon_dst::{

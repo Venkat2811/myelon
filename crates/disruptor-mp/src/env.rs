@@ -9,7 +9,7 @@
 //!
 //! - [`read`] — generic env-var parsing helpers.
 //! - [`runtime`] — env-key string constants for substrate tuning knobs.
-//! - [`dst::buggify`] — DST BUGGIFY env-key constants, gated by `#[cfg(dst)]`.
+//! - `dst::buggify` — DST BUGGIFY env-key constants, gated by `#[cfg(dst)]`.
 
 use std::str::FromStr;
 
