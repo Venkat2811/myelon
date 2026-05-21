@@ -1176,7 +1176,7 @@ fn run_child_consumer() {
             consumed += 1;
             sum = sum.wrapping_add(event.checksum);
 
-            if slow_every > 0 && consumed.is_multiple_of(slow_every as u64) {
+            if slow_every > 0 && consumed % (slow_every as u64) == 0 {
                 thread::sleep(Duration::from_micros(slow_micros));
             }
         });

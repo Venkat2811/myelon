@@ -129,7 +129,7 @@ pub fn sample_every_from_env() -> u64 {
 
 #[inline]
 pub fn should_sample(sequence: u64, sample_every: u64) -> bool {
-    sample_every <= 1 || sequence.is_multiple_of(sample_every)
+    sample_every <= 1 || sequence % sample_every == 0
 }
 
 #[inline]

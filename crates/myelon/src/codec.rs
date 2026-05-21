@@ -287,7 +287,7 @@ mod tests {
             // In production, rkyv handles alignment; this is a simplified test.
             let ptr = bytes.as_ptr() as *const ArchivedSimplePair;
             // Check alignment
-            if !(ptr as usize).is_multiple_of(std::mem::align_of::<ArchivedSimplePair>()) {
+            if (ptr as usize) % std::mem::align_of::<ArchivedSimplePair>() != 0 {
                 return Err(CodecError::decode("unaligned"));
             }
             Ok(unsafe { &*ptr })

@@ -133,7 +133,7 @@ mod inner {
         let Some(every) = checkpoint_every() else {
             return;
         };
-        if event_count.is_multiple_of(every) {
+        if event_count % every == 0 {
             write_checkpoint(report);
         }
     }
@@ -382,7 +382,7 @@ mod inner {
                 },
                 messages.len() as u64,
             );
-            if pause_every > 0 && (sequence as usize + 1).is_multiple_of(pause_every) {
+            if pause_every > 0 && (sequence as usize + 1) % pause_every == 0 {
                 thread::sleep(Duration::from_micros(pause_micros));
             }
         }
@@ -555,7 +555,7 @@ mod inner {
                 },
                 messages.len() as u64,
             );
-            if pause_every > 0 && (sequence as usize + 1).is_multiple_of(pause_every) {
+            if pause_every > 0 && (sequence as usize + 1) % pause_every == 0 {
                 thread::sleep(Duration::from_micros(pause_micros));
             }
         }
