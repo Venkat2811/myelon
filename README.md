@@ -117,14 +117,14 @@ Start with the crate that matches your data model.
 
 ```toml
 [dependencies]
-myelon = "0.1.0-alpha.1"
+myelon = "0.1.0-alpha.2"
 ```
 
 Or, if you only want the raw ring:
 
 ```toml
 [dependencies]
-disruptor-mp = "0.1.0-alpha.1"
+disruptor-mp = "0.1.0-alpha.2"
 ```
 
 Runnable first-party examples live under [`examples/demos`](examples/demos/):

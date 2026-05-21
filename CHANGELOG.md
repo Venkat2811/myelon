@@ -6,6 +6,33 @@ During the early OSS release window, `disruptor-mp` and `myelon` move in lockste
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the versions follow [Semantic Versioning](https://semver.org/) with explicit pre-release tags such as `-alpha.N`, `-beta.N`, and `-rc.N`.
 
+## [0.1.0-alpha.2] — 2026-05-21
+
+Post-launch dependency and CI hygiene. No public-API changes; safe drop-in upgrade from `0.1.0-alpha.1`.
+
+### Changed
+
+- GitHub Actions dependencies bumped:
+  - `actions/checkout` v4 → v6 (#1)
+  - `codecov/codecov-action` v4 → v6 (#2)
+- Cargo patch-updates group (#8):
+  - `macroquad` 0.4.14 → 0.4.15 (used by `myelon-pulse-vanity` brand demo)
+  - `serde_json` patch bump
+
+### CI infrastructure fixes (already in `v0.1.0-alpha.1` tag, recorded here for completeness)
+
+The first public push to `main` exposed several CI gaps that were patched before `v0.1.0-alpha.1` was tagged. Listing them so the alpha.2 release notes are a complete snapshot of what's in CI today:
+
+- Removed the broken duplicate `ci.yml` workflow (had `env.RUST_MSRV` in a job-level `name:` which Actions validation rejected; the focused per-gate workflows already cover its surface).
+- `actions/checkout` now fetches submodules (`submodules: recursive`) in every workflow that runs cargo against the workspace. Required because `competitive-bench` has a path dep on the `crossbar` submodule.
+- Excluded `competitive-bench` from main CI workflows (`build_and_test.yml`, `lint.yml`, `dst.yml`, `test_coverage.yml`). It pulls heavy C / C++ system deps (libbsd, libzmq, libboost, libopenmpi) that aren't worth installing on every PR for a crate that isn't published.
+- Dropped the Miri job from `build_and_test.yml`; Miri rejects `shm_open` and `mmap` calls (`unsupported operation: can't call foreign function`). A properly-scoped Miri lane against pointer-math helpers is on the roadmap (Safety & quality gates Tier 2).
+- Loosened the `perf-bench::infra::output::log::test_overhead_is_low` threshold from 1 µs to 5 µs to tolerate CI debug-build hardware variance; the steady-state release-mode cost is still ~2ns/op.
+
+### Acknowledgements
+
+- Codex (OpenAI) and Claude Code (Anthropic) shared the agentic-engineering load on this release. See the README's "Built with" section.
+
 ## [0.1.0-alpha.1] — 2026-05-21
 
 Initial public launch of `disruptor-mp` and `myelon` on crates.io.
@@ -180,5 +207,6 @@ Tracked for follow-up releases. Safety-related follow-ups are listed inline in t
 - The [FoundationDB BUGGIFY pattern](https://apple.github.io/foundationdb/testing.html) and [TigerBeetle VOPR](https://github.com/tigerbeetle/tigerbeetle/blob/main/docs/internals/vopr.md) for the shape of the DST primitives.
 - The [tokio loom integration pattern](https://github.com/tokio-rs/tokio/blob/master/tokio/Cargo.toml) for the `[target.'cfg(dst)'.dev-dependencies]` workspace test wiring.
 
-[Unreleased]: https://github.com/Venkat2811/myelon/compare/v0.1.0-alpha.1...HEAD
+[Unreleased]: https://github.com/Venkat2811/myelon/compare/v0.1.0-alpha.2...HEAD
+[0.1.0-alpha.2]: https://github.com/Venkat2811/myelon/releases/tag/v0.1.0-alpha.2
 [0.1.0-alpha.1]: https://github.com/Venkat2811/myelon/releases/tag/v0.1.0-alpha.1
