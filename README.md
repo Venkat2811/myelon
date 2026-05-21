@@ -289,6 +289,19 @@ Both crates do non-trivial `unsafe` work internally (raw ring slots, SHM `mmap`,
 - **[vLLM `shm_broadcast.py`](https://github.com/vllm-project/vllm/blob/main/vllm/distributed/device_communicators/shm_broadcast.py)** by Kaichao You [![GitHub](https://img.shields.io/badge/-youkaichao-181717?style=flat-square&logo=github&logoColor=white)](https://github.com/youkaichao) for the SOTA Python shared-memory broadcast fabric used in intra-node inter-process inference worker processes.
 - **Jeff Dean and Dr Bill Dally, [_Advancing to AI's Next Frontier_](https://www.youtube.com/watch?v=joTYgvRHST0), NVIDIA GTC 2026** for stating the systems point clearly: at the ultra-low-latency edge of inference, the bulk of the delay is communication latency.
 
+## Resources
+
+LMAX Disruptor & mechanical sympathy:
+
+- [Venkat — The power of mechanical sympathy in software engineering: How LMAX Disruptor is so fast](https://venkat.eu/the-power-of-mechanical-sympathy-in-software-engineering#heading-how-lmax-disruptor-is-so-fast)
+- [LMAX Exchange — Disruptor (read this first)](https://lmax-exchange.github.io/disruptor/#_read_this_first)
+- [Martin Fowler — The LMAX Architecture](https://martinfowler.com/articles/lmax.html)
+- [Martin Thompson & Michael Barker — Building HPC fintech handling 100K+ TPS at LMAX (InfoQ)](https://www.infoq.com/presentations/LMAX)
+- [Sam Adams — LMAX Exchange Architecture (InfoQ)](https://www.infoq.com/presentations/lmax-trading-architecture/)
+- Trisha Gee — Dissecting the Disruptor series: [RingBuffer](https://mechanitis.blogspot.com/2011/06/dissecting-disruptor-whats-so-special.html), [LocksAreBad](https://mechanitis.blogspot.com/2011/07/dissecting-disruptor-why-its-so-fast.html), [CacheLinePadding](https://mechanitis.blogspot.com/2011/07/dissecting-disruptor-why-its-so-fast_22.html), [MemoryBarriers](https://mechanitis.blogspot.com/2011/08/dissecting-disruptor-why-its-so-fast.html), [Consumer](https://mechanitis.blogspot.com/2011/06/dissecting-disruptor-how-do-i-read-from.html), [Producer](https://mechanitis.blogspot.com/2011/07/dissecting-disruptor-writing-to-ring.html), [Disruptor 2.0](https://mechanitis.blogspot.com/2011/08/disruptor-20-all-change-please.html)
+- [Guy Raz Nir — Disruptor (The Edge 2012)](https://www.slideshare.net/slideshow/the-edge-2012-disruptor-guy-raz-nir-published/22790571)
+- [Martin Thompson — Memory Barriers / Fences](https://mechanical-sympathy.blogspot.com/2011/07/memory-barriersfences.html)
+
 ## Built with
 
 Agentic engineering, using: [![Codex](https://img.shields.io/badge/-Codex-121212?style=flat-square&logo=openai&logoColor=white)](https://openai.com/codex) [![Claude Code](https://img.shields.io/badge/-Claude%20Code-000000?style=flat-square&logo=anthropic&logoColor=white)](https://www.anthropic.com/claude-code)
