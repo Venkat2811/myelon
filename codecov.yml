@@ -1,0 +1,42 @@
+# Codecov configuration.
+#
+# Scopes coverage reporting to the two crates we actually publish to
+# crates.io (disruptor-mp and myelon). The internal benchmark and
+# deterministic-simulation harnesses live in the workspace because
+# that's where they exercise their target crates, but they are not
+# part of the public API surface and their own coverage is not a
+# useful quality signal.
+#
+# Reference: https://docs.codecov.com/docs/codecovyml-reference
+
+coverage:
+  status:
+    project:
+      default:
+        target: auto         # accept whatever the default branch has
+        threshold: 2%        # tolerate a 2% drop without flagging red
+        informational: true  # don't block merges on coverage drops yet
+    patch:
+      default:
+        target: auto
+        threshold: 2%
+        informational: true
+
+  range: "60...90"
+
+  ignore:
+    # Internal-only crates: published from this workspace but only as
+    # path dependencies of the bench harnesses, not crates.io releases.
+    - "crates/perf-bench/**"
+    - "crates/competitive-bench/**"
+    - "crates/myelon-dst/**"
+
+    # Examples and the mdBook are demonstrations / docs, not tested code.
+    - "examples/**"
+    - "book/**"
+
+# Quieter PR comments: only post if coverage actually moved.
+comment:
+  layout: "reach, diff, flags, files"
+  behavior: default
+  require_changes: true
