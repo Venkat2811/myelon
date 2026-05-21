@@ -171,6 +171,8 @@ Benchmark crate entry points:
 - `make -C crates/perf-bench super-tiny`
 - `make -C crates/competitive-bench super-tiny`
 
+Bench binaries are built with `--profile competitive` (max-perf, `panic=abort`, stripped — bench-fairness defaults, not production). For production use `release` or `prod-max` (release + fat LTO + line-table debug).
+
 ## Features
 
 ### `disruptor-mp`: raw multiprocess substrate

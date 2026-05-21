@@ -88,4 +88,14 @@ panic = "abort"
 strip = true
 incremental = false
 
+# Production max-perf profile for downstream users. Same LTO + codegen-units
+# squeeze as `competitive`, but keeps `panic = "unwind"` (default) and
+# line-table debug info so panics + crash diagnostics survive in real
+# deployments.
+[profile.prod-max]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+debug = "line-tables-only"
+
 [patch.crates-io]
