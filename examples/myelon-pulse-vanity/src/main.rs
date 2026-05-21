@@ -1855,7 +1855,7 @@ fn phase_caption(app: &App) -> &'static str {
         },
         Phase::Live => match app.pulse_system.effective_mode {
             Mode::Broadcast => "BROADCAST",
-            Mode::Pingpong => "PING-PONG",
+            Mode::Pingpong => "PINGPONG",
             Mode::Signal => "SIGNAL",
             // Alternating resolves to one of the three by the time we
             // hit Live; this branch is just defensive.
@@ -1913,56 +1913,177 @@ fn draw_caption(text: &str, canvas_w: f32, canvas_h: f32, alpha: f32) {
     }
 }
 
-/// Headline ops/s + latency anchor for each effective mode. Drawn
-/// as a small, dim line under the lifecycle caption so the viewer
-/// has one quantitative reference per mode without the canvas
-/// turning into a stat dashboard.
+/// One mode's measured-values block: descriptor (mode name +
+/// topology + payload) plus per-backend rows. Numbers come from
+/// the uncontended Pack A / Pack B perf-bench tables.
 ///
-/// Numbers are anchors from the perf-bench / signal-bench surface
-/// — the figures the rest of the engineering work is reporting,
-/// not promotional marketing numbers. Signal uses the
-/// uncontended-machine ceiling (275M signals/s) because that's
-/// what the surface delivers when nothing else is competing for
-/// the box; the broadcast / ping-pong rows use shm-backed alpha.10
-/// readings at the canonical small-payload sizes.
-fn mode_stat_line(mode: Mode) -> Option<&'static str> {
+/// Throughputs from each mode's max-throughput run; latencies
+/// from a related CO-mode run with the full P50/P99/P99.99
+/// triple. Signal and pingpong show identical per-event latency
+/// on purpose — they ride the same underlying ring, so per-event
+/// latency is ring-bounded. The difference between the two modes
+/// is throughput: signal can batch / pipeline without waiting for
+/// an ack, which is why its msgs/s multiplies ~60× over pingpong.
+/// Broadcast quotes 1KB payload with `framed_batch` numbers as a
+/// single-source row: both throughput (max mode) and CO@20K/s
+/// latency come from the same layer, so the per-msg ns-scale P50
+/// is honest and methodologically consistent. shm wins throughput
+/// and the P99.99 tail; mmap edges shm at P99 by ~0.4µs — a real
+/// minor anomaly at 1KB where kernel page-cache batching helps
+/// mmap, not a measurement artifact.
+struct ModeStats {
+    /// Descriptor shown next to the "MEASURED VALUES" header,
+    /// e.g. `signal · 1p1c · event`. Always includes the
+    /// topology (`1p1c`) so the reader doesn't have to guess.
+    descriptor: &'static str,
+    shm: &'static str,
+    mmap: &'static str,
+}
+
+/// Footer note acknowledging the wider ladder. We don't say
+/// "scales linearly" because the data doesn't support that —
+/// e.g. signal shm throughput goes 332M → 162M → 94M → 30M from
+/// 1p1c → 1p8c as the publisher saturates. "Also measured" just
+/// claims coverage, which is true.
+const STATS_LADDER_NOTE: &str = "also measured  ·  1p2c through 1p12c";
+
+fn mode_stats(mode: Mode) -> Option<ModeStats> {
     match mode {
-        Mode::Signal => Some("275M signals/s  ·  21ns avg queue"),
-        Mode::Broadcast => Some("11M frames/s  ·  1KB  ·  shm"),
-        Mode::Pingpong => Some("5.6M msg/s  ·  130ns p50  ·  64B"),
-        // No stat line during Alternating — the effective mode is
+        Mode::Signal => Some(ModeStats {
+            descriptor: "signal  ·  1p1c  ·  event",
+            shm: "shm    ·  332M msgs/s  ·  P50 188ns   ·  P99 282ns   ·  P99.99 13.3µs",
+            mmap: "mmap   ·  238M msgs/s  ·  P50 186ns   ·  P99 453ns   ·  P99.99 15.2µs",
+        }),
+        Mode::Broadcast => Some(ModeStats {
+            descriptor: "broadcast  ·  1p1c  ·  1KB",
+            shm: "shm    ·  2.7M msgs/s  ·  P50 227ns   ·  P99 2.77µs  ·  P99.99 4.30µs",
+            mmap: "mmap   ·  2.5M msgs/s  ·  P50 224ns   ·  P99 2.34µs  ·  P99.99 15.3µs",
+        }),
+        Mode::Pingpong => Some(ModeStats {
+            descriptor: "pingpong  ·  1p1c  ·  64B",
+            shm: "shm    ·  5.6M msgs/s  ·  P50 188ns   ·  P99 282ns   ·  P99.99 13.3µs",
+            mmap: "mmap   ·  5.5M msgs/s  ·  P50 186ns   ·  P99 453ns   ·  P99.99 15.2µs",
+        }),
+        // No block during Alternating — the effective mode is
         // already resolved to one of the three by the time the
-        // caller calls this during Live.
+        // caller asks for stats during Live.
         Mode::Alternating => None,
     }
 }
 
-/// Small dim mono-ish line just under the lifecycle caption. Drops
-/// to the bottom of the title block, two pixels of warm halo behind
-/// it so it ties into the title's ember palette without competing
-/// with the main caption above. Same `clamp_text_x` rule as the
-/// title and caption so longer future stat lines slide leftward
-/// instead of overflowing.
-fn draw_stat_line(text: &str, canvas_w: f32, canvas_h: f32, alpha: f32) {
-    if alpha <= 0.0 || text.is_empty() {
+/// Measured-values block: an orange-stroked rectangle that wraps
+/// a small `MEASURED VALUES · <descriptor>` header, two stat rows
+/// (shm + mmap), and a small ladder-coverage note. Sizing is
+/// proportional to canvas height so the block holds together at
+/// any window size; horizontal placement uses `clamp_text_x` so it
+/// can never overflow the right margin.
+///
+/// Sits just below the lifecycle caption (`canvas_h` * 0.745) and
+/// well clear of the start/stop/rec buttons at the bottom edge,
+/// so even at the tightest default window the block stays in its
+/// lane.
+fn draw_stat_block(stats: &ModeStats, canvas_w: f32, canvas_h: f32, alpha: f32) {
+    if alpha <= 0.0 {
         return;
     }
-    let font_size = (canvas_h * 0.018).round().max(11.0);
-    let dim = measure_text(text, None, font_size as u16, 1.0);
-    let start_x = clamp_text_x(canvas_w, dim.width, 0.74);
-    let y = canvas_h * 0.77;
+    // Sizes: main rows are the headline metric, slightly larger
+    // than the original one-line stat so they read clearly on a
+    // recording. Header / footer are a step smaller so the visual
+    // hierarchy reads `mode caption → stats → meta`.
+    let main_size = (canvas_h * 0.022).round().max(14.0);
+    let small_size = (canvas_h * 0.016).round().max(11.0);
+    let line_h_main = main_size * 1.35;
+    let line_h_small = small_size * 1.55;
+    let inner_gap = small_size * 0.45;
+    let pad_x = main_size * 1.6;
+    let pad_y = main_size * 0.85;
 
-    let halo = Color::new(
+    let header_text = format!("MEASURED VALUES  ·  {}", stats.descriptor);
+
+    // Measure once so we can size the box to its content.
+    let header_w = measure_text(&header_text, None, small_size as u16, 1.0).width;
+    let shm_w = measure_text(stats.shm, None, main_size as u16, 1.0).width;
+    let mmap_w = measure_text(stats.mmap, None, main_size as u16, 1.0).width;
+    let footer_w = measure_text(STATS_LADDER_NOTE, None, small_size as u16, 1.0).width;
+
+    let inner_w = header_w.max(shm_w).max(mmap_w).max(footer_w);
+    let box_w = inner_w + pad_x * 2.0;
+    let box_h =
+        pad_y * 2.0 + line_h_small + inner_gap + line_h_main * 2.0 + inner_gap + line_h_small;
+
+    let box_x = clamp_text_x(canvas_w, box_w, 0.74);
+    let box_y = canvas_h * 0.745;
+
+    // Orange stroked rectangle, ember palette to match the title /
+    // button chrome. A wider, dimmer outer halo (3 px offset) makes
+    // the box feel embossed rather than line-drawn — same trick the
+    // hover button uses.
+    let stroke = Color::new(
+        BRANCH_GLOW.r,
+        BRANCH_GLOW.g * 0.62,
+        BRANCH_GLOW.b * 0.30,
+        0.65 * alpha,
+    );
+    let halo_stroke = Color::new(
+        BRANCH_GLOW.r,
+        BRANCH_GLOW.g * 0.55,
+        BRANCH_GLOW.b * 0.25,
+        0.22 * alpha,
+    );
+    draw_rectangle_lines(
+        box_x - 3.0,
+        box_y - 3.0,
+        box_w + 6.0,
+        box_h + 6.0,
+        1.5,
+        halo_stroke,
+    );
+    draw_rectangle_lines(box_x, box_y, box_w, box_h, 1.6, stroke);
+
+    // Text colors. Header uses an amber tint so "MEASURED VALUES"
+    // reads as label-typography, stat rows use the warm cream from
+    // the caption palette, footer is dimmer still.
+    let header_col = Color::new(
+        BRANCH_GLOW.r,
+        BRANCH_GLOW.g * 0.82,
+        BRANCH_GLOW.b * 0.45,
+        0.92 * alpha,
+    );
+    let stat_main = Color::new(0.96, 0.88, 0.70, 0.88 * alpha);
+    let stat_halo = Color::new(
         BRANCH_GLOW.r,
         BRANCH_GLOW.g * 0.50,
         BRANCH_GLOW.b * 0.22,
-        0.20 * alpha,
+        0.32 * alpha,
     );
-    draw_text(text, start_x + 0.0, y + 1.0, font_size, halo);
-    draw_text(text, start_x + 1.0, y + 0.0, font_size, halo);
+    let footer_col = Color::new(0.85, 0.78, 0.62, 0.62 * alpha);
 
-    let main = Color::new(0.93, 0.84, 0.66, 0.55 * alpha);
-    draw_text(text, start_x, y, font_size, main);
+    // Header.
+    let header_y = box_y + pad_y + small_size;
+    let header_x = box_x + (box_w - header_w) * 0.5;
+    draw_text(&header_text, header_x, header_y, small_size, header_col);
+
+    // Stat rows.
+    let shm_y = header_y + line_h_small + inner_gap;
+    let shm_x = box_x + (box_w - shm_w) * 0.5;
+    draw_text(stats.shm, shm_x + 1.0, shm_y, main_size, stat_halo);
+    draw_text(stats.shm, shm_x, shm_y, main_size, stat_main);
+
+    let mmap_y = shm_y + line_h_main;
+    let mmap_x = box_x + (box_w - mmap_w) * 0.5;
+    draw_text(stats.mmap, mmap_x + 1.0, mmap_y, main_size, stat_halo);
+    draw_text(stats.mmap, mmap_x, mmap_y, main_size, stat_main);
+
+    // Footer ladder note.
+    let footer_y = mmap_y + line_h_main + inner_gap;
+    let footer_x = box_x + (box_w - footer_w) * 0.5;
+    draw_text(
+        STATS_LADDER_NOTE,
+        footer_x,
+        footer_y,
+        small_size,
+        footer_col,
+    );
 }
 
 fn draw_hud(sys: &PulseSystem, leaf_paths: usize, fps: f32) {
@@ -2455,15 +2576,15 @@ async fn main() {
         let final_caption_alpha = caption_alpha * app.caption_fade_in;
         draw_caption(current_caption, cur_size.0, cur_size.1, final_caption_alpha);
 
-        // Small stat line below the caption, naming the canonical
-        // throughput / latency anchor for the currently active mode.
-        // Only visible during Live — the Growing-phase lifecycle
-        // captions (INITIALIZE / DISCOVER / ATTACH / READY) don't
-        // have numbers attached to them, so anchoring there would
-        // be noise.
+        // Measured-values box below the caption: orange-stroked
+        // rectangle with a `MEASURED VALUES · <mode · 1p1c · payload>`
+        // header, shm + mmap rows with throughput and full
+        // P50 / P99 / P99.99 percentiles, and a ladder-coverage
+        // footer. Only visible during Live — the Growing lifecycle
+        // captions don't have measured numbers attached.
         if matches!(app.phase, Phase::Live) {
-            if let Some(line) = mode_stat_line(app.pulse_system.effective_mode) {
-                draw_stat_line(line, cur_size.0, cur_size.1, final_caption_alpha);
+            if let Some(stats) = mode_stats(app.pulse_system.effective_mode) {
+                draw_stat_block(&stats, cur_size.0, cur_size.1, final_caption_alpha);
             }
         }
 
