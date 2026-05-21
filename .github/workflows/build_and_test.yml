@@ -29,17 +29,9 @@ jobs:
       - name: Test (workspace lib + bins, default features)
         run: cargo test --workspace --exclude competitive-bench --lib --bins --verbose
 
-  miri:
-    name: Miri (Linux only)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      - name: Install Miri (nightly)
-        run: |
-          rustup toolchain install nightly --component miri
-          rustup override set nightly
-          cargo miri setup
-      - name: Miri test (disruptor-mp lib)
-        run: cargo miri test -p disruptor-mp --lib
+# Miri is deferred to v0.1.0-alpha.2: disruptor-mp calls shm_open / mmap as
+# foreign functions, which Miri rejects with "unsupported operation: can't
+# call foreign function on OS linux". The plan is to carve out a Miri-only
+# test target covering just the pure pointer-math helpers (cursor arithmetic,
+# slot indexing, frame math) and have a separate workflow run it. Tracked
+# under Safety & quality gates Tier 2 in CHANGELOG.
