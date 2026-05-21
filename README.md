@@ -4,9 +4,10 @@
 
 # myelon
 
-[![Crates.io](https://img.shields.io/crates/v/myelon)](https://crates.io/crates/myelon)
-[![Crates.io](https://img.shields.io/crates/v/disruptor-mp?label=disruptor-mp)](https://crates.io/crates/disruptor-mp)
-[![docs.rs](https://img.shields.io/docsrs/myelon)](https://docs.rs/myelon)
+[![myelon on crates.io](https://img.shields.io/crates/v/myelon?label=myelon)](https://crates.io/crates/myelon)
+[![disruptor-mp on crates.io](https://img.shields.io/crates/v/disruptor-mp?label=disruptor-mp)](https://crates.io/crates/disruptor-mp)
+[![myelon on docs.rs](https://img.shields.io/docsrs/myelon?label=docs.rs%20myelon)](https://docs.rs/myelon)
+[![disruptor-mp on docs.rs](https://img.shields.io/docsrs/disruptor-mp?label=docs.rs%20disruptor-mp)](https://docs.rs/disruptor-mp)
 [![Build](https://github.com/Venkat2811/myelon/actions/workflows/build_and_test.yml/badge.svg)](https://github.com/Venkat2811/myelon/actions/workflows/build_and_test.yml)
 [![codecov](https://codecov.io/gh/Venkat2811/myelon/graph/badge.svg)](https://codecov.io/gh/Venkat2811/myelon)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE-APACHE)
