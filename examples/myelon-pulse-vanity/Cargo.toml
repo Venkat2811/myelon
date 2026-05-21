@@ -28,4 +28,4 @@ clap      = { version = "4", features = ["derive"] }
 # left out for now since it would require an `ffmpeg` subprocess; if
 # a higher-fidelity capture is needed later, GIFs can be re-encoded
 # off-line.
-gif       = "0.13"
+gif       = "0.14"
