@@ -73,6 +73,8 @@ External peers currently wired:
 
 ## Build and run
 
+The bench commands below use `--profile competitive` (max-perf, `panic = "abort"`, stripped) — bench-fairness defaults, not production. For production builds use `release` or `prod-max`. See the workspace README's *Validation and benchmarks* section.
+
 Typical flow from `crates/competitive-bench`:
 
 ```bash

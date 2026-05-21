@@ -72,7 +72,7 @@ Producer rate equals consumer rate (single ring, round-trip). 128 KB fragments a
 | 1p8c | 1 KB | 5.98 M | 5.97 M | 6.13 |
 | 1p8c | 128 KB | 88.3 K | 85.5 K | 11.57 |
 
-Each consumer receives every message; per-consumer rate within 0.5-3.2% of producer. Aggregate fan-out scales by N: 1p8c × 128 KB delivers **~92.6 GB/s aggregate** across 8 consumers. Broadcast throughput mode doesn't measure per-message RTT (no ack); CO-mode latency under sustained load lives in `crates/perf-bench/` artifact bundles.
+Each consumer receives every message; per-consumer rate within 0.5-3.2% of producer. Aggregate fan-out scales by N: 1p8c × 128 KB delivers **~92.6 GB/s aggregate** across 8 consumers. Broadcast throughput mode doesn't measure per-message RTT (no ack); CO-mode latency under sustained load lives in the `crates/perf-bench/` bench output.
 
 ### Typed zero-copy ping-pong (shm, rkyv, throughput mode)
 
@@ -106,7 +106,7 @@ Pingpong throughput heatmap across the full adapter × payload matrix.
   <img src="assets/bench-throughput-heatmap.png" alt="Pingpong throughput heatmap across adapters and payload sizes" width="900">
 </p>
 
-More bench charts (per-layer heatmaps, payload-vs-latency curves, broadcast scaling) live in `assets/` and the `crates/perf-bench/` artifact bundles.
+More bench charts (per-layer heatmaps, payload-vs-latency curves, broadcast scaling) live in `assets/` and the `crates/perf-bench/` bench output.
 
 ## Quick start
 

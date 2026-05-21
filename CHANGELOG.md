@@ -6,8 +6,6 @@ During the early OSS release window, `disruptor-mp` and `myelon` move in lockste
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the versions follow [Semantic Versioning](https://semver.org/) with explicit pre-release tags such as `-alpha.N`, `-beta.N`, and `-rc.N`.
 
-## [Unreleased]
-
 ## [0.1.0-alpha.1] — 2026-05-13
 
 First public release of `disruptor-mp` and `myelon` on crates.io.

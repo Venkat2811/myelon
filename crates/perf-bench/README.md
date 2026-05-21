@@ -205,6 +205,8 @@ crates/perf-bench/
 
 ## Quick start
 
+The bench commands below use `--profile competitive` (max-perf, `panic = "abort"`, stripped) — bench-fairness defaults, not production. For production builds use `release` or `prod-max`. See the workspace README's *Validation and benchmarks* section.
+
 ```bash
 # Default 1p1c ping-pong: raw ring, SHM, 64-byte payload.
 cargo run -p perf-bench --profile competitive --bin perf-bench-pingpong -- \
