@@ -45,3 +45,9 @@ name = "myelon"
 # default publish builds don't activate the cfg.
 [target.'cfg(dst)'.dev-dependencies]
 myelon-dst = { path = "../myelon-dst" }
+
+# Render all optional features (rkyv / flatbuffers) on docs.rs so the
+# published documentation matches the full surface.
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

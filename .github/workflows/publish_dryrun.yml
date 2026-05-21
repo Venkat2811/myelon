@@ -1,0 +1,28 @@
+name: Publish Dry-Run
+
+on:
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "crates/disruptor-mp/Cargo.toml"
+      - "crates/myelon/Cargo.toml"
+      - "Cargo.toml"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  dry_run:
+    name: cargo publish --dry-run (publishable crates)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo publish --dry-run -p disruptor-mp
+        run: cargo publish --dry-run -p disruptor-mp
+      - name: cargo publish --dry-run -p myelon
+        # disruptor-mp resolves from the workspace path during dry-run.
+        # If crates.io resolution is desired, gate this on disruptor-mp
+        # being already published at the declared version.
+        run: cargo publish --dry-run -p myelon --allow-dirty

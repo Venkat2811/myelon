@@ -1,6 +1,6 @@
 //! Deterministic BUGGIFY support used by DST-enabled builds.
 
-use myelon_env::{dst::buggify as dst_env, read};
+use crate::env::{dst::buggify as dst_env, read};
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 

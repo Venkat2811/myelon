@@ -37,6 +37,7 @@
 //!   harnesses.
 //! - [`runner_verify`] — cross-child verification.
 
+pub mod env;
 pub mod runner;
 pub mod runner_config;
 pub mod runner_fault;

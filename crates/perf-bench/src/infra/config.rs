@@ -2,7 +2,8 @@
 //!
 //! Replaces 12 identical copies of `read_env_usize`/`read_env_u64` across bench files.
 
-use myelon_env::{bench as bench_env, read};
+use crate::env::bench as bench_env;
+use disruptor_mp::env::read;
 
 /// Read a usize from an environment variable, returning default if not set or invalid.
 pub fn read_env_usize(key: &str, default: usize) -> usize {

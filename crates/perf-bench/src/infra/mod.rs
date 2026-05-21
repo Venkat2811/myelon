@@ -12,7 +12,7 @@ pub mod child_runner;
 pub mod config;
 pub mod discovery;
 pub mod env {
-    pub use myelon_env::bench::*;
+    pub use crate::env::bench::*;
 }
 pub mod launch;
 pub mod naming;

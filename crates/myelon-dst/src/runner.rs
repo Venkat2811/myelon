@@ -7,7 +7,7 @@ use disruptor_mp::dst::assertions::AssertionLog;
 use disruptor_mp::dst::contract::{
     FailureClass, ProcessRole, SchedulerAction, TraceArtifact, TraceStatus,
 };
-use myelon_env::dst::runner as dst_env;
+use crate::env::runner as dst_env;
 use serde::de::DeserializeOwned;
 use std::fs;
 use std::path::{Path, PathBuf};

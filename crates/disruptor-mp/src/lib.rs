@@ -129,6 +129,7 @@ pub use disruptor_core::{MissingFreeSlots, Producer, RingBufferFull, Sequence};
 // in place without making the modules `pub`.
 #[allow(rustdoc::private_doc_tests)]
 mod api;
+pub mod env;
 #[path = "backend/mmap/barrier.rs"]
 mod mmap_barrier;
 #[path = "backend/mmap/consumer.rs"]

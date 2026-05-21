@@ -4,6 +4,13 @@
 
 # myelon
 
+[![Crates.io](https://img.shields.io/crates/v/myelon)](https://crates.io/crates/myelon)
+[![Crates.io](https://img.shields.io/crates/v/disruptor-mp?label=disruptor-mp)](https://crates.io/crates/disruptor-mp)
+[![docs.rs](https://img.shields.io/docsrs/myelon)](https://docs.rs/myelon)
+[![Build](https://github.com/Venkat2811/myelon/actions/workflows/build_and_test.yml/badge.svg)](https://github.com/Venkat2811/myelon/actions/workflows/build_and_test.yml)
+[![codecov](https://codecov.io/gh/Venkat2811/myelon/graph/badge.svg)](https://codecov.io/gh/Venkat2811/myelon)
+[![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE-APACHE)
+
 Ultra-low-latency and high-throughput multiprocess transport stack over SHM and mmap ring buffers on Linux and macOS.
 
 Dr Bill Dally is working on shaving nanoseconds by shrinking the distance data has to travel (on-chip wires, off-chip PHYs, memory-to-compute) and stripping overhead out of the path. System software should be just as serious about stripping copies, wakeups, coordination, and communication distance out of its own path.

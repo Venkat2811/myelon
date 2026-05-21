@@ -18,7 +18,7 @@ use super::consumer_barrier::{auto_consumer_id, consumer_registration_cursor_nam
 use super::producer::{CoordinationMode, SharedProducer};
 use crate::{MultiProcessResult, SharedCursor, SharedMemoryConfig, SharedRingBuffer};
 use disruptor_core::Sequence;
-use myelon_env::{read, runtime as runtime_env};
+use crate::env::{read, runtime as runtime_env};
 use std::env;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread::{self, JoinHandle};

@@ -25,6 +25,7 @@
 
 pub mod bench_support;
 pub mod cli;
+pub mod env;
 pub mod infra;
 pub mod layers;
 

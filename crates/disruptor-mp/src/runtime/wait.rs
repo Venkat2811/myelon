@@ -4,7 +4,7 @@
 //! in the multiprocess implementation. Values can be configured via environment
 //! variables with sensible defaults.
 
-use myelon_env::{read, runtime as runtime_env};
+use crate::env::{read, runtime as runtime_env};
 use once_cell::sync::Lazy;
 use std::time::Duration;
 

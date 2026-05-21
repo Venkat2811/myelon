@@ -48,7 +48,6 @@ metrics-otel        = ["metrics", "dep:opentelemetry", "dep:opentelemetry-otlp",
 disruptor_core = { package = "disruptor", version = "4.2.0" }
 thiserror = "2.0"
 once_cell = "1.21"
-myelon-env = { path = "../myelon-env", version = "0.1.0-alpha.1" }
 
 # Multi-process support (always enabled)
 shared_memory = { version = "0.12.4" }
@@ -127,3 +126,9 @@ serde_json = "1.0"
 # Internal-only; only used by integration tests.
 [target.'cfg(dst)'.dev-dependencies]
 myelon-dst = { path = "../myelon-dst" }
+
+# Render all optional features (metrics / Prometheus / OpenTelemetry / OTLP)
+# on docs.rs so the published documentation matches the full surface.
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
