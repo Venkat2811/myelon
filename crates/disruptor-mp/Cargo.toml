@@ -5,7 +5,7 @@ name          = "disruptor-mp"
 # crate this fork started from; reset to 0.1.0-alpha.x for the first
 # crates.io publish to signal "first public release, API may evolve"
 # rather than masquerading as a mature 3.x. See CHANGELOG.md.
-version       = "0.1.0-alpha.1"
+version       = "0.1.0-alpha.2"
 description   = "Ultra-low-latency and high-throughput multiprocess ring-buffer substrate over SHM and mmap (LMAX Disruptor design, extended cross-process), with cross-process producer/consumer coordination, required-consumer liveness, and observability counters."
 readme        = "README.md"
 categories    = ["data-structures", "concurrency", "memory-management", "algorithms"]

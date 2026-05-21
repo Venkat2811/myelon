@@ -3,7 +3,7 @@ name        = "myelon"
 # 0.1.0-alpha.1 is the initial OSS-publish version. Pre-release tag
 # signals "API may evolve during the early-iteration window." See
 # CHANGELOG.md.
-version     = "0.1.0-alpha.1"
+version     = "0.1.0-alpha.2"
 description = "Ultra-low-latency and high-throughput typed transport for multiprocess SHM and mmap. Layers framing, codecs, typed zero-copy, and inference-fabric topology helpers on disruptor-mp's LMAX-Disruptor-style ring substrate."
 readme      = "README.md"
 categories  = ["data-structures", "concurrency", "encoding", "artificial-intelligence", "algorithms"]
@@ -19,7 +19,7 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
-disruptor_mp = { package = "disruptor-mp", path = "../disruptor-mp", version = "0.1.0-alpha.1" }
+disruptor_mp = { package = "disruptor-mp", path = "../disruptor-mp", version = "0.1.0-alpha.2" }
 serde = { version = "1", features = ["derive"] }
 rkyv = { version = "0.8", features = ["bytecheck"], optional = true }
 flatbuffers = { version = "25.12", optional = true }
