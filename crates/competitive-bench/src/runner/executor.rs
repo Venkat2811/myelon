@@ -301,7 +301,7 @@ fn execute_single(
                 vec![]
             };
             let binary = if *relative_to_crate {
-                PathBuf::from(binary_name)
+                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(binary_name)
             } else {
                 platform.binary_path(&cli.profile, binary_name)
             };

@@ -1,209 +1,277 @@
 <p align="center">
-  <img src="assets/myelon-pulse-demo.gif" alt="myelon-pulse — angiogram-style brand demo: trunk, fractal branches, and pulses for myelon, the multiprocess shared-memory transport" width="900">
+  <img src="assets/myelon-pulse-demo.gif" alt="myelon-pulse brand demo for the myelon multiprocess shared-memory transport" width="900">
 </p>
 
-# myelon (workspace)
+# myelon
 
-Repo for the [`myelon`](https://crates.io/crates/myelon) and [`disruptor-mp`](https://crates.io/crates/disruptor-mp) crates, plus the internal harnesses, benches, and example crates that validate them.
+Ultra-low-latency and high-throughput multiprocess transport stack over SHM and mmap ring buffers on Linux and macOS.
 
-`myelon` is multiprocess shared-memory transport for inference and other low-latency pipelines. It offers **simplified access to `disruptor-mp`'s core capabilities** plus framing, codecs, typed zero-copy, and topology layered on top — all behind one stable public surface.
+Dr Bill Dally is working on shaving nanoseconds by shrinking the distance data has to travel (on-chip wires, off-chip PHYs, memory-to-compute) and stripping overhead out of the path. System software should be just as serious about stripping copies, wakeups, coordination, and communication distance out of its own path.
 
-> **Publishable crates.** `disruptor-mp` (the Layer 0 substrate) and `myelon` (a single façade over `disruptor-mp` + Layers 1–3 + orthogonal concerns). The rest of the workspace is internal benches, DST harnesses, and runnable examples (`publish = false`).
+`myelon` borrows its name from the Greek root behind the spinal cord: the signal path between brain and body. Wrapped in myelin, that cord exists to move impulses fast and clean. This crate tries to do the same for processes: give independent OS processes a low-latency fabric over SHM and mmap, with as little copying, waiting, and coordination drag as possible.
 
-## The onion
+`myelon` is the default crate in this repository. It builds on top of `disruptor-mp`, which extends LMAX Disruptor's HFT-grade design (lock-free atomics, no syscalls in the hot path, cache-aligned cursors, busyspin wait) to cross-process IPC. `myelon` keeps the raw ring reachable and adds framing, codecs, typed zero-copy, topology helpers, and layout helpers for low-latency pipelines.
 
+This repository publishes two crates:
+
+| Crate | Use it when... |
+|---|---|
+| [`disruptor-mp`](crates/disruptor-mp/) | You want the raw fixed-size event substrate and you own the wire format. |
+| [`myelon`](crates/myelon/) | You want one dependency that keeps the raw ring reachable and also gives you framing, codecs, typed zero-copy, topology helpers, and layout helpers. |
+
+`disruptor-mp` is the Layer 0 substrate. `myelon` is the broader public transport crate built on top of it.
+
+## Headline numbers
+
+Throughput mode reports the peak attainable rate plus its latency distribution under self-pressure. CO mode reports coordinated-omission-corrected latency while holding a configured constant offered rate, so tail percentiles reflect real time-to-receipt, not just bench iteration time.
+
+### Signal ceiling, consumer scaling (no payload)
+
+| Topology | shm | mmap |
+|---|---:|---:|
+| 1p1c | **332 M ops/s** | 239 M ops/s |
+| 1p2c | 163 M | 188 M |
+| 1p4c | 95 M | 97 M |
+| 1p8c | 30 M | 44 M |
+
+Pipelined fan-out, no ack. Per-consumer rate within 0.5% of producer rate. Signal scales down as consumers fan out because the publisher contends with each consumer's cursor.
+
+### Raw ping-pong, 1p1c, 64B, shm, busyspin
+
+| Mode | Achieved ops/s | P50 | P99 | P99.99 |
+|---|---:|---:|---:|---:|
+| Max throughput | **5.58 M** | 130 ns | 240 ns | 2.5 µs |
+| CO constant rate @ 1.2 M ops/s | 1.20 M | 188 ns | 282 ns | 13.3 µs |
+
+Producer rate equals consumer rate (single ring, round-trip). The CO row holds 1.2 M ops/s sustained with coordinated-omission-corrected percentiles. mmap variants reach the same throughput at the same P50, with the P99.99 tail 4-5x wider.
+
+### Framed ping-pong, payload scaling (1p1c, shm, throughput mode)
+
+| Payload | ops/s | GB/s | P50 | P99 | P99.99 |
+|---|---:|---:|---:|---:|---:|
+| 64 B | 4.51 M | 0.29 | 180 ns | 300 ns | 3.02 µs |
+| 1 KB | 2.45 M | 2.51 | 360 ns | 610 ns | 3.70 µs |
+| 32 KB | 133.6 K | 4.38 | 7.31 µs | 11.41 µs | 24.89 µs |
+| 128 KB (multi-frame) | 31.2 K | 4.09 | 31.68 µs | 38.08 µs | 50.24 µs |
+
+Producer rate equals consumer rate (single ring, round-trip). 128 KB fragments across multiple frames; per-message rate drops but per-message bandwidth stays at ~4 GB/s.
+
+### Framed broadcast, consumer × payload scaling (mmap, throughput mode)
+
+| Topology | Payload | Producer ops/s | Per-consumer ops/s | Producer GB/s |
+|---|---|---:|---:|---:|
+| 1p4c | 1 KB | 9.09 M | 9.07 M | 9.31 |
+| 1p4c | 128 KB | 108.9 K | 109.0 K | **14.27** |
+| 1p8c | 1 KB | 5.98 M | 5.97 M | 6.13 |
+| 1p8c | 128 KB | 88.3 K | 85.5 K | 11.57 |
+
+Each consumer receives every message; per-consumer rate within 0.5-3.2% of producer. Aggregate fan-out scales by N: 1p8c × 128 KB delivers **~92.6 GB/s aggregate** across 8 consumers. Broadcast throughput mode doesn't measure per-message RTT (no ack); CO-mode latency under sustained load lives in `crates/perf-bench/` artifact bundles.
+
+### Typed zero-copy ping-pong (shm, rkyv, throughput mode)
+
+| Batch | Payload | ops/s | P50 | P99 | P99.99 |
+|---|---:|---:|---:|---:|---:|
+| 1 | 592 B | **1.89 M** | 490 ns | 660 ns | 4.05 µs |
+| 64 | 37 KB | 94.2 K | 10.5 µs | 13.7 µs | 22.4 µs |
+| 256 | 150 KB | 26.7 K | 37.2 µs | 44.4 µs | 55.0 µs |
+
+`ZeroCopyCodec::access` reads `Archived<T>` fields in place. Speedup vs full owned decode: **3.0× at batch=1, 5.5× at batch=64, 5.7× at batch=256.**
+
+Measured on AMD Ryzen 7 5800X (8 cores / 16 threads, 4.85 GHz boost, 32 MiB L3), 64 GiB DDR4, Ubuntu 22.04, kernel 6.8 via `crates/perf-bench/`.
+
+## Charts
+
+Pingpong throughput at 1 KB payload: `myelon-raw` vs 11 other in-machine IPC adapters.
+
+<p align="center">
+  <img src="assets/bench-pingpong-throughput-1kb.png" alt="Pingpong throughput at 1 KB payload across 12 IPC adapters" width="900">
+</p>
+
+Broadcast P99 latency at 1 KB · 4 consumers · 400 K msgs/s sustained (coordinated-omission-corrected).
+
+<p align="center">
+  <img src="assets/bench-broadcast-co-p99-1kb-4c.png" alt="Broadcast CO P99 latency at 1 KB and 4 consumers under 400 K msgs/s sustained" width="900">
+</p>
+
+Pingpong throughput heatmap across the full adapter × payload matrix.
+
+<p align="center">
+  <img src="assets/bench-throughput-heatmap.png" alt="Pingpong throughput heatmap across adapters and payload sizes" width="900">
+</p>
+
+More bench charts (per-layer heatmaps, payload-vs-latency curves, broadcast scaling) live in `assets/` and the `crates/perf-bench/` artifact bundles.
+
+## Quick start
+
+Start with the crate that matches your data model.
+
+```toml
+[dependencies]
+myelon = "0.1.0-alpha.1"
 ```
-┌──────────────────────────────────────────────────────────────┐
-│ myelon                       ← full layered façade           │
-│                                                              │
-│   Layer 3 — typed zero-copy                                  │
-│   Layer 2 — codec (bincode / rkyv / flatbuffers)             │
-│   Layer 1 — framed transport                                 │
-│                                                              │
-│   ┌──────────────────────────────────────────────────────┐   │
-│   │ Layer 0  (re-exported from disruptor-mp)             │   │
-│   │   SharedProducer<E> / SharedConsumer<E>      (SHM)   │   │
-│   │   MmapProducer<E>   / MmapConsumer<E>        (mmap)  │   │
-│   │   builders, coordination, discovery, liveness,       │   │
-│   │   observability counters                             │   │
-│   └──────────────────────────────────────────────────────┘   │
-│                                                              │
-│   + FixedTopology / WorkerCount   (topology shape)           │
-│   + MyelonTransportLayout         (macOS-safe SHM names)     │
-│   + observability::*              (RFC-0040 re-export)       │
-└────────────────────────────────┬─────────────────────────────┘
-                                 │ depends on
-                                 ▼
-                          disruptor-mp
-                          (also publishable on its own for users
-                          who want only the Layer 0 substrate)
-                                 │ depends on
-                                 ▼
-                          disruptor (crates.io, upstream)
-                          single-process / threaded primitives
+
+Or, if you only want the raw ring:
+
+```toml
+[dependencies]
+disruptor-mp = "0.1.0-alpha.1"
 ```
 
-Both crates are first-class entry points — pick by what surface your code actually needs:
+Runnable first-party examples live under [`examples/demos`](examples/demos/):
 
-- **Depend on [`myelon`](crates/myelon/)** for the full layered stack. It re-exports every relevant `disruptor-mp` type, so one dep gives you Layer 0 plus framing / codec / typed-zero-copy / topology / layout.
-- **Depend on [`disruptor-mp`](crates/disruptor-mp/) directly** for Layer 0 only — the raw cross-process ring plus its coordination, discovery, liveness, and observability primitives. Smaller dep footprint; suits substrate-only consumers and projects that publish their own wire format on top.
-
-The type identity is preserved across the boundary — a `disruptor_mp::SharedConsumer<E>` *is* a `myelon::SharedConsumer<E>` — so helpers, rendezvous primitives, and patterns transfer unchanged between the two profiles.
-
-## Where to go for what
-
-Every row below is reachable from [`myelon`](crates/myelon/); the right-most column flags rows where depending on [`disruptor-mp`](crates/disruptor-mp/) directly is also a clean choice.
-
-| You want to … | Layer | Type | Direct on `disruptor-mp`? |
-|---|---|---|---|
-| Cross-process publish/consume of a fixed-size `Copy` event over a ring buffer | 0 — raw | `SharedProducer<E>` / `SharedConsumer<E>` (SHM); `MmapProducer<E>` / `MmapConsumer<E>` (mmap). All re-exported by `myelon`. | Yes — substrate alone. |
-| Variable-length byte messages with start/end flags + multi-frame fragmentation | 1 — framed | `FramedTransportProducer<F>` / `FramedTransportConsumer<F>` | No — only on `myelon`. |
-| Typed messages with serialisation (bincode / rkyv / flatbuffers) | 2 — codec | `TypedProducer<F>` / `TypedConsumer<F>` + `Codec` impl | No. |
-| Zero-copy in-place reads of serialised data | 3 — typed zero-copy | `ZeroCopyCodec` + the typed transport above | No. |
-| Fixed scheduler / N-worker topology with discovery + rendezvous | orthogonal | `FixedTopology`, `WorkerCount` (2..=8) | No. |
-| Per-process hot-path counters (events_published, consumer_lag_max, …) | orthogonal | `observability::*` | Yes — same surface lives on both crates. |
-
-## Layout
-
+```bash
+cargo run --release -p demos --example shm_disruptor
+cargo run --release -p demos --example pingpong
 ```
+
+Read next:
+
+- [`crates/myelon/README.md`](crates/myelon/README.md) for the layered transport surface
+- [`crates/disruptor-mp/README.md`](crates/disruptor-mp/README.md) for the raw substrate
+- [`examples/demos/README.md`](examples/demos/README.md) for the example ladder
+
+
+## Repository layout
+
+```text
 crates/
-├── disruptor-mp/        # Publishable. Layer 0: raw cross-process ring buffer.
-├── myelon/              # Publishable. Layers 1, 2, 3 + topology + observability.
-├── myelon-dst/          # Internal. Multiprocess DST harness, fixtures, oracle, child runner.
-├── perf-bench/          # Internal. Performance benchmark consolidation.
-└── competitive-bench/   # Internal. Apples-to-apples external transport comparison.
+├── disruptor-mp/        # Publishable raw multiprocess substrate.
+├── myelon/              # Publishable layered transport crate.
+├── myelon-env/          # Internal shared env-key and env-read helpers.
+├── myelon-dst/          # Internal deterministic-simulation runner. Inspired by FoundationDB, TigerBeetle, Turso & SlateDB.
+├── perf-bench/          # Internal broad transport sweep harness.
+└── competitive-bench/   # Internal external-comparison harness.
 
 examples/
-├── demos/                  # Workspace-level runnable examples (one place for them all).
-│                           #   shm_disruptor.rs            — Layer 0, SHM, multiprocess quick start
-│                           #   mmap_disruptor.rs           — Layer 0, mmap, multiprocess quick start
-│                           #   pingpong.rs                 — multiprocess RTT request/response
-│                           #   counters.rs                 — RFC-0040 observability end-to-end
-│                           #   fixed_inference_topology.rs — myelon::FixedTopology demo
-│                           #   required_consumer_liveness.rs — RFC-0017.5 same-ID rejoin recovery
-└── myelon-pulse-vanity/    # Brand vanity demo (the video at the top of this README).
+├── demos/               # Runnable first-party examples.
+└── myelon-pulse-vanity/ # Brand vanity demo shown above.
 
-book/                    # mdBook source for the user-facing docs site.
-                         # Build: `mdbook build` (output at book/build, gitignored).
+book/                    # mdBook source. Maintained separately from this README.
 ```
 
-Run any example with:
+## Validation and benchmarks
 
-```bash
-cargo run --release -p demos --example <name>
-```
+Top-level workspace commands:
 
-## Cargo features (high-impact)
+- `make help`
+- `make build`
+- `make test`
+- `make workspace-smoke`
+- `make orchestrate-rust`
+- `make smoke`
 
-`disruptor-mp`:
+Benchmark crate entry points:
 
-| Feature | Adds |
-|---|---|
-| `metrics` (default) | Wire `observability` counters into the `metrics`-rs façade. |
-| `metrics-prometheus` | `metrics-exporter-prometheus`. |
-| `metrics-otel` | `opentelemetry-otlp` for OTLP export. |
-| `RUSTFLAGS="--cfg dst"` | Compile deterministic-simulation hooks used by the internal `myelon-dst` harness. |
+- `make -C crates/perf-bench super-tiny`
+- `make -C crates/competitive-bench super-tiny`
 
-`myelon`:
+## Features
 
-| Feature | Adds |
-|---|---|
-| (default) | Layers 0, 1; Layer 2 with `bincode` only. |
-| `rkyv` | Layer 2/3 with `rkyv`. |
-| `flatbuffers` | Layer 2/3 with `flatbuffers`. |
-| `RUSTFLAGS="--cfg dst"` | Pull in the internal `myelon-dst` dev-dependency for DST-backed test lanes. |
+### `disruptor-mp`: raw multiprocess substrate
 
-## Bench harnesses
+- [x] Cross-process Single Producer Single Consumer (SPSC).
+- [x] Cross-process Single Producer Multi Consumer (SPMC).
+- [ ] Cross-process Multi Producer Single Consumer (MPSC).
+- [ ] Cross-process Multi Producer Multi Consumer (MPMC).
+- [x] Communication patterns:
+  - [x] Ping-pong: request/response RTT (two SPSC rings).
+  - [x] Broadcast: strict fan-out; every consumer sees every event, slowest gates the producer.
+  - [x] Signal: pipelined fan-out, no ack; maximum throughput.
+  - [x] Broadcast + per-rank ping-pong: one SPMC dispatch ring + N SPSC return rings (driver ↔ N worker ranks); the inference-fabric shape.
+- [x] Two type-identical backends:
+  - [x] POSIX shared memory (`shm_open`).
+  - [x] Memory-mapped file (`mmap`).
+- [x] Memory-level zero-copy reads (`&E` into the ring slot).
+- [x] Wait strategies (`AutoWaitStrategy`):
+  - [x] `BusySpin`: pure busy loop, 100% CPU.
+  - [x] `BusySpinWithSpinLoopHint`: busy loop with CPU hint via `spin_loop`.
+  - [x] `SpinThenYield { spins }`: N spins, then yield to scheduler.
+  - [x] `Sleep(Duration)`: sleep for a configured interval.
+  - [x] `Block`: efficient blocking, balanced performance / CPU.
+- [x] Liveness for gating consumers: producer-side stall detection with cold-path alert, optional hook, and recoverable rejoin.
+- [x] Portable shared-memory naming (macOS 31-byte budget enforced).
+- [x] Hot-path observability counters:
+  - [x] `metrics`-rs facade (default).
+  - [x] Prometheus exporter (`metrics-prometheus`).
+  - [x] OpenTelemetry / OTLP exporter (`metrics-otel`).
+- [x] Deterministic-simulation hooks behind `RUSTFLAGS="--cfg dst"`.
+- [ ] HFT-grade deployment tuning:
+  - [ ] Hugepages-backed SHM segments (2 MiB / 1 GiB pages to cut TLB pressure).
+  - [ ] Core pinning / `isolcpus` integration in the builder API.
+  - [ ] NUMA-aware SHM placement (producer, consumer, and segment on the same socket).
 
-- `crates/perf-bench` — broad internal sweep universe across all layers (raw, framed, codec, typed_zc), both backends (`shm`, `mmap`), and three modes (throughput, fixed-rate coordinated-omission-aware, batch-timing). Runs against `disruptor-mp` and `myelon` natively.
-- `crates/competitive-bench` — narrow apples-to-apples transport comparison harness against `crossbar`, `shmipc`, `rusteron`, `iceoryx2`, `zeromq`, `boost::interprocess message_queue`, and `ompi`. Uses `disruptor-mp` + `myelon` raw layers as internal baselines.
+### `myelon`: layered transport on top of `disruptor-mp`
 
-### Headline numbers — Apple M3 Max, single laptop
+- [x] Re-exports the raw substrate at type-identical types.
+- [x] Framed transport: `&[u8]` payloads in fixed-size frames; payloads larger than one frame fragment across multiple frames (start/end flags + message id let the consumer reassemble).
+- [x] Compile-time-fixed frame size: `FixedFrame<N>` / `AlignedFixedFrame<N>` (aligned variant for zero-copy reads). One transport per size class for runtime variation.
+- [x] Typed transport (codec encodes `T` → bytes; consumer decodes back into an owned `T`, allocates):
+  - [x] bincode.
+  - [x] rkyv.
+  - [x] flatbuffers.
+- [x] Typed zero-copy (consumer reads fields in place via `ZeroCopyCodec::access`; no decode step, no allocation):
+  - [x] rkyv (`Archived<T>`).
+  - [x] flatbuffers root tables.
+- [x] Topology helpers for inference fabrics: rank-scoped request/response, producer-owned startup, attach-time wait-strategy metadata.
 
-Built `--profile competitive`, measured with `perf-bench-pingpong`, busy-spin wait, single-producer single-consumer, HDR-histogram percentiles. Cross-process round-trip (real `fork()`-style multiprocess, not threaded), one warm-up run discarded.
+### `myelon-env`: internal env-key and env-read helpers
 
-| Layer              | Backend | Payload | Throughput   | p50    | p99    | Notes                                       |
-| ---                | ---     | ---     | ---          | ---    | ---    | ---                                         |
-| `raw_ring`         | mmap    | 64 B    | **4.84 M ops/s** | **125 ns** | 500 ns | Layer 0 substrate, file-backed              |
-| `raw_ring`         | shm     | 64 B    | 4.69 M ops/s | 167 ns | 250 ns | Layer 0 substrate, POSIX SHM                |
-| `typed_zc` (rkyv)  | shm     | 4 KB    | 113 K ops/s  | 8.0 μs | 13 μs  | Layer 3 zero-copy, **11.7× faster than parse** |
-| `typed_zc` (rkyv)  | shm     | 36 KB   | 66 K ops/s   | 15 μs  | 21 μs  | 2.5 GB/s payload throughput                 |
-| `typed_zc` (rkyv)  | shm     | 146 KB  | 20 K ops/s   | 49 μs  | 71 μs  | 3.0 GB/s payload throughput                 |
+- [x] Shared env-key constants for the whole workspace.
+- [x] Consistent env-var parsing for all benches and runtimes.
 
-Reproduce the top row:
+### `myelon-dst`: internal deterministic-simulation harness
 
-```bash
-cargo run --profile competitive -p perf-bench --bin perf-bench-pingpong -- \
-  --layer raw_ring --backend mmap -n 200000 -w 5000 --tree
-```
+- [x] Runner with fault injection and invariant oracle.
+- [x] Verification, report emission, and DST-coverage sweep.
 
-The full sweep matrix (layer × backend × codec × payload × mode × consumer-count) is wrapped under `make` targets — see *One-command workflows* below. Comparison against external transports (`zmq`, `iceoryx2`, `crossbar`, `rusteron`, `shmipc`) lives in `crates/competitive-bench`.
+### `perf-bench`: internal broad transport sweep harness
 
-## One-command workflows
+- [x] Pingpong, broadcast, signal, repeatability binaries.
+- [x] Layer matrix: raw, framed, typed, codec, typed-zero-copy (all × shm / mmap).
+- [x] Throughput and CO-aware fixed-rate measurement modes.
+- [x] Tier ladder: `super-tiny`, `simple-smoke`, `smoke`, `quick`, `extensive`.
 
-- Competitive exact-size smoke: `make -C crates/competitive-bench simple-smoke`
-- Competitive broad perf gate: `make -C crates/competitive-bench super-tiny`
-- Internal exact-size smoke: `make -C crates/perf-bench simple-smoke`
-- Internal broad perf gate: `make -C crates/perf-bench super-tiny`
-- Fast benchmark smoke (~60s): `make smoke`
-- Workspace wiring + crate boundary checks: `make workspace-smoke`
-- Rust-tier orchestration (format/lint/tests/bench+example compile checks): `make orchestrate-rust`
-- Full monorepo orchestration: `make orchestrate-all`
+### `competitive-bench`: internal external-comparison harness
+
+- [x] Adapters: Crossbeam, Iceoryx2, Rusteron (Aeron), shmipc, ZeroMQ (IPC / IPC-abs / TCP), Boost.MQ, OpenMPI.
+- [x] Tier ladder matching `perf-bench`.
+- [x] Aggregate report and Pareto-frontier summary per run.
+
+### Bindings
+
+- [ ] Python.
+- [ ] C / C++.
+- [ ] Zig.
+
 
 ## Platform support
 
-- **Linux** — officially supported.
-- **macOS** — known to work for core multiprocess flows, but currently unsupported for official guarantees.
-- **Windows** — unsupported.
+- **Linux**: officially supported.
+- **macOS**: officially supported.
+- **Windows**: unsupported.
 
 ## Acknowledgements
 
-- **[LMAX Disruptor](https://github.com/LMAX-Exchange/disruptor)** (Java) — Martin Thompson, Mike Barker, Dave Farley, and the LMAX Exchange team — for the original lock-free ring-buffer design and the mechanical-sympathy thinking this whole lineage descends from.
-- **[`disruptor-rs`](https://github.com/nicholassm/disruptor-rs)** — Nicholas Schultz-Møller and contributors — for the single-process Rust port (the [`disruptor`](https://crates.io/crates/disruptor) crate) that `disruptor-mp` extends to cross-process.
-- **vLLM** — the [`shm_broadcast.py`](https://github.com/vllm-project/vllm/blob/main/vllm/distributed/device_communicators/shm_broadcast.py) `ShmRingBuffer` (single-producer / multiple-consumer shared-memory ring for cross-worker broadcast) is the same pattern in the same problem space; we're indebted to it for showing the shape of the right answer in Python land.
-- Bill Dally (NVIDIA Chief Scientist) and Jeff Dean (Google), [_Advancing to AI's Next Frontier_](https://www.youtube.com/watch?v=g8BuAtM3fp4) (GTC 2026) — for framing nanosecond-scale chip-level optimization and the "latency is communication, not computation" insight that motivates `myelon`'s focus on shared-memory transport.
+- **[LMAX Disruptor](https://github.com/LMAX-Exchange/disruptor)** by Martin Thompson [![GitHub](https://img.shields.io/badge/-mjpt777-181717?style=flat-square&logo=github&logoColor=white)](https://github.com/mjpt777) & team for the original lock-free ring-buffer single process multi-threaded design and the mechanical-sympathy mindset behind it.
+- **[`disruptor-rs`](https://github.com/nicholassm/disruptor-rs)** by Nicholas Schultz-Møller [![GitHub](https://img.shields.io/badge/-nicholassm-181717?style=flat-square&logo=github&logoColor=white)](https://github.com/nicholassm) for the single-process multi-threaded Rust port that `disruptor-mp` extends.
+- **[vLLM `shm_broadcast.py`](https://github.com/vllm-project/vllm/blob/main/vllm/distributed/device_communicators/shm_broadcast.py)** by Kaichao You [![GitHub](https://img.shields.io/badge/-youkaichao-181717?style=flat-square&logo=github&logoColor=white)](https://github.com/youkaichao) for the SOTA Python shared-memory broadcast fabric used in intra-node inter-process inference worker processes.
+- **Jeff Dean and Dr Bill Dally, [_Advancing to AI's Next Frontier_](https://www.youtube.com/watch?v=joTYgvRHST0), NVIDIA GTC 2026** for stating the systems point clearly: at the ultra-low-latency edge of inference, the bulk of the delay is communication latency.
 
 ## Citation
 
-If you use `myelon` or `disruptor-mp` in research or downstream work, please cite the relevant crate.
+If you use `myelon` or `disruptor-mp` in research or downstream work, cite this repository.
 
-**`myelon`** — the layered façade (framing, codecs, typed zero-copy, topology):
+Repository:
+`https://github.com/Venkat2811/myelon`
 
-```
-Venkat Raman (@venkat_systems). "myelon: Low-latency, high-throughput, zero-copy typed transport over multiprocess SHM and mmap ring buffers for inference and other low-latency pipelines". GitHub (2026). https://github.com/Venkat2811/myelon
-```
+Twitter/X: `@venkat_systems`
 
-```bibtex
-@misc{venkat2026myelon,
-  title        = {myelon: Low-latency, high-throughput, zero-copy typed transport over multiprocess SHM and mmap ring buffers --- framing, codecs, typed zero-copy, and topology for inference and other low-latency pipelines},
-  author       = {Venkat Raman},
-  year         = {2026},
-  publisher    = {GitHub},
-  url          = {https://github.com/Venkat2811/myelon},
-  note         = {Twitter/X: \url{https://twitter.com/venkat_systems}}
-}
-```
-
-**`disruptor-mp`** — the Layer 0 substrate (raw cross-process ring buffer):
-
-```
-Venkat Raman (@venkat_systems). "disruptor-mp: Low-latency, high-throughput multiprocess SHM and mmap ring buffers for Disruptor-style publication". GitHub (2026). https://github.com/Venkat2811/myelon
-```
-
-```bibtex
-@misc{venkat2026disruptormp,
-  title        = {disruptor-mp: Low-latency, high-throughput multiprocess SHM and mmap ring buffers for Disruptor-style publication, with cross-process producer/consumer coordination and observability counters},
-  author       = {Venkat Raman},
-  year         = {2026},
-  publisher    = {GitHub},
-  url          = {https://github.com/Venkat2811/myelon},
-  note         = {Twitter/X: \url{https://twitter.com/venkat_systems}}
-}
-```
+Formal citation metadata lives in `CITATION.cff`.
+BibTeX entries can live in `CITATION.bib`.
 
 ## License
 
-Licensed under either of
+Licensed under either of:
 
 - Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or <http://www.apache.org/licenses/LICENSE-2.0>)
 - MIT license ([LICENSE-MIT](LICENSE-MIT) or <http://opensource.org/licenses/MIT>)
@@ -213,3 +281,5 @@ at your option.
 ### Contribution
 
 Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in the work by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any additional terms or conditions.
+
+Issues, Feedback, Discussions, PR are welcome & appreciated !

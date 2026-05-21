@@ -1,101 +1,44 @@
 # competitive-bench Setup
 
-## Scope
-
-`competitive-bench` is the narrow external-comparison orchestrator.
-It does not run the exhaustive internal `perf-bench` matrices.
-
-Current families:
-
-- signal
-  - internal raw-ring only
-  - `shm` + `mmap`
-  - exposed via `make super-tiny`
-- `1p1c` ping-pong
-  - max-throughput mode
-  - fixed-rate coordinated-omission-aware mode
-- broadcast
-  - `1p4c`
-  - `1p8c`
-  - max-throughput mode
-  - fixed-rate coordinated-omission-aware mode
-
-Current adapter surface:
-
-- internal baselines
-  - `disruptor-shm`
-  - `disruptor-mmap`
-  - `myelon-raw-shm`
-  - `myelon-raw-mmap`
-- external peers
-  - `crossbar-channel`
-  - `crossbar-pubsub`
-  - `shmipc-rs`
-  - `iceoryx2-shm`
-  - `boost-message-queue`
-  - `ompi-vader-self`
-  - `rusteron-aeron-ipc`
-  - `zeromq-ipc`
-  - `zeromq-ipc-abs`
-  - `zeromq-tcp`
-
-## Why `third_party/` only has three peers
-
-Only these peers are stored as crate-local source trees:
-
-- `crossbar`
-- `boost_pingpong`
-- `ompi_pingpong`
-
-Reason:
-
-- `crossbar` is pinned here as a local source dependency used directly by the crate.
-- `boost_pingpong` and `ompi_pingpong` are checked-in reference adapters whose source and build contract belong with the harness.
-- `shmipc-rs`, `iceoryx2`, `rusteron`, and the Rust-side `zeromq` adapter are built from Cargo in the workspace and do not currently need local source vendoring.
-- `zeromq` still depends on system `libzmq`; the transport library is system-managed even though the adapter binary is ours.
-
-## Durable outputs
-
-Default output roots:
-
-- `output/results`
-- `output/headon`
-- `output/simple-smoke`
-- `output/super-tiny`
-
-These are local to the crate, not `/tmp`.
+This file is the operator guide for `competitive-bench`. The crate README explains scope; this file explains what you need installed and how the peers are built.
 
 ## Prerequisites
 
 ### Submodules
 
 ```bash
+git submodule sync --recursive
 git submodule update --init --recursive crates/competitive-bench/third_party/crossbar
 ```
 
 ### System packages
 
-Debian/Ubuntu example:
+Debian / Ubuntu example:
 
 ```bash
 sudo apt-get update
 sudo apt-get install -y build-essential pkg-config libzmq3-dev libboost-all-dev openmpi-bin libopenmpi-dev
 ```
 
-What each package is for:
+What they are for:
 
-- `build-essential`
-  - C/C++ compilation for local third-party adapters
-- `pkg-config` + `libzmq3-dev`
-  - Rust `zmq` crate build and link
-- `libboost-all-dev`
-  - `boost::interprocess message_queue` adapter build
-- `openmpi-bin` + `libopenmpi-dev`
-  - `mpicc`, `mpirun`, and Open MPI headers/libs for the `ompi` adapter
+| Package | Why |
+|---|---|
+| `build-essential` | C/C++ compilation for local third-party adapters |
+| `pkg-config`, `libzmq3-dev` | build and link the Rust `zmq` crate |
+| `libboost-all-dev` | build the Boost message-queue adapter |
+| `openmpi-bin`, `libopenmpi-dev` | `mpicc`, `mpirun`, and Open MPI headers/libs for the OMPI adapter |
+
+Optional by peer:
+
+- only `zeromq-*`: `pkg-config`, `libzmq3-dev`
+- only `boost-message-queue`: `build-essential`, `libboost-all-dev`
+- only `ompi-vader-self`: `build-essential`, `openmpi-bin`, `libopenmpi-dev`
+- `crossbar`, `shmipc-rs`, `iceoryx2-shm`, `rusteron-aeron-ipc`: no extra system packages beyond the Rust toolchain in the normal Linux setup
 
 ## Build and run
 
-Typical flow from `crates/competitive-bench`:
+Typical flow:
 
 ```bash
 make help
@@ -103,7 +46,6 @@ make build-all
 make simple-smoke
 make super-tiny
 make quick
-make headon-smoke
 ```
 
 Larger sweeps:
@@ -120,78 +62,40 @@ cargo run -p competitive-bench --profile competitive \
   --bin competitive_bench_runner -- --help
 ```
 
-The runner is the source of truth for adapter dispatch. The Makefile is only a thin wrapper for build prerequisites, quick tier aliases, and signal integration.
+`make build-all` compiles the workspace crate plus the local Boost and OMPI peer helpers, so expect it to take longer than a normal Rust-only build.
 
 ## Adapter build contract
 
-### Internal baselines
-
-Built through `perf-bench` benches invoked by `competitive-bench`:
-
-- `disruptor-shm`
-- `disruptor-mmap`
-- `myelon-raw-shm`
-- `myelon-raw-mmap`
-- internal broadcast via `internal_broadcast`
-
-### `crossbar`
-
-- source: `third_party/crossbar`
-- built by Cargo through `make build-all`
-- participates in ping-pong and broadcast
-
-### `shmipc-rs`
-
-- source: Cargo dependency only
-- built by Cargo through `make build-all`
-- participates in ping-pong
-
-### `iceoryx2-shm`
-
-- source: Cargo dependency only
-- built by Cargo through `make build-all`
-- participates in ping-pong
-
-### `boost::interprocess message_queue`
-
-- source: `third_party/boost_pingpong`
-- built by `make build-all`
-- participates in ping-pong
-
-### `ompi`
-
-- source: `third_party/ompi_pingpong`
-- built by `make build-all`
-- participates in ping-pong
+| Adapter family | Build path |
+|---|---|
+| internal baselines | built through workspace Rust code |
+| `crossbar` | source under `third_party/crossbar`, built through Cargo |
+| `shmipc-rs` | Cargo dependency |
+| `iceoryx2-shm` | Cargo dependency |
+| `boost-message-queue` | local source under `third_party/boost_pingpong` |
+| `ompi-vader-self` | local source under `third_party/ompi_pingpong` |
+| `rusteron-aeron-ipc` | Cargo dependency, launches its own local Aeron media driver |
+| `zeromq-*` | Rust adapter binary plus system `libzmq` |
 
 Notes:
 
-- `OMPI_MPICC` can override the local MPI compiler.
+- `OMPI_MPICC` can override the MPI compiler used for the OMPI adapter
+- payloads larger than the Aeron IPC max message length are skipped by the runner for `rusteron`
 
-### `rusteron` / Aeron IPC
+## Durable outputs
 
-- source: Cargo dependency only
-- built by Cargo through `make build-all`
-- participates in ping-pong
+Default output roots:
 
-Notes:
+- `output/results`
+- `output/headon`
+- `output/simple-smoke`
+- `output/super-tiny`
 
-- the adapter launches and tears down its own embedded Aeron media driver
-- payloads larger than Aeron IPC's max message length are skipped by the runner
-
-### `zeromq`
-
-- adapter is our Rust binary
-- transport library is system `libzmq`
-- built by Cargo through `make build-all`
-- participates in ping-pong over:
-  - `ipc`
-  - `ipc-abs`
-  - `tcp`
+These outputs are crate-local and durable enough for later graphing or post-processing.
 
 ## Cleanup and process hygiene
 
-Kill leftover benchmark peer processes between runs:
+Kill leftover peer processes between runs:
 
 ```bash
 make kill-pingpong
@@ -201,34 +105,26 @@ Shared-memory artifacts under `/dev/shm/` are cleaned up by the runner between r
 
 ## Output contract
 
-Current output/reporting contract:
+The output schema is intentionally stable across peers:
 
 - internal raw baselines cover both `shm` and `mmap`
-- benchmark families are rendered separately:
-  - `Signal`
-  - `Ping-Pong`
-  - `Broadcast`
-- aggregate tables are separated by protocol
-  - `SHM`
-  - `MMAP`
-  - `IPC`
-  - `TCP`
-  - `MPI`
-  - `Message Queue`
-- max-throughput and fixed-rate CO-aware render in separate sections
-- latency exports include:
-  - `P1`
-  - `P10`
-  - `P25`
-  - `P50`
-  - `P90`
-  - `P95`
-  - `P99`
-  - `P99.9`
-  - `P99.99`
-  - `P99.999`
-  - `P99.9999`
-- Pareto frontier SVGs are generated from the same durable output bundle
+- throughput and fixed-rate CO-aware sections are separate
+- latency exports include the full percentile ladder used by the runner
+- Pareto/frontier graphs are generated from the durable JSON bundle, not from terminal output
+
+## `third_party/` policy
+
+Only a few peers live under `third_party/`:
+
+- `crossbar`
+- `boost_pingpong`
+- `ompi_pingpong`
+
+The rule is simple:
+
+- pin source locally when it materially helps reproducibility
+- keep Cargo-managed peers Cargo-managed unless that changes
+- keep system-managed dependencies system-managed unless that changes
 
 ## Fast lanes
 
@@ -237,13 +133,5 @@ make simple-smoke
 make super-tiny
 ```
 
-`simple-smoke` is the exact-size fast sanity lane.
-
-`super-tiny` is the broader CI-style lane:
-
-- `100` warmup
-- `1000` measured messages/events
-- one representative fixed-rate CO lane at `50K/s` per scenario, rather than the full parity rate ladder
-- signal over `shm` + `mmap`
-- ping-pong for all currently wired peers
-- broadcast for the wired broadcast peers
+- `simple-smoke`: fast exact-size sanity lane
+- `super-tiny`: broader CI-style lane with signal, ping-pong, and broadcast coverage

@@ -3,51 +3,29 @@
 //! Multiprocess shared-memory transport for inference and other
 //! low-latency pipelines.
 //!
-//! `myelon` is a **simplified façade** for the [`disruptor_mp`]
-//! substrate. It re-exports every relevant type from `disruptor-mp`
-//! (Layer 0 — the raw cross-process ring buffer plus its
-//! coordination, discovery, liveness, and observability primitives)
-//! and adds three more layers on top: framing, codec, and typed
-//! zero-copy.
+//! `myelon` is the full transport surface built on top of
+//! [`disruptor_mp`].
 //!
-//! Both `myelon` and `disruptor-mp` are first-class entry points —
-//! depend on whichever exposes only the surface your code actually
-//! needs. The type identity is preserved across the re-export
-//! boundary, so a `disruptor_mp::SharedConsumer<E>` *is* a
-//! `myelon::SharedConsumer<E>`; helpers and patterns transfer
-//! between the two profiles unchanged.
+//! The design goal is straightforward:
 //!
-//! Pick the outermost layer that matches your data; inner layers
-//! (including Layer 0) are reachable through `myelon` without
-//! adding `disruptor-mp` as a separate dependency.
+//! - the raw ring should remain reachable
+//! - the higher layers should be available when you need them
+//! - callers should not have to assemble framing, typed transport, and
+//!   zero-copy access as separate dependencies
 //!
-//! # The onion
+//! `myelon` therefore re-exports the raw substrate from
+//! [`disruptor_mp`] and adds framed transport, codec-backed typed
+//! transport, typed zero-copy, topology helpers, and transport-layout
+//! helpers behind one dependency.
 //!
-//! ```text
-//! ┌───────────────────────────────────────────────────────────┐
-//! │ myelon                  ← full layered façade             │
-//! │                                                           │
-//! │   Layer 3 — typed zero-copy (ZeroCopyCodec)               │
-//! │   Layer 2 — codec (bincode / rkyv / flatbuffers)          │
-//! │   Layer 1 — framed transport (multi-frame, msg_id, flags) │
-//! │                                                           │
-//! │   ┌───────────────────────────────────────────────────┐   │
-//! │   │ Layer 0  — re-exported from disruptor-mp:         │   │
-//! │   │   Shared{Producer,Consumer}<E>            (SHM)   │   │
-//! │   │   Mmap{Producer,Consumer}<E>              (mmap)  │   │
-//! │   │   build_shared_single_producer / attach_…         │   │
-//! │   │   CoordinationMode, discovery,                    │   │
-//! │   │   RequiredConsumerLivenessConfig (RFC 0017.5),    │   │
-//! │   │   observability::* (RFC 0040)                     │   │
-//! │   └───────────────────────────────────────────────────┘   │
-//! │                                                           │
-//! │   + FixedTopology / WorkerCount   (topology shape)        │
-//! │   + MyelonTransportLayout         (macOS-safe SHM names)  │
-//! │   + observability::*              (RFC-0040 re-export)    │
-//! └───────────────────────────────────────────────────────────┘
-//! ```
+//! Both `myelon` and `disruptor-mp` are valid entry points. Use
+//! `myelon` when you want the higher-level transport layers available;
+//! use `disruptor-mp` directly when you only need the raw substrate.
+//! Type identity is preserved across the re-export boundary, so a
+//! `disruptor_mp::SharedConsumer<E>` is the same type as a
+//! `myelon::SharedConsumer<E>`.
 //!
-//! # When to use which layer
+//! # What this crate exposes
 //!
 //! | Need | Layer | Type |
 //! |---|---|---|
@@ -56,7 +34,10 @@
 //! | Typed message with serialisation (bincode / rkyv / flatbuffers). Owned decode on the consumer side. | 2 — codec | [`typed_transport::TypedProducer`] / [`typed_transport::TypedConsumer`] + a [`codec::Codec`] impl |
 //! | Same as Layer 2 but consumer reads serialised data in-place — no `deserialize` allocation. | 3 — typed zero-copy | [`typed_transport::TypedProducer`] / [`typed_transport::TypedConsumer`] + a [`codec::ZeroCopyCodec`] impl |
 //!
-//! # Choosing a frame size (Layer 1 and up)
+//! Pick the highest-level surface that matches your data model, then
+//! measure before stepping down.
+//!
+//! # Choosing a frame size
 //!
 //! The framed transport's frame type is a **const generic** —
 //! callers pick the per-frame payload capacity at compile time:
@@ -84,7 +65,7 @@
 //! transport per size class. `perf-bench`'s `nofrag` mode is a
 //! worked example of this pattern.
 //!
-//! # Two senses of "zero-copy"
+//! # Two senses of zero-copy
 //!
 //! Two different things in this stack get called "zero-copy", and
 //! they're not the same:
@@ -101,7 +82,7 @@
 //! want framing. The four-layer picture covers both senses without
 //! overlap.
 //!
-//! # Orthogonal concerns
+//! # Cross-cutting concerns
 //!
 //! These wrap *across* layers — pick them by what your *system* needs,
 //! not by what your *wire format* needs.
@@ -115,7 +96,7 @@
 //! | Layout | [`transport::MyelonTransportLayout`], [`transport::MyelonTransportConfig`], [`transport::RunnerMyelonTransportConfig`] | macOS-safe SHM segment names for one-engine / N-runner sessions. |
 //! | Observability | [`observability`] (re-export of [`disruptor_mp::observability`]) | RFC-0040 hot-path counters file. |
 //!
-//! # Required-consumer liveness (RFC 0017.5)
+//! # Required-consumer liveness
 //!
 //! Out of the box, the base model is strict broadcast — the slowest
 //! consumer gates capacity. A stalled or crashed required consumer
@@ -154,10 +135,9 @@
 //! progress is observed from the cursor data the producer already
 //! needs for gating.
 //!
-//! By design the liveness layer does **not** add dead-consumer
-//! eviction, quorum modes, or degraded broadcast — the system stays
-//! strict-broadcast. If a required consumer dies and never returns
-//! under the same ID, the topology fails gracefully.
+//! By design the liveness layer does not add dead-consumer eviction,
+//! quorum modes, or degraded broadcast. The topology stays
+//! strict-broadcast.
 //!
 //! # Feature flags
 //!
@@ -168,7 +148,7 @@
 //! | `flatbuffers` | Layer 2/3 with `flatbuffers` | Re-exports `flatbuffers` and the flatbuffers codec wrappers. |
 //! | `dst` | tests only | Forwards to `disruptor_mp/dst` for deterministic-simulation hooks. |
 //!
-//! # Quick start (Layer 0)
+//! # Quick start
 //!
 //! ```no_run
 //! use myelon::{
@@ -188,8 +168,7 @@
 //! producer.publish(|slot| slot.sequence = 1);
 //! ```
 //!
-//! See the [README](https://github.com/Venkat2811/myelon/blob/main/crates/myelon/README.md)
-//! for Layer 1 / Layer 2 / Layer 3 examples.
+//! See the crate README for fuller Layer 1 / Layer 2 / Layer 3 examples.
 
 pub mod codec;
 pub mod inference;

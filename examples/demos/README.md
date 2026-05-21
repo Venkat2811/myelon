@@ -1,28 +1,40 @@
 # demos
 
-Workspace-level runnable examples for [`myelon`](../../crates/myelon/) — the simplified façade for [`disruptor-mp`](../../crates/disruptor-mp/)'s core capabilities (Layer 0) plus framing, codecs, typed zero-copy, and topology on top.
+Runnable first-party examples for `myelon` and `disruptor-mp`.
 
-Two dependency profiles are demonstrated side-by-side. Both are first-class — pick by what surface your code actually needs:
+These examples are intentionally small. They show real multiprocess wiring, not thread-based simulation.
 
-- **Via `myelon`** — full Layer 0 + Layers 1–3 + topology + observability surface reachable through `myelon::*` from a single dep. `shm_disruptor`, `mmap_disruptor`, `pingpong`, `counters`, and `fixed_inference_topology` use this profile.
-- **Direct on `disruptor-mp` (substrate-only)** — depend on `disruptor-mp` alone for Layer 0 only, with framing / codec / typed-zero-copy / topology not compiled into your binary. `disruptor_mp_shm` and `disruptor_mp_mmap` are templates for that profile.
+## Start here
 
-Same multiprocess pattern, same correctness primitives, same runtime behaviour — only the import paths and the `Cargo.toml` dependency choice differ.
+If you only run one example, start with:
 
-> **Everything here is multiprocess.** The crate name is `disruptor-mp` and the **mp** is not a suggestion. Every example spawns its peer(s) as real OS child processes via `current_exe()` plus an env-var role dispatch (see `src/lib.rs`); none of them simulate multiprocess behavior with threads.
+```bash
+cargo run --release -p demos --example shm_disruptor
+```
 
-## What's here
+That gives you the simplest real SHM producer and consumer pair through `myelon`.
 
-| Example | What it shows | Imports through |
+If you want to compare the one-dependency path against the raw direct-dependency path, run these back to back:
+
+```bash
+cargo run --release -p demos --example shm_disruptor
+cargo run --release -p demos --example disruptor_mp_shm
+```
+
+They exercise the same runtime shape with different import surfaces.
+
+## Example ladder
+
+| Example | Run it when... | Import profile |
 |---|---|---|
-| [`shm_disruptor.rs`](shm_disruptor.rs) | Layer 0 quick start over a POSIX shared-memory segment. 1 producer + 1 consumer in two real OS processes. | `myelon::*` |
-| [`mmap_disruptor.rs`](mmap_disruptor.rs) | Same shape as `shm_disruptor`, backed by a memory-mapped file. Region survives reboots, no macOS `PSHMNAMLEN` (31-byte) ceiling. | `myelon::*` |
-| [`disruptor_mp_shm.rs`](disruptor_mp_shm.rs) | Same shape as `shm_disruptor`, but with `disruptor-mp` as a direct dependency (substrate-only profile). | `disruptor_mp::*` |
-| [`disruptor_mp_mmap.rs`](disruptor_mp_mmap.rs) | Same shape as `mmap_disruptor`, but with `disruptor-mp` as a direct dependency. | `disruptor_mp::*` |
-| [`pingpong.rs`](pingpong.rs) | Multiprocess request/response RTT. Two SHM rings, parent measures end-to-end round-trip latency. | `myelon::*` |
-| [`counters.rs`](counters.rs) | RFC-0040 hot-path observability end-to-end through the `myelon` re-export of `disruptor_mp::observability`. | `myelon::*` |
-| [`fixed_inference_topology.rs`](fixed_inference_topology.rs) | One scheduler / N workers (2..=8) topology with discovery and rendezvous baked in via `myelon::FixedTopology`. | `myelon::*` |
-| [`required_consumer_liveness.rs`](required_consumer_liveness.rs) | RFC-0017.5 in action. Two required consumers attach and consume in lockstep; parent SIGKILLs `cp_0` mid-publish; the producer's liveness layer fires a stall alert; parent respawns under the same `consumer_id` within `shutdown_grace_period`; the new process picks up the cursor preserved in SHM and catches up. Demonstrates same-ID rejoin recovery. | `myelon::*` + `disruptor_mp::{RequiredConsumerLivenessConfig, …}` |
+| `shm_disruptor.rs` | You want the simplest raw SHM quick start through `myelon` | `myelon` |
+| `mmap_disruptor.rs` | You want the same shape backed by mmap instead of SHM | `myelon` |
+| `disruptor_mp_shm.rs` | You want the same SHM shape with a direct `disruptor-mp` dependency | `disruptor-mp` |
+| `disruptor_mp_mmap.rs` | You want the same mmap shape with a direct `disruptor-mp` dependency | `disruptor-mp` |
+| `pingpong.rs` | You want a two-ring request/response round-trip | `myelon` |
+| `counters.rs` | You want RFC-0040 observability counters end to end | `myelon` |
+| `fixed_inference_topology.rs` | You want the fixed scheduler and N-worker topology helpers | `myelon` |
+| `required_consumer_liveness.rs` | You want to see same-ID rejoin recovery for required-consumer liveness | `myelon` plus liveness config types |
 
 ## Run them
 
@@ -37,57 +49,21 @@ cargo run --release -p demos --example fixed_inference_topology
 cargo run --release -p demos --example required_consumer_liveness
 ```
 
-Always use `--release` for representative numbers.
+Use `--release` for any run where latency or throughput matters.
 
-## When you outgrow the examples
+## Multiprocess wiring
 
-Examples deliberately stay small — single happy-path, single-producer, single-consumer (or the topology shape the example is named after). When you need to exercise the full surface, drop into the bench harnesses:
+Each example follows the same shape:
 
-### `crates/perf-bench/` — broad internal sweep
+- parent process starts normally
+- child roles are re-entered through `current_exe()` plus env-var role dispatch
+- parent and children share the exact same SHM or mmap names through the environment
 
-Covers what the examples don't:
+The helper code for that lives in `examples/demos/src/lib.rs`.
 
-- **All four layers** — raw ring, framed, codec (bincode / rkyv / flatbuffers), typed zero-copy.
-- **Both backends** — `--backend shm` and `--backend mmap`.
-- **All wait strategies** — `--wait-strategy busyspin | spinloop | sleep | block` (RFC 0017.5 §8 covers the cost model).
-- **Coordination modes** — implicit through the per-scenario CLI; internal benchmarks use `UnifiedCoordination` (single cache-line-padded SHM segment), external benches use `BenchmarkCoordination` (multi-cursor pattern). Both modes are exercised side-by-side.
-- **Three measurement modes** — max-throughput, fixed-rate coordinated-omission-aware, low-overhead batch-timing.
-- **Required-consumer liveness** — pass `--enable-counters` for the RFC-0040 observability path; `--liveness on|off` is wired for parity benchmarks.
-- **Fragmentation** — `--frag` / `--nofrag` to compare 64KB-slot multi-frame messages vs right-sized single-frame messages.
-- **Per-process latency histograms + counters** through the `metrics-rs` facade.
+## What to do next
 
-```bash
-# Layer 0 raw ring, SHM, max throughput
-cargo run --release -p perf-bench --bin perf-bench-pingpong -- \
-    --layer raw_ring --backend shm
+Use the examples to understand the API shape. Use the benchmark crates when you want measurement:
 
-# Codec layer with rkyv + counters on
-cargo run --release -p perf-bench --bin perf-bench-pingpong -- \
-    --layer codec --backend shm --codec rkyv --enable-counters
-```
-
-See [`crates/perf-bench/README.md`](../../crates/perf-bench/README.md) for the binary inventory, layer / backend / mode matrix, and file/directory structure.
-
-### `crates/competitive-bench/` — apples-to-apples external comparison
-
-Strict 1p1c ping-pong and 1p4c / 1p8c broadcast against external transports: `crossbar`, `shmipc`, `rusteron` (Aeron client), `iceoryx2`, `zeromq`, `boost::interprocess message_queue`, and `ompi`. Internal `disruptor-mp` and `myelon` raw-ring lanes serve as the baseline.
-
-See [`crates/competitive-bench/README.md`](../../crates/competitive-bench/README.md).
-
-## How the multiprocess wiring works
-
-Each example follows the same shape via the tiny helper in [`src/lib.rs`](src/lib.rs):
-
-```rust
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    if let Some(role) = demos::child_role() {
-        // Re-entered as a child process; dispatch on the role.
-        return run_child(&role);
-    }
-    // Original parent process: spawn child(ren) with
-    // `demos::spawn_self("role", segment)` and run the parent path.
-    run_parent()
-}
-```
-
-Children inherit stdout/stderr so you see one unified log. The parent renders all SHM segment names *once* (via `portable_shm_segment_name`, which adds a per-call salt) and passes them to children verbatim through the env so both sides agree on the exact strings.
+- [`crates/perf-bench`](../../crates/perf-bench/): broad internal sweep
+- [`crates/competitive-bench`](../../crates/competitive-bench/): external transport comparison

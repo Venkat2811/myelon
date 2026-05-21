@@ -1,17 +1,31 @@
 # perf-bench
 
-> **Internal.** Not published to crates.io. Owns the broad internal performance sweep universe; the narrower external comparison surface lives in [`competitive-bench`](../competitive-bench/).
+> **Internal.** Not published to crates.io. Owns the broad internal sweep surface; the narrower external comparison surface lives in [`competitive-bench`](../competitive-bench/).
 
-`perf-bench` consolidates the repository's performance benchmarks for the [`disruptor-mp`](../disruptor-mp/) and [`myelon`](../myelon/) transport stacks into a small set of binaries that share one set of event types, payload generators, latency recorders, coordination primitives, and reporting code.
+`perf-bench` exists to answer the internal question precisely: what exactly did we measure, on which transport layer, with which backend, under which pacing model?
+
+It consolidates the repository's performance benchmarks for the [`disruptor-mp`](../disruptor-mp/) and [`myelon`](../myelon/) transport stacks into a small set of binaries that share one set of event types, payload generators, latency recorders, coordination primitives, and reporting code.
+
+## Start here
+
+If you are orienting to this crate, use this order:
+
+- `make -C crates/perf-bench simple-smoke` for a fast exact-size sanity lane
+- `make -C crates/perf-bench super-tiny` for the broad CI-style gate
+- `perf-bench-signal` for signal-only work
+- `perf-bench-pingpong` for `1p1c` transport lanes
+- `perf-bench-broadcast` for `1pNc` transport lanes
+
+The full tree and capability matrix below are for navigation once you already know which surface you need.
 
 ## Binaries
 
 | Binary | Scenarios |
 |---|---|
-| `perf-bench-pingpong` | 1p1c ping-pong. All four layers (raw_ring, framed, codec, typed_zc) × both backends (shm, mmap) × three modes (max-throughput, fixed-rate coordinated-omission-aware, low-overhead batch-timing). |
-| `perf-bench-broadcast` | 1pNc broadcast across the raw, framed, codec, typed zero-copy, wait-strategy, sweep, and layout families. `typed_zc` is exposed as a first-class alias over the dedicated typed zero-copy sweep family. |
-| `perf-bench-signal` | Cache-line-sized signal events, no payload variation, raw layer only — pure throughput ceiling for "what can this hardware push through a disruptor ring?". |
-| `perf-bench-repeatability` | Repeat a single configuration N times and emit canonical JSON for run-to-run variance analysis. |
+| `perf-bench-pingpong` | `1p1c` ping-pong. All four layers (`raw_ring`, `framed`, `codec`, `typed_zc`) × both backends (`shm`, `mmap`) × three modes (max-throughput, fixed-rate coordinated-omission-aware, low-overhead batch-timing). |
+| `perf-bench-broadcast` | `1pNc` broadcast across the raw, framed, codec, typed zero-copy, wait-strategy, sweep, and layout families. `typed_zc` is exposed as a first-class alias over the dedicated typed zero-copy sweep family. |
+| `perf-bench-signal` | Cache-line-sized signal events, no payload variation, raw layer only: pure hardware ceiling and true signal-latency lanes. |
+| `perf-bench-repeatability` | Repeat a single configuration `N` times and emit canonical JSON for run-to-run variance analysis. |
 
 ## Capability matrix
 
@@ -20,57 +34,61 @@
 | Layer | `raw_ring`, `raw_myelon`, `framed`, `codec`, `typed_zc` |
 | Backend | `shm` (POSIX SHM), `mmap` (memory-mapped file) |
 | Mode | `--throughput` (default), `--target-rate <ops/s>` (CO-aware fixed rate), `--batch-timing` (low-overhead) |
-| Wait strategy | `--wait-strategy busyspin | spinloop | sleep | block` (RFC 0017.5 §8 cost model) |
-| Codec | `--codec bincode | rkyv | flatbuffers` (Layer 2 / 3 only) |
+| Wait strategy | `--wait-strategy busyspin | spinloop | sleep | block` |
+| Codec | `--codec bincode | rkyv | flatbuf` (Layer 2 / 3 only) |
 | Fragmentation | `--frag` (64 KB fixed slots, multi-frame) / `--nofrag` (right-sized single-frame) |
 | Coordination | Internal `UnifiedCoordination` (single SHM segment, 9 cache-line-padded atomics) for native lanes; external `BenchmarkCoordination` (5 separate cursor segments) for adapter lanes. Both styles run side-by-side. |
-| Liveness | `--enable-counters` to attach RFC-0040 hot-path counters; required-consumer liveness wired for parity benches. |
-| Output | `--json`, `--json-canonical`, `--json-out PATH`, `--csv-out`, `--md-out`, `--tree`. |
+| Liveness / counters | `--enable-counters` to attach RFC-0040 hot-path counters; required-consumer liveness wired for parity benches. |
+| Output | `--json`, `--json-canonical`, `--json-out PATH`, `--csv-out`, `--md-out`, `--tree` |
 
-## Layer hierarchy (the onion exercised in concrete benches)
+## Methodology notes
 
-```
+- Layer 1 framed benches use `myelon`'s leased receive path where available, so the reported cost is framing / fragmentation / reassembly overhead, not an avoidable owned-copy artifact.
+- Layer 2 codec benches intentionally include owned decode cost.
+- Layer 3 typed zero-copy benches intentionally exercise in-place access.
+- Signal benches are a separate family from payload-carrying ping-pong or broadcast benches and should be interpreted separately.
+
+## Layer hierarchy exercised in concrete benches
+
+```text
         consumer-side checksum / decode
                   ▲
-                  │  Layer 3 — typed zero-copy via myelon::ZeroCopyCodec
-                  │  Layer 2 — owned decode via myelon::Codec (bincode/rkyv/flatbuf)
-                  │  Layer 1 — myelon::FramedTransport (multi-frame, msg_id, flags)
-                  │  Layer 0 — disruptor_mp::SharedProducer/Consumer (raw ring)
+                  │  Layer 3: typed zero-copy via myelon::ZeroCopyCodec
+                  │  Layer 2: owned decode via myelon::Codec (bincode/rkyv/flatbuf)
+                  │  Layer 1: myelon::FramedTransport (multi-frame, msg_id, flags)
+                  │  Layer 0: disruptor_mp::SharedProducer/Consumer (raw ring)
                   ▼
         producer publishes raw struct or framed bytes
 ```
 
-Methodology note:
-- Layer 1 framed benches use `myelon`'s leased receive path where available, so the reported cost is framing / fragmentation / reassembly overhead, not an avoidable owned-copy artifact.
-- Layer 2 codec benches intentionally include owned decode cost.
-- Layer 3 typed-zero-copy benches intentionally exercise in-place access.
-
-Each scenario in `perf-bench` is named after the layer + backend it exercises, e.g. `layers/raw/disruptor_mp/pingpong_shm.rs` is "Layer 0, SHM backend, ping-pong shape." The directory tree mirrors the layer hierarchy exactly so you can read the filesystem and understand what the bench measures.
+Each scenario in `perf-bench` is named after the layer + backend it exercises. For example, `layers/raw/disruptor_mp/pingpong_shm.rs` means raw layer, SHM backend, ping-pong shape. The directory tree mirrors the benchmark surface so you can read the filesystem and understand what the bench measures.
 
 ## File / directory structure
 
-Per the perf-bench structure design, the source tree is organized strictly by layer, not by crate of origin:
+The source tree is organized by benchmark surface, with the reusable
+plumbing split out into `infra/` and the scenario implementations split
+out into `layers/`.
 
-```
+```text
 crates/perf-bench/
 ├── Cargo.toml
 ├── Makefile
 ├── output/                                  # Local bench output (gitignored)
+├── scripts/                                 # Small helper scripts and validation gates.
 ├── src/
-│   ├── lib.rs                               # Crate root: layered modules + bench_support re-export.
-│   │
+│   ├── lib.rs                               # Crate root: cli + infra + layers + bench_support.
+│   ├── bench_payload.fbs                    # FlatBuffers schema used by generated payloads.
 │   ├── bin/                                 # Consolidated bench binaries.
 │   │   ├── pingpong.rs                      # `perf-bench-pingpong`
 │   │   ├── broadcast.rs                     # `perf-bench-broadcast`
 │   │   ├── signal.rs                        # `perf-bench-signal`
 │   │   └── repeatability.rs                 # `perf-bench-repeatability`
-│   │
-│   ├── bench_support/                       # Shared event types, competitor reference data,
-│   │   ├── common.rs                        # helper functions consumed by per-layer modules and
-│   │   ├── table.rs                         # by competitive-bench's adapter binaries.
+│   ├── bench_support/                       # Shared event types and helper data reused by benches.
+│   │   ├── common.rs
+│   │   ├── table.rs
 │   │   └── mod.rs
-│   │
 │   ├── cli/                                 # CLI arg parsing + scenario specs.
+│   │   ├── mod.rs
 │   │   ├── pingpong.rs
 │   │   ├── myelon_pingpong.rs
 │   │   ├── raw_ring.rs
@@ -79,117 +97,137 @@ crates/perf-bench/
 │   │   ├── wait_strategy.rs
 │   │   ├── layout.rs
 │   │   └── sweeps/
+│   │       ├── mod.rs
 │   │       ├── common.rs
 │   │       ├── framed.rs
 │   │       ├── layers.rs
 │   │       ├── monster.rs
 │   │       └── typed_zero_copy.rs
-│   │
-│   ├── layers/                              # The onion, mirrored on disk.
-│   │   │
+│   ├── layers/
+│   │   ├── mod.rs
 │   │   ├── raw/                             # Layer 0: direct ring, no framing.
-│   │   │   ├── disruptor_mp/                # disruptor-mp substrate.
+│   │   │   ├── mod.rs
+│   │   │   ├── disruptor_mp/
+│   │   │   │   ├── mod.rs
 │   │   │   │   ├── pingpong_{shm,mmap}.rs
 │   │   │   │   ├── broadcast_{shm,mmap}.rs
 │   │   │   │   └── wait_strategy_{shm,mmap}.rs
-│   │   │   └── myelon/                      # myelon raw-transport (Layer 0 façade).
+│   │   │   └── myelon/
+│   │   │       ├── mod.rs
 │   │   │       ├── pingpong_{shm,mmap}.rs
 │   │   │       ├── broadcast_{shm,mmap}.rs
 │   │   │       └── wait_strategy_{shm,mmap}.rs
-│   │   │
-│   │   ├── framed_myelon/                   # Layer 1+: FramedTransport on top of raw.
-│   │   │   ├── frag/                        # 64 KB fixed slots, multi-frame messages.
+│   │   ├── framed_myelon/                   # Layer 1+ families.
+│   │   │   ├── mod.rs
+│   │   │   ├── frag/
+│   │   │   │   ├── mod.rs
 │   │   │   │   ├── pingpong_{shm,mmap}.rs
 │   │   │   │   └── broadcast_{shm,mmap}.rs
-│   │   │   ├── nofrag/                      # Right-sized slots, no fragmentation.
+│   │   │   ├── nofrag/
+│   │   │   │   ├── mod.rs
 │   │   │   │   └── pingpong_{shm,mmap}.rs
-│   │   │   ├── codec/                       # Layer 2: Codec on top of Framed (owned decode).
-│   │   │   │   ├── frag/{pingpong,broadcast}_{shm,mmap}.rs
-│   │   │   │   ├── nofrag/{shm,mmap}.rs
-│   │   │   │   └── payloads.rs              # TestPayload + encode/decode/access helpers.
-│   │   │   └── typed_zc/                    # Layer 3: zero-copy on top of Framed.
+│   │   │   ├── codec/
+│   │   │   │   ├── mod.rs
+│   │   │   │   ├── pingpong_{shm,mmap}.rs
+│   │   │   │   ├── {shm,mmap}.rs            # broadcast codec lanes
+│   │   │   │   ├── nofrag_{shm,mmap}.rs
+│   │   │   │   └── payloads.rs
+│   │   │   └── typed_zc/
+│   │   │       ├── mod.rs
 │   │   │       ├── pingpong_{shm,mmap}.rs
-│   │   │       └── support.rs               # AlignedFixedFrame alias, telemetry.
-│   │   │
-│   │   ├── sweeps/                          # Parametric matrices across layers.
-│   │   │   ├── layers.rs                    # Layer-overhead comparison.
-│   │   │   ├── monster_{shm,mmap}.rs        # All-layer × all-size sweep.
-│   │   │   ├── framed.rs
-│   │   │   ├── typed_zc.rs
-│   │   │   └── nofrag.rs
-│   │   │
-│   │   └── layout.rs                        # Memory layout timing validation gate.
-│   │
-│   ├── infra/                               # Shared infrastructure.
-│   │   ├── child_runner.rs                  # Child-process role dispatch.
-│   │   ├── process.rs                       # Process spawning.
-│   │   ├── naming.rs                        # Segment naming.
-│   │   ├── launch.rs                        # launch_shm_group, launch_mmap_group.
-│   │   ├── config.rs                        # Env-var helpers, timeout.
-│   │   ├── backend.rs                       # SHM / mmap backend abstraction.
-│   │   ├── events.rs                        # BenchEvent, PingPongEvent, SignalEvent.
-│   │   ├── latency.rs                       # LatencyRecorder, LatencyStats.
-│   │   ├── allocation.rs                    # AllocationMetrics + tracking allocator.
-│   │   ├── competitors.rs                   # Static competitor reference data.
-│   │   ├── repeatability.rs                 # CV% analysis for run-to-run variance.
-│   │   │
-│   │   ├── coordination/                    # Process synchronization (two patterns).
-│   │   │   ├── external.rs                  # BenchmarkCoordination (5 SHM cursors).
-│   │   │   └── native.rs                    # UnifiedCoordination (9 padded atomics, 1 segment).
-│   │   │
-│   │   └── output/                          # All output concerns.
-│   │       ├── dir.rs                       # Timestamped run directories.
-│   │       ├── log.rs                       # BenchLog JSONL lifecycle.
-│   │       ├── producer.rs                  # ProducerOutput struct.
-│   │       ├── consumer.rs                  # ConsumerOutput struct.
-│   │       └── report/                      # Formatted output renderers.
-│   │           ├── model.rs                 # ReportBundle, ScenarioReport.
-│   │           ├── divan_tree.rs            # Divan-style tree renderer.
-│   │           ├── emit.rs                  # emit_report dispatcher.
-│   │           ├── adapt.rs                 # BenchResult → ReportBundle compat.
-│   │           ├── csv.rs / json.rs / markdown.rs / table.rs
-│   │           ├── views.rs                 # MonsterSweep views, layer comparison.
-│   │           └── reporting.rs             # BenchResult / BenchReport structs.
-│   │
-│   └── generated/                           # Code generated by `flatc`.
+│   │   │       └── support.rs
+│   │   ├── sweeps/
+│   │   │   ├── mod.rs
+│   │   │   ├── myelon_layers.rs
+│   │   │   ├── myelon_framed_sweep.rs
+│   │   │   ├── monster_sweep_shm.rs
+│   │   │   ├── monster_sweep_mmap.rs
+│   │   │   ├── typed_zero_copy_sweep.rs
+│   │   │   └── nofrag_all.rs
+│   │   └── layout.rs                        # Memory-layout timing validation gate.
+│   ├── infra/
+│   │   ├── mod.rs
+│   │   ├── bench.rs
+│   │   ├── config.rs
+│   │   ├── child_runner.rs
+│   │   ├── backend.rs
+│   │   ├── allocation.rs
+│   │   ├── competitors.rs
+│   │   ├── discovery.rs
+│   │   ├── events.rs
+│   │   ├── latency.rs
+│   │   ├── launch.rs
+│   │   ├── liveness.rs
+│   │   ├── naming.rs
+│   │   ├── process.rs
+│   │   ├── repeatability.rs
+│   │   ├── signal_counters.rs
+│   │   ├── signal_latency.rs
+│   │   ├── coordination/
+│   │   │   ├── mod.rs
+│   │   │   ├── external.rs
+│   │   │   └── native.rs
+│   │   └── output/
+│   │       ├── mod.rs
+│   │       ├── dir.rs
+│   │       ├── log.rs
+│   │       ├── reporting.rs
+│   │       ├── results.rs
+│   │       └── report/
+│   │           ├── mod.rs
+│   │           ├── model.rs
+│   │           ├── layout.rs
+│   │           ├── emit.rs
+│   │           ├── adapt.rs
+│   │           ├── csv.rs
+│   │           ├── json.rs
+│   │           ├── markdown.rs
+│   │           ├── table.rs
+│   │           ├── views.rs
+│   │           └── divan_tree.rs
+│   └── generated/
 │       └── bench_payload_generated.rs
-│
-└── tests/                                   # Compile-test surfaces, fragmentation regression.
+└── tests/
 ```
 
 ### Why this layout
 
-- **`layers/` mirrors the onion exactly.** Read the filesystem, understand the architecture. Each `layer-x/y/z` path corresponds to one cell in the layer × backend × shape matrix.
-- **`infra/coordination/` splits into `native` and `external`** — two fundamentally different sync mechanisms. Native uses a single SHM segment with 9 cache-line-padded atomics; external uses 5 separate cursor segments (the legacy multi-process pattern). Mixing them in one file obscured which benches use which.
-- **`infra/output/report/`** keeps formatting concerns one `infra::output` import away from the benches.
-- **`bench_support/`** holds primitive types (`BenchmarkEvent<const SIZE>`, `LatencyStats`, `CompetitorBenchmarks` reference data, etc.) shared with `competitive-bench`. These started life under `disruptor-mp/benches/ipc/competitive/` and were moved here when that bench tree was deleted as redundant with `perf-bench`.
+- `layers/` holds the scenario implementations that actually touch
+  `disruptor-mp` and `myelon`.
+- `layers/sweeps/` holds the larger matrix drivers that compose many
+  lower-level cases into one benchmark family.
+- `infra/coordination/` splits the native one-segment coordination path
+  from the legacy external multi-cursor pattern.
+- `infra/output/report/` keeps renderers and output adaptation out of the
+  hot-path benchmark code.
+- `bench_support/` holds shared event types and helper data consumed by
+  both `perf-bench` and `competitive-bench`.
 
 ## Quick start
 
 ```bash
-# Default 1p1c ping-pong: raw ring, SHM, 64-byte payload, 100k messages.
-cargo run -p perf-bench --release --bin perf-bench-pingpong -- \
+# Default 1p1c ping-pong: raw ring, SHM, 64-byte payload.
+cargo run -p perf-bench --profile competitive --bin perf-bench-pingpong -- \
     --layer raw_ring --backend shm
 
-# RFC-0040 observability counters on, runs in a separate scenario
-# from the default counter-free path.
-cargo run -p perf-bench --release --bin perf-bench-pingpong -- \
+# RFC-0040 observability counters on, in a separate scenario from the default path.
+cargo run -p perf-bench --profile competitive --bin perf-bench-pingpong -- \
     --layer raw_ring --backend shm --enable-counters
 
-# Layer 2 codec with rkyv, mmap backend.
-cargo run -p perf-bench --release --bin perf-bench-pingpong -- \
+# Layer 2 codec with rkyv.
+cargo run -p perf-bench --profile competitive --bin perf-bench-pingpong -- \
     --layer codec --backend shm --codec rkyv
 
-# Layer 3 typed zero-copy, flatbuffers, fragmentation mode.
-cargo run -p perf-bench --release --bin perf-bench-pingpong -- \
-    --layer typed_zc --backend shm --codec flatbuffers
+# Layer 3 typed zero-copy.
+cargo run -p perf-bench --profile competitive --bin perf-bench-pingpong -- \
+    --layer typed_zc --backend shm --codec flatbuf
 
 # 1p4c broadcast with fixed-rate coordinated-omission-aware mode.
-cargo run -p perf-bench --release --bin perf-bench-broadcast -- \
+cargo run -p perf-bench --profile competitive --bin perf-bench-broadcast -- \
     --layer raw_ring --backend mmap --consumers 4 --target-rate 1000000
 
-# Hardware ceiling — signal-only events.
-cargo run -p perf-bench --release --bin perf-bench-signal -- \
+# Hardware ceiling: signal-only events.
+cargo run -p perf-bench --profile competitive --bin perf-bench-signal -- \
     --backend shm --consumers 1 --events 10000000
 ```
 
@@ -210,11 +248,33 @@ make -C crates/perf-bench super-tiny
   - `100` warmup + `1000` measured messages/events where the scenario family exposes explicit warmup/message-count controls
   - covers signal, exact-size raw lanes, representative higher-layer ping-pong, representative higher-layer broadcast, wait-strategy, sweeps, and layout
 
+## Sample output
+
+The bench emits JSON per scenario plus pre-rendered charts. Examples:
+
+Pingpong throughput across the layer × payload × backend matrix:
+
+<p align="center">
+  <img src="../../assets/bench-myelon-pingpong-heatmap.png" alt="Pingpong throughput heatmap" width="800">
+</p>
+
+Broadcast throughput at 1p8c, payload-swept:
+
+<p align="center">
+  <img src="../../assets/bench-myelon-broadcast-1p8c-heatmap.png" alt="Broadcast 1p8c throughput heatmap" width="800">
+</p>
+
+Broadcast consumer scaling (1p1c through 1p12c):
+
+<p align="center">
+  <img src="../../assets/bench-myelon-broadcast-scaling-heatmap.png" alt="Broadcast consumer scaling heatmap" width="800">
+</p>
+
 ## Relationship to other crates
 
-- Wraps Layer 0 ([`disruptor-mp`](../disruptor-mp/)) and Layers 1–3 ([`myelon`](../myelon/)) without modifying them.
-- The `bench_support/` module is consumed by [`competitive-bench`](../competitive-bench/) so the same `BenchmarkEvent<SIZE>` flows through native and external lanes.
-- Workspace-level runnable examples for users who don't need a full sweep live in [`../../examples/`](../../examples/).
+- Wraps and measures [`disruptor-mp`](../disruptor-mp/) and [`myelon`](../myelon/) without modifying them.
+- The `bench_support/` module is consumed by [`competitive-bench`](../competitive-bench/), so the same `BenchmarkEvent<SIZE>` flows through native and external lanes.
+- Workspace-level runnable examples for users who do not need a full sweep live in [`../../examples/`](../../examples/).
 
 ## License
 

@@ -1,39 +1,22 @@
 #![warn(missing_docs)]
 
-//! Multiprocess shared-memory ring buffers for Disruptor-style
-//! publication.
+//! Multiprocess shared-memory ring buffers for Disruptor-style publication.
 //!
-//! `disruptor-mp` extends the upstream single-process `disruptor`
-//! crate with a cross-process data plane: producers and consumers in
-//! different OS processes coordinate through a shared-memory segment
-//! with cache-line-padded sequence cursors and a fixed-size ring
-//! buffer. Single-process / threaded Disruptor APIs continue to come
-//! from the upstream `disruptor` crate.
+//! `disruptor-mp` exists for one job: move fixed-size events between
+//! OS processes with as little coordination overhead as possible.
 //!
-//! # Where this crate sits
+//! It extends the upstream single-process `disruptor` crate with a
+//! cross-process data plane. Producers and consumers in different OS
+//! processes coordinate through a shared-memory segment or a
+//! memory-mapped file with cache-line-padded cursors and a fixed-size
+//! ring buffer.
 //!
-//! This crate is the **substrate** — Layer 0 in the project's onion
-//! model. Higher-level transports (framing, codecs, typed zero-copy,
-//! topology) live in `myelon` and stack on top of the
-//! types here.
+//! Use this crate directly when you want the raw substrate only. If
+//! you need framing, codec-backed typed transport, or typed zero-copy,
+//! use `myelon`, which re-exports the relevant public surface from
+//! this crate and builds higher layers on top.
 //!
-//! ```text
-//!     ┌───────────────────────────────────────┐
-//!     │  myelon                    │  ← framing / codec / typed
-//!     │  Layers 1, 2, 3                       │  ← (optional, on top)
-//!     ├───────────────────────────────────────┤
-//!     │  disruptor-mp        (this crate)     │  ← Layer 0 — raw ring
-//!     │  raw ring + coordination + obs        │
-//!     ├───────────────────────────────────────┤
-//!     │  disruptor           (crates.io)      │  ← single-process / threaded
-//!     └───────────────────────────────────────┘
-//! ```
-//!
-//! If you want a typed transport with serialisation and
-//! fragmentation, depend on `myelon` instead — it
-//! re-exports everything from this crate.
-//!
-//! # What this crate provides
+//! # What this crate exposes
 //!
 //! | Concern | Type | Purpose |
 //! |---|---|---|
@@ -45,8 +28,15 @@
 //! | Naming | [`portable_shm_segment_name`] | Derive a macOS-safe SHM segment name from an arbitrary label. |
 //! | Observability | [`observability`] (RFC-0040) | Hot-path counters file plus `metrics`-rs / Prometheus / OTLP exporters behind feature flags. |
 //!
-//! `E` is your event type — anything `Copy + Default + 'static` with
-//! a stable layout.
+//! `E` is your event type: anything `Copy + Default + 'static` with a
+//! stable layout.
+//!
+//! What this crate deliberately does not do:
+//!
+//! - variable-length framing
+//! - typed serialization layers
+//! - zero-copy archived reads over serialized payloads
+//! - inference-specific topology helpers
 //!
 //! # Feature flags
 //!
@@ -58,7 +48,7 @@
 //! - `RUSTFLAGS="--cfg dst"`: compile deterministic-simulation hooks
 //!   used by the internal `myelon-dst` harness and DST integration tests.
 //!
-//! # Required-consumer liveness (RFC 0017.5)
+//! # Required-consumer liveness
 //!
 //! The base model is strict broadcast — the slowest consumer gates
 //! capacity, so a stalled required consumer backpressures the
@@ -86,6 +76,9 @@
 //! gating. By design the liveness layer does not add dead-consumer
 //! eviction, quorum, or degraded broadcast — the system stays
 //! strict-broadcast.
+//!
+//! The liveness check is cold-path only: it runs while the producer is
+//! blocked on a required consumer, not on the steady-state fast path.
 //!
 //! # Quick start
 //!
@@ -125,8 +118,8 @@
 //! }
 //! ```
 //!
-//! See the README, the workspace book, and the `examples/` directory for
-//! end-to-end programs and the observability surface.
+//! See the crate README and `examples/` directory for fuller end-to-end
+//! programs and operational guidance.
 
 pub use disruptor_core::{MissingFreeSlots, Producer, RingBufferFull, Sequence};
 

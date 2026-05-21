@@ -1,70 +1,17 @@
-//! Builder for multi-process disruptor.
+//! Builder surface for creating and attaching multiprocess transports.
 //!
-//! This module provides the [`SharedDisruptorBuilder`] for constructing multi-process
-//! disruptors with various coordination, discovery, and event handling options.
-//! It supports both manual consumer management and automatic event handlers with
-//! built-in resource management.
+//! [`SharedDisruptorBuilder`] is the main configuration surface for:
 //!
-//! # Key Features
+//! - shared-memory or mmap setup
+//! - startup coordination
+//! - consumer discovery
+//! - automatic event-handler threads
+//! - wait-policy selection
 //!
-//! - **Automatic Event Handlers**: Background thread processing via `handle_events_with()`
-//! - **Consumer Discovery**: Automatic detection of consumers using PID or prefix matching
-//! - **Coordination Modes**: Immediate, wait-for-consumers, and discovery-based startup
-//! - **Resource Management**: Automatic cleanup via `Drop` trait implementation
-//! - **Wait Strategies**: Configurable performance vs CPU usage trade-offs
+//! The builder supports two broad usage styles:
 //!
-//! # Usage Patterns
-//!
-//! ## Automatic Event Processing (Recommended)
-//!
-//! ```rust,no_run
-//! use disruptor_mp::*;
-//!
-//! #[derive(Copy, Clone, Default)]
-//! struct Event { data: i64 }
-//!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! // Producer with automatic coordination
-//! let mut producer = build_shared_single_producer::<Event>("my_ring", 1024)
-//!     .enable_discovery(1)  // Discover 1 consumer automatically
-//!     .build_producer(Event::default)?;
-//!
-//! // Consumer with automatic event handling
-//! let _consumer = attach_shared_consumer::<Event>("my_ring", 1024)
-//!     .handle_events_with(|event, sequence, end_of_batch| {
-//!         // Process events automatically in background thread
-//!         println!("Processing event: {}", event.data);
-//!     })?;
-//! // Consumer automatically cleans up when dropped
-//! # Ok(())
-//! # }
-//! ```
-//!
-//! ## Manual Consumer Management
-//!
-//! ```rust,no_run
-//! use disruptor_mp::*;
-//!
-//! #[derive(Copy, Clone, Default)]
-//! struct Event { data: i64 }
-//!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! // Manual consumer for custom polling patterns
-//! let mut consumer = attach_shared_consumer::<Event>("my_ring", 1024)
-//!     .build_consumer()?;
-//!
-//! // Custom polling loop
-//! loop {
-//!     let processed = consumer.process_available(|event, sequence| {
-//!         println!("Processing: {}", event.data);
-//!     });
-//!     if processed == 0 {
-//!         std::thread::sleep(std::time::Duration::from_millis(1));
-//!     }
-//! }
-//! # Ok(())
-//! # }
-//! ```
+//! - automatic event handling via `handle_events_with(...)`
+//! - manual polling via `build_consumer()`
 
 use super::consumer::SharedConsumer;
 use super::consumer_barrier::{auto_consumer_id, consumer_registration_cursor_name, DiscoveryMode};

@@ -1,13 +1,10 @@
 # Changelog
 
-All notable changes to `disruptor-mp` and `myelon` are documented here. Both
-crates ship from this workspace and version in lockstep during the early-OSS
-window; once API surfaces stabilise they may diverge.
+All notable changes to the publishable crates in this workspace are documented here.
 
-The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
-and the version numbers follow [Semantic Versioning](https://semver.org/) with
-[pre-release tags](https://semver.org/#spec-item-9) (`-alpha.N`, `-beta.N`,
-`-rc.N`) for the iteration window.
+During the early OSS release window, `disruptor-mp` and `myelon` move in lockstep. That may change once their public surfaces stabilize further.
+
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the versions follow [Semantic Versioning](https://semver.org/) with explicit pre-release tags such as `-alpha.N`, `-beta.N`, and `-rc.N`.
 
 ## [Unreleased]
 
