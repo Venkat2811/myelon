@@ -291,10 +291,7 @@ Both crates do non-trivial `unsafe` work internally (raw ring slots, SHM `mmap`,
 
 ## Built with
 
-Agentic engineering, using:
-
-[![Codex](https://img.shields.io/badge/-Codex-121212?style=flat-square&logo=openai&logoColor=white)](https://openai.com/codex)
-[![Claude Code](https://img.shields.io/badge/-Claude%20Code-000000?style=flat-square&logo=anthropic&logoColor=white)](https://www.anthropic.com/claude-code)
+Agentic engineering, using: [![Codex](https://img.shields.io/badge/-Codex-121212?style=flat-square&logo=openai&logoColor=white)](https://openai.com/codex) [![Claude Code](https://img.shields.io/badge/-Claude%20Code-000000?style=flat-square&logo=anthropic&logoColor=white)](https://www.anthropic.com/claude-code)
 
 ## Citation
 
