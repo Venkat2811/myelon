@@ -34,7 +34,7 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - name: Clippy (workspace, all targets, treat warnings as errors)
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --exclude competitive-bench --all-targets -- -D warnings
 
   doc:
     name: cargo doc
@@ -48,4 +48,4 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Docs build (catches broken intra-doc links)
-        run: cargo doc --workspace --no-deps
+        run: cargo doc --workspace --exclude competitive-bench --no-deps

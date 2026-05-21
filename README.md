@@ -289,6 +289,13 @@ Both crates do non-trivial `unsafe` work internally (raw ring slots, SHM `mmap`,
 - **[vLLM `shm_broadcast.py`](https://github.com/vllm-project/vllm/blob/main/vllm/distributed/device_communicators/shm_broadcast.py)** by Kaichao You [![GitHub](https://img.shields.io/badge/-youkaichao-181717?style=flat-square&logo=github&logoColor=white)](https://github.com/youkaichao) for the SOTA Python shared-memory broadcast fabric used in intra-node inter-process inference worker processes.
 - **Jeff Dean and Dr Bill Dally, [_Advancing to AI's Next Frontier_](https://www.youtube.com/watch?v=joTYgvRHST0), NVIDIA GTC 2026** for stating the systems point clearly: at the ultra-low-latency edge of inference, the bulk of the delay is communication latency.
 
+## Built with
+
+Agentic engineering, using:
+
+[![Codex](https://img.shields.io/badge/-Codex-121212?style=flat-square&logo=openai&logoColor=white)](https://openai.com/codex)
+[![Claude Code](https://img.shields.io/badge/-Claude%20Code-000000?style=flat-square&logo=anthropic&logoColor=white)](https://www.anthropic.com/claude-code)
+
 ## Citation
 
 If you use `myelon` or `disruptor-mp` in research or downstream work, cite this repository.

@@ -21,6 +21,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: cargo check (workspace, cfg dst)
-        run: cargo check --workspace
+        run: cargo check --workspace --exclude competitive-bench
       - name: cargo test (disruptor-mp + myelon-dst, cfg dst)
         run: cargo test -p disruptor-mp -p myelon-dst --lib

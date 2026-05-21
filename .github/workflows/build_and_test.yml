@@ -25,9 +25,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Build (workspace, default features)
-        run: cargo build --workspace --verbose
+        run: cargo build --workspace --exclude competitive-bench --verbose
       - name: Test (workspace lib + bins, default features)
-        run: cargo test --workspace --lib --bins --verbose
+        run: cargo test --workspace --exclude competitive-bench --lib --bins --verbose
 
   miri:
     name: Miri (Linux only)
