@@ -24,13 +24,13 @@ fn main() {
 mod inner {
     //!
     use disruptor_mp::dst::contract::ProcessRole;
+    use disruptor_mp::env::read;
     use disruptor_mp::{
         attach_shared_consumer, build_shared_single_producer, AutoWaitStrategy, MmapConsumer,
         MmapProducer, MmapTransportLayout, RequiredConsumerLivenessConfig,
     };
-    use myelon_dst::{payload_bytes, stable_payload_hash, BackendKind, ChildReport, OracleMessage};
-    use disruptor_mp::env::read;
     use myelon_dst::env::runner as dst_env;
+    use myelon_dst::{payload_bytes, stable_payload_hash, BackendKind, ChildReport, OracleMessage};
     use serde_json::to_string;
     use std::env;
     use std::fmt::Display;
@@ -38,9 +38,9 @@ mod inner {
     use std::path::PathBuf;
     use std::thread;
     use std::time::{Duration, Instant};
-    
+
     const RAW_EVENT_CAPACITY: usize = 1024;
-    
+
     #[repr(C)]
     #[derive(Clone, Copy)]
     struct RawRingEvent {
@@ -50,7 +50,7 @@ mod inner {
         _reserved: u32,
         payload: [u8; RAW_EVENT_CAPACITY],
     }
-    
+
     impl Default for RawRingEvent {
         fn default() -> Self {
             Self {
@@ -62,16 +62,16 @@ mod inner {
             }
         }
     }
-    
+
     pub fn run() {
         if env::var(dst_env::CHILD_TRANSPORT).as_deref() != Ok("raw_ring") {
             panic!("DST child transport must be raw_ring for the initial RFC 0017 slice");
         }
-    
+
         let mode = env::var(dst_env::CHILD_MODE)
             .unwrap_or_else(|_| panic!("{} should be set", dst_env::CHILD_MODE));
         let backend = parse_backend();
-    
+
         let report = match (backend, mode.as_str()) {
             (BackendKind::Shm, "producer") => run_shm_producer(),
             (BackendKind::Shm, "consumer") => run_shm_consumer(),
@@ -79,7 +79,7 @@ mod inner {
             (BackendKind::Mmap, "consumer") => run_mmap_consumer(),
             _ => panic!("unsupported backend/mode combination: {backend:?}/{mode}"),
         };
-    
+
         let report_path = env::var(dst_env::REPORT_PATH)
             .unwrap_or_else(|_| panic!("{} should be set", dst_env::REPORT_PATH));
         fs::write(
@@ -95,7 +95,7 @@ mod inner {
             report_path
         );
     }
-    
+
     fn write_checkpoint(report: &ChildReport) {
         let report_path = env::var(dst_env::CHECKPOINT_PATH)
             .or_else(|_| env::var(dst_env::REPORT_PATH))
@@ -112,7 +112,7 @@ mod inner {
         )
         .expect("child report should write");
     }
-    
+
     fn checkpoint_every() -> Option<u64> {
         match env::var(dst_env::CHECKPOINT_EVERY) {
             Ok(raw) => {
@@ -128,7 +128,7 @@ mod inner {
             Err(_) => Some(1),
         }
     }
-    
+
     fn maybe_write_checkpoint(report: &ChildReport, event_count: u64) {
         let Some(every) = checkpoint_every() else {
             return;
@@ -137,13 +137,13 @@ mod inner {
             write_checkpoint(report);
         }
     }
-    
+
     fn producer_completed() -> bool {
         let report_path = env::var(dst_env::PRODUCER_REPORT_PATH)
             .unwrap_or_else(|_| panic!("{} should be set", dst_env::PRODUCER_REPORT_PATH));
         PathBuf::from(report_path).exists()
     }
-    
+
     fn parse_env<T>(name: &str) -> T
     where
         T: std::str::FromStr,
@@ -151,7 +151,7 @@ mod inner {
     {
         read::parse_required(name)
     }
-    
+
     fn parse_env_or<T>(name: &str, default: T) -> T
     where
         T: std::str::FromStr,
@@ -159,7 +159,7 @@ mod inner {
     {
         read::parse_or(name, default)
     }
-    
+
     fn required_consumer_liveness_config() -> Option<RequiredConsumerLivenessConfig> {
         let raw_ids = env::var(dst_env::REQUIRED_CONSUMER_IDS).ok()?;
         let required_consumer_ids = raw_ids
@@ -170,7 +170,7 @@ mod inner {
         if required_consumer_ids.is_empty() {
             return None;
         }
-    
+
         Some(
             RequiredConsumerLivenessConfig::new(required_consumer_ids)
                 .with_startup_wait_timeout(Duration::from_millis(parse_env_or(
@@ -191,7 +191,7 @@ mod inner {
                 ))),
         )
     }
-    
+
     fn parse_backend() -> BackendKind {
         match env::var(dst_env::CHILD_BACKEND)
             .unwrap_or_else(|_| panic!("{} should be set", dst_env::CHILD_BACKEND))
@@ -202,7 +202,7 @@ mod inner {
             other => panic!("unsupported backend: {other}"),
         }
     }
-    
+
     fn parse_wait_strategy() -> AutoWaitStrategy {
         match env::var(dst_env::WAIT_STRATEGY)
             .unwrap_or_else(|_| "busyspin".to_string())
@@ -215,7 +215,7 @@ mod inner {
             other => panic!("unsupported {}: {other}", dst_env::WAIT_STRATEGY),
         }
     }
-    
+
     fn apply_wait_strategy(strategy: &AutoWaitStrategy) {
         match strategy {
             AutoWaitStrategy::BusySpin => std::hint::spin_loop(),
@@ -230,21 +230,21 @@ mod inner {
             AutoWaitStrategy::Sleep(duration) => disruptor_mp::perform_sleep_wait(*duration),
         }
     }
-    
+
     fn dst_discovery_poll_duration() -> Duration {
-        let default_ms =
-            u64::try_from(disruptor_mp::default_discovery_poll_duration().as_millis()).unwrap_or(10);
+        let default_ms = u64::try_from(disruptor_mp::default_discovery_poll_duration().as_millis())
+            .unwrap_or(10);
         Duration::from_millis(parse_env_or(dst_env::DISCOVERY_POLL_MS, default_ms.max(1)))
     }
-    
+
     fn perform_dst_discovery_poll_wait() {
         disruptor_mp::perform_sleep_wait(dst_discovery_poll_duration());
     }
-    
+
     fn dst_producer_done_grace_duration() -> Duration {
         Duration::from_millis(parse_env_or(dst_env::PRODUCER_DONE_GRACE_MS, 25u64))
     }
-    
+
     fn make_event(seed: u64, sequence: u64, payload_len: usize) -> (RawRingEvent, OracleMessage) {
         assert!(
             payload_len <= RAW_EVENT_CAPACITY,
@@ -260,17 +260,17 @@ mod inner {
             payload: [0; RAW_EVENT_CAPACITY],
         };
         event.payload[..payload_len].copy_from_slice(&payload);
-    
+
         let oracle = OracleMessage {
             sequence,
             payload_hash: hash,
             payload_len,
             timestamp_ns: sequence,
         };
-    
+
         (event, oracle)
     }
-    
+
     fn validate_event(
         seed: u64,
         event: &RawRingEvent,
@@ -293,7 +293,7 @@ mod inner {
                 event.sequence
             );
         }
-    
+
         OracleMessage {
             sequence: event.sequence,
             payload_hash: actual_hash,
@@ -301,7 +301,7 @@ mod inner {
             timestamp_ns: event.sequence,
         }
     }
-    
+
     fn consumer_timeout(message_count: u64) -> Duration {
         let required_consumer_liveness_enabled = env::var(dst_env::REQUIRED_CONSUMER_IDS).is_ok();
         if required_consumer_liveness_enabled {
@@ -312,10 +312,10 @@ mod inner {
             Duration::from_secs(20)
         }
     }
-    
+
     fn run_shm_producer() -> ChildReport {
-        let segment =
-            env::var(dst_env::SEGMENT).unwrap_or_else(|_| panic!("{} should be set", dst_env::SEGMENT));
+        let segment = env::var(dst_env::SEGMENT)
+            .unwrap_or_else(|_| panic!("{} should be set", dst_env::SEGMENT));
         let ring_depth: usize = parse_env(dst_env::RING_DEPTH);
         let message_count: u64 = parse_env_or(
             dst_env::PRODUCER_MESSAGE_COUNT,
@@ -332,11 +332,12 @@ mod inner {
         let pause_every: usize = parse_env(dst_env::PUBLISH_PAUSE_EVERY);
         let pause_micros: u64 = parse_env(dst_env::PUBLISH_PAUSE_MICROS);
         let post_publish_hold_ms: u64 = parse_env(dst_env::POST_PUBLISH_HOLD_MS);
-        let corrupt_at_sequence: Option<u64> = env::var(dst_env::CORRUPT_AT_SEQUENCE).ok().map(|raw| {
-            raw.parse::<u64>()
-                .unwrap_or_else(|_| panic!("{} should parse", dst_env::CORRUPT_AT_SEQUENCE))
-        });
-    
+        let corrupt_at_sequence: Option<u64> =
+            env::var(dst_env::CORRUPT_AT_SEQUENCE).ok().map(|raw| {
+                raw.parse::<u64>()
+                    .unwrap_or_else(|_| panic!("{} should parse", dst_env::CORRUPT_AT_SEQUENCE))
+            });
+
         let mut builder = build_shared_single_producer::<RawRingEvent>(&segment, ring_depth);
         if wait_for_consumers_ready {
             builder = builder
@@ -353,10 +354,10 @@ mod inner {
         if let Some(config) = required_consumer_liveness_config() {
             producer.enable_required_consumer_liveness(config);
         }
-    
+
         let mut messages = Vec::with_capacity(message_count as usize);
         let mut checksum_total = 0u64;
-    
+
         for sequence in sequence_start..sequence_start + message_count {
             let (mut event, oracle) = make_event(seed, sequence, payload_size);
             if corrupt_at_sequence == Some(sequence) && payload_size > 0 {
@@ -385,11 +386,11 @@ mod inner {
                 thread::sleep(Duration::from_micros(pause_micros));
             }
         }
-    
+
         if post_publish_hold_ms > 0 {
             thread::sleep(Duration::from_millis(post_publish_hold_ms));
         }
-    
+
         let report = ChildReport {
             role: ProcessRole::Producer,
             messages,
@@ -400,10 +401,10 @@ mod inner {
         write_checkpoint(&report);
         report
     }
-    
+
     fn run_shm_consumer() -> ChildReport {
-        let segment =
-            env::var(dst_env::SEGMENT).unwrap_or_else(|_| panic!("{} should be set", dst_env::SEGMENT));
+        let segment = env::var(dst_env::SEGMENT)
+            .unwrap_or_else(|_| panic!("{} should be set", dst_env::SEGMENT));
         let ring_depth: usize = parse_env(dst_env::RING_DEPTH);
         let message_count: u64 = parse_env_or(
             dst_env::CONSUMER_MESSAGE_COUNT,
@@ -416,7 +417,7 @@ mod inner {
         let allow_corruption_validation =
             env::var(dst_env::ALLOW_CORRUPTION_VALIDATION).as_deref() == Ok("1");
         let wait_strategy = parse_wait_strategy();
-    
+
         let start = Instant::now();
         let attach_deadline = start + Duration::from_secs(15);
         let mut consumer = loop {
@@ -429,13 +430,13 @@ mod inner {
             }
         };
         let attached_after_ms = start.elapsed().as_millis() as u64;
-    
+
         let mut messages = Vec::with_capacity(message_count as usize);
         let mut checksum_total = 0u64;
         let mut previous = None::<u64>;
         let consume_deadline = Instant::now() + consumer_timeout(message_count);
         let mut producer_done_at = None::<Instant>;
-    
+
         while messages.len() < message_count as usize {
             if let Some((sequence, event)) = consumer.try_consume_next() {
                 let oracle = validate_event(seed, &event, allow_corruption_validation);
@@ -464,14 +465,14 @@ mod inner {
                 );
                 continue;
             }
-    
+
             if producer_completed() {
                 let done_at = producer_done_at.get_or_insert_with(Instant::now);
                 if done_at.elapsed() >= dst_producer_done_grace_duration() {
                     break;
                 }
             }
-    
+
             assert!(
                 Instant::now() < consume_deadline,
                 "consumer timed out after consuming {} messages",
@@ -479,7 +480,7 @@ mod inner {
             );
             apply_wait_strategy(&wait_strategy);
         }
-    
+
         let report = ChildReport {
             role: ProcessRole::Consumer {
                 index: index as u32,
@@ -492,7 +493,7 @@ mod inner {
         write_checkpoint(&report);
         report
     }
-    
+
     fn run_mmap_producer() -> ChildReport {
         let ring_depth: usize = parse_env(dst_env::RING_DEPTH);
         let message_count: u64 = parse_env_or(
@@ -508,11 +509,12 @@ mod inner {
         let pause_every: usize = parse_env(dst_env::PUBLISH_PAUSE_EVERY);
         let pause_micros: u64 = parse_env(dst_env::PUBLISH_PAUSE_MICROS);
         let post_publish_hold_ms: u64 = parse_env(dst_env::POST_PUBLISH_HOLD_MS);
-        let corrupt_at_sequence: Option<u64> = env::var(dst_env::CORRUPT_AT_SEQUENCE).ok().map(|raw| {
-            raw.parse::<u64>()
-                .unwrap_or_else(|_| panic!("{} should parse", dst_env::CORRUPT_AT_SEQUENCE))
-        });
-    
+        let corrupt_at_sequence: Option<u64> =
+            env::var(dst_env::CORRUPT_AT_SEQUENCE).ok().map(|raw| {
+                raw.parse::<u64>()
+                    .unwrap_or_else(|_| panic!("{} should parse", dst_env::CORRUPT_AT_SEQUENCE))
+            });
+
         let mut producer =
             MmapProducer::<RawRingEvent>::create(child_layout(), ring_depth, RawRingEvent::default)
                 .expect("mmap producer should build");
@@ -525,10 +527,10 @@ mod inner {
                 "mmap producer timed out waiting for {consumer_count} consumers"
             );
         }
-    
+
         let mut messages = Vec::with_capacity(message_count as usize);
         let mut checksum_total = 0u64;
-    
+
         for sequence in sequence_start..sequence_start + message_count {
             let (mut event, oracle) = make_event(seed, sequence, payload_size);
             if corrupt_at_sequence == Some(sequence) && payload_size > 0 {
@@ -557,11 +559,11 @@ mod inner {
                 thread::sleep(Duration::from_micros(pause_micros));
             }
         }
-    
+
         if post_publish_hold_ms > 0 {
             thread::sleep(Duration::from_millis(post_publish_hold_ms));
         }
-    
+
         let report = ChildReport {
             role: ProcessRole::Producer,
             messages,
@@ -572,7 +574,7 @@ mod inner {
         write_checkpoint(&report);
         report
     }
-    
+
     fn run_mmap_consumer() -> ChildReport {
         let ring_depth: usize = parse_env(dst_env::RING_DEPTH);
         let message_count: u64 = parse_env_or(
@@ -586,7 +588,7 @@ mod inner {
         let allow_corruption_validation =
             env::var(dst_env::ALLOW_CORRUPTION_VALIDATION).as_deref() == Ok("1");
         let wait_strategy = parse_wait_strategy();
-    
+
         let start = Instant::now();
         let attach_deadline = start + Duration::from_secs(15);
         let mut consumer = loop {
@@ -597,13 +599,13 @@ mod inner {
             }
         };
         let attached_after_ms = start.elapsed().as_millis() as u64;
-    
+
         let mut messages = Vec::with_capacity(message_count as usize);
         let mut checksum_total = 0u64;
         let mut previous = None::<u64>;
         let consume_deadline = Instant::now() + consumer_timeout(message_count);
         let mut producer_done_at = None::<Instant>;
-    
+
         while messages.len() < message_count as usize {
             if let Some((sequence, event)) = consumer.try_consume_next() {
                 let oracle = validate_event(seed, &event, allow_corruption_validation);
@@ -632,14 +634,14 @@ mod inner {
                 );
                 continue;
             }
-    
+
             if producer_completed() {
                 let done_at = producer_done_at.get_or_insert_with(Instant::now);
                 if done_at.elapsed() >= dst_producer_done_grace_duration() {
                     break;
                 }
             }
-    
+
             assert!(
                 Instant::now() < consume_deadline,
                 "mmap consumer timed out after consuming {} messages",
@@ -647,7 +649,7 @@ mod inner {
             );
             apply_wait_strategy(&wait_strategy);
         }
-    
+
         let report = ChildReport {
             role: ProcessRole::Consumer {
                 index: index as u32,
@@ -660,12 +662,12 @@ mod inner {
         write_checkpoint(&report);
         report
     }
-    
+
     fn child_layout() -> MmapTransportLayout {
         let root = env::var(dst_env::RUN_ROOT)
             .unwrap_or_else(|_| panic!("{} should be set", dst_env::RUN_ROOT));
-        let segment =
-            env::var(dst_env::SEGMENT).unwrap_or_else(|_| panic!("{} should be set", dst_env::SEGMENT));
+        let segment = env::var(dst_env::SEGMENT)
+            .unwrap_or_else(|_| panic!("{} should be set", dst_env::SEGMENT));
         MmapTransportLayout::new(PathBuf::from(root), segment).expect("mmap layout should be valid")
     }
 }

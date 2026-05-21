@@ -1,9 +1,9 @@
 #![cfg(not(target_os = "linux"))]
 
+use disruptor_mp::env::runtime as runtime_env;
 use disruptor_mp::{
     attach_shared_consumer, build_shared_single_producer, portable_shm_segment_name,
 };
-use disruptor_mp::env::runtime as runtime_env;
 use std::sync::{Mutex, MutexGuard};
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());

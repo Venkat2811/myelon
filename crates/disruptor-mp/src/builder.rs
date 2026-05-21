@@ -16,9 +16,9 @@
 use super::consumer::SharedConsumer;
 use super::consumer_barrier::{auto_consumer_id, consumer_registration_cursor_name, DiscoveryMode};
 use super::producer::{CoordinationMode, SharedProducer};
+use crate::env::{read, runtime as runtime_env};
 use crate::{MultiProcessResult, SharedCursor, SharedMemoryConfig, SharedRingBuffer};
 use disruptor_core::Sequence;
-use crate::env::{read, runtime as runtime_env};
 use std::env;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread::{self, JoinHandle};
