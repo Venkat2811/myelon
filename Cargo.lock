@@ -730,7 +730,7 @@ dependencies = [
 
 [[package]]
 name = "disruptor-mp"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "chrono",
  "clap",
@@ -2033,7 +2033,7 @@ dependencies = [
 
 [[package]]
 name = "myelon"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "bincode",
  "disruptor-mp",
