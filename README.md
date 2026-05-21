@@ -28,6 +28,8 @@ This repository publishes two crates:
 
 `disruptor-mp` is the Layer 0 substrate. `myelon` is the broader public transport crate built on top of it.
 
+Both crates do non-trivial `unsafe` work internally (raw ring slots, SHM `mmap`, atomic ordering, manual cache-line layout), but the public API is safe Rust with only a small set of documented escape hatches. See [Safety & quality gates](#safety--quality-gates) below.
+
 ## Headline numbers
 
 Throughput mode reports the peak attainable rate plus its latency distribution under self-pressure. CO mode reports coordinated-omission-corrected latency while holding a configured constant offered rate, so tail percentiles reflect real time-to-receipt, not just bench iteration time.
@@ -245,6 +247,32 @@ Bench binaries are built with `--profile competitive` (max-perf, `panic=abort`, 
 - [ ] Python.
 - [ ] C / C++.
 - [ ] Zig.
+
+### Safety & quality gates
+
+Both crates do non-trivial `unsafe` work internally (raw ring slots, SHM `mmap`, atomic ordering, manual cache-line layout). The public API is safe Rust, with a small set of documented escape hatches.
+
+**Tier 1: public-surface contract (required for crates.io)**
+
+- [x] `myelon` public surface: zero `pub unsafe fn`.
+- [x] `disruptor-mp` public surface: four documented `pub unsafe fn` escape hatches in `observability` (`CountersFile::init`, `::attach`, `::from_ptr`, `AggregatorHandle::spawn`); each carries a `# Safety` rustdoc section.
+- [x] `unsafe_op_in_unsafe_fn = warn` workspace-wide.
+- [x] `clippy::missing_safety_doc = warn` workspace-wide.
+- [x] `cargo clippy --workspace --all-targets -- -D warnings` clean.
+
+**Tier 2: internal correctness**
+
+- [x] DST harness: `assert_always` / `assert_sometimes` + BUGGIFY fault injection, FoundationDB + TigerBeetle-style. Run with `RUSTFLAGS="--cfg dst"`.
+- [ ] Per-block `// SAFETY:` comment on every internal `unsafe { ... }` block. Currently **12 / 81 blocks ≈ 15% coverage**; backfill scheduled for `v0.1.0-alpha.2`.
+- [ ] `cargo miri test` lane (pointer-math helpers; not the syscall paths).
+- [ ] AddressSanitizer lane.
+- [ ] ThreadSanitizer lane.
+
+**Tier 3: enforcement and audit**
+
+- [ ] `clippy::undocumented_unsafe_blocks = warn` enabled workspace-wide (after Tier 2 backfill).
+- [ ] Safe wrappers around the four `pub unsafe fn` (`boxed()`, `with_shm_segment()`); the four escape hatches stay as power-user surface.
+- [ ] `cargo geiger` audit reported.
 
 
 ## Platform support

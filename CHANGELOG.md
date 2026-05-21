@@ -116,24 +116,37 @@ Gates that passed clean on the dev machine before tagging this release:
 
 Smoke-grade absolute numbers from the M3 Max super-tiny runs are intentionally **not** promoted alongside the README's headline tables. The bench-grade reference is the pinned-frequency Linux Ryzen box; Apple-silicon peak numbers will land in a separate cross-platform comparison artifact in a follow-up release rather than being mixed into the headline surface.
 
-### Unsafe boundary
+### Safety & quality gates
 
-Both crates do non-trivial `unsafe` work internally: raw ring-slot pointers, SHM `mmap` regions, atomic ordering, manual cache-line layout. The user-facing shape at v0.1.0-alpha.1:
+Both crates do non-trivial `unsafe` work internally (raw ring slots, SHM `mmap`, atomic ordering, manual cache-line layout). The public API is safe Rust, with a small set of documented escape hatches. The full tier-by-tier checklist also lives in [the workspace README](README.md#safety--quality-gates) and the two are kept in sync.
 
-- **`myelon` public surface is safe Rust.** Zero `pub unsafe fn` across the crate.
-- **`disruptor-mp` public surface is safe except for four `pub unsafe fn`** in the `observability` module:
+**Tier 1: public-surface contract (required for crates.io)**
+
+- [x] `myelon` public surface: zero `pub unsafe fn` across the crate.
+- [x] `disruptor-mp` public surface: four documented `pub unsafe fn` escape hatches in `observability`:
   - `CountersFile::init`
   - `CountersFile::attach`
   - `CountersFile::from_ptr`
   - `AggregatorHandle::spawn`
 
-  These are intentional escape hatches for callers who already hold a verified pointer or own a shared-memory segment. Each carries a `# Safety` rustdoc section stating the caller's obligation. Idiomatic safe wrappers (`boxed()`, `with_shm_segment()`) over these four are scheduled for v0.1.0-alpha.2.
-- Workspace lints enforce:
-  - `unsafe_op_in_unsafe_fn = warn` (every `unsafe` action inside an `unsafe fn` must be re-wrapped in an explicit `unsafe { ... }` block).
-  - `clippy::missing_safety_doc = warn` (every public `unsafe fn` must carry a `# Safety` rustdoc section).
-- Internal `// SAFETY:` comment coverage on `unsafe { ... }` blocks is **partial** (12 of 81 internal blocks, ~15%). The remaining blocks rely on cursor monotonicity, cache-line alignment, and slot-lifecycle invariants established at the type-system / builder layer, but lack explicit per-block justification comments. v0.1.0-alpha.2 will backfill these to 100% coverage and turn on `clippy::undocumented_unsafe_blocks = warn` workspace-wide.
+  Each carries a `# Safety` rustdoc section stating the caller's obligation. These are intentional power-user escape hatches for callers who already hold a verified pointer or own a shared-memory segment.
+- [x] Workspace lint `unsafe_op_in_unsafe_fn = warn` (every `unsafe` action inside an `unsafe fn` must be re-wrapped in an explicit `unsafe { ... }` block).
+- [x] Workspace lint `clippy::missing_safety_doc = warn` (every public `unsafe fn` must carry a `# Safety` rustdoc section).
+- [x] `cargo clippy --workspace --all-targets -- -D warnings` clean.
 
-DST coverage (via `RUSTFLAGS="--cfg dst"`) plays the role that Loom plays for in-process atomics: scheduled scenarios with `assert_always` / `assert_sometimes` invariants and BUGGIFY fault injection probe ordering edge cases that pure unit tests miss. A `cargo miri test` lane and an ASan / TSan workflow are tracked for follow-up but are not gating for alpha.1.
+**Tier 2: internal correctness**
+
+- [x] DST harness: `assert_always` / `assert_sometimes` + BUGGIFY fault injection, FoundationDB + TigerBeetle-style. Run with `RUSTFLAGS="--cfg dst"`. Plays the role Loom plays for in-process atomics, but scaled to cross-process scenarios.
+- [ ] Per-block `// SAFETY:` comment on every internal `unsafe { ... }` block. Currently **12 / 81 blocks ≈ 15% coverage**. The remaining blocks rely on cursor monotonicity, cache-line alignment, and slot-lifecycle invariants established at the type-system / builder layer, but lack explicit per-block justification comments. Backfill scheduled for `v0.1.0-alpha.2`.
+- [ ] `cargo miri test` lane (pointer-math helpers; not the syscall paths).
+- [ ] AddressSanitizer lane.
+- [ ] ThreadSanitizer lane.
+
+**Tier 3: enforcement and audit**
+
+- [ ] `clippy::undocumented_unsafe_blocks = warn` enabled workspace-wide (after Tier 2 backfill).
+- [ ] Safe wrappers around the four `pub unsafe fn` (`boxed()`, `with_shm_segment()`); the four escape hatches stay as power-user surface.
+- [ ] `cargo geiger` audit reported.
 
 ### Why `0.1.0-alpha.1` (and not `3.x.y`)
 
@@ -150,12 +163,8 @@ myelon       = "=0.1.0-alpha.1"
 
 ### Deferred
 
-Tracked for follow-up releases:
+Tracked for follow-up releases. Safety-related follow-ups are listed inline in the [Safety & quality gates](#safety--quality-gates) tier checklist above; this section covers the rest.
 
-- Backfill `// SAFETY:` comments on the remaining ~69 internal `unsafe { ... }` blocks, then enable `clippy::undocumented_unsafe_blocks = warn` workspace-wide.
-- Safe wrappers around the four `pub unsafe fn` in `observability` (`CountersFile::init`, `CountersFile::attach`, `CountersFile::from_ptr`, `AggregatorHandle::spawn`). Power-user escape hatches stay; idiomatic `boxed()` / `with_shm_segment()` builders land in v0.1.0-alpha.2.
-- `cargo miri test` lane in CI.
-- ASan / TSan workflow.
 - Hugepages-backed SHM, core pinning, NUMA-aware placement (HFT-grade deployment tuning).
 - DST-coverage report (assertion-log review pipeline).
 - Multi-process liveness integration test.
