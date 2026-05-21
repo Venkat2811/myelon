@@ -6,9 +6,9 @@ name          = "disruptor-mp"
 # crates.io publish to signal "first public release, API may evolve"
 # rather than masquerading as a mature 3.x. See CHANGELOG.md.
 version       = "0.1.0-alpha.1"
-description   = "Ultra-low-latency and high-throughput ring-buffer substrate for multiprocess SHM and mmap, with cross-process producer/consumer coordination, required-consumer liveness, and observability counters."
+description   = "Ultra-low-latency and high-throughput multiprocess ring-buffer substrate over SHM and mmap (LMAX Disruptor design, extended cross-process), with cross-process producer/consumer coordination, required-consumer liveness, and observability counters."
 readme        = "README.md"
-categories    = ["data-structures", "concurrency", "memory-management"]
+categories    = ["data-structures", "concurrency", "memory-management", "algorithms"]
 keywords      = ["disruptor", "ringbuffer", "ipc", "shared-memory", "lock-free"]
 edition.workspace      = true
 license.workspace      = true
