@@ -101,7 +101,7 @@ chrono = "0.4"
 ctrlc = "3.4"
 
 # RFC 0040 — for verifying the aggregator emits via the metrics-rs facade.
-metrics-util = "0.19"
+metrics-util = "0.20"
 
 # Per-layer benchmarks live in `crates/perf-bench` (broad sweep) and
 # `crates/competitive-bench` (apples-to-apples external comparison).
