@@ -457,7 +457,7 @@ dependencies = [
  "crossbar",
  "disruptor-mp",
  "hdrhistogram",
- "iceoryx2",
+ "iceoryx2 0.9.1",
  "libc",
  "myelon",
  "perf-bench",
@@ -597,7 +597,7 @@ name = "crossbar"
 version = "1.2.0"
 dependencies = [
  "criterion 0.8.2",
- "iceoryx2",
+ "iceoryx2 0.8.1",
  "libc",
  "windows-sys 0.61.2",
 ]
@@ -1310,19 +1310,44 @@ version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13ef16a640893a859edaadf15983acaff5e2101971cb8871c7aa4c75ab082d6d"
 dependencies = [
- "iceoryx2-bb-concurrency",
- "iceoryx2-bb-container",
- "iceoryx2-bb-derive-macros",
- "iceoryx2-bb-elementary",
- "iceoryx2-bb-elementary-traits",
- "iceoryx2-bb-lock-free",
- "iceoryx2-bb-memory",
- "iceoryx2-bb-posix",
- "iceoryx2-bb-system-types",
- "iceoryx2-cal",
- "iceoryx2-log",
+ "iceoryx2-bb-concurrency 0.8.1",
+ "iceoryx2-bb-container 0.8.1",
+ "iceoryx2-bb-derive-macros 0.8.1",
+ "iceoryx2-bb-elementary 0.8.1",
+ "iceoryx2-bb-elementary-traits 0.8.1",
+ "iceoryx2-bb-lock-free 0.8.1",
+ "iceoryx2-bb-memory 0.8.1",
+ "iceoryx2-bb-posix 0.8.1",
+ "iceoryx2-bb-system-types 0.8.1",
+ "iceoryx2-cal 0.8.1",
+ "iceoryx2-log 0.8.1",
  "iceoryx2-loggers",
- "iceoryx2-pal-configuration",
+ "iceoryx2-pal-configuration 0.8.1",
+ "serde",
+ "tiny-fn",
+ "toml 0.9.12+spec-1.1.0",
+]
+
+[[package]]
+name = "iceoryx2"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aa70a19527472fb5c7ec3f76b0f77e241ce390302eee8a39c0f859c038360f15"
+dependencies = [
+ "iceoryx2-bb-concurrency 0.9.1",
+ "iceoryx2-bb-container 0.9.1",
+ "iceoryx2-bb-derive-macros 0.9.1",
+ "iceoryx2-bb-elementary 0.9.1",
+ "iceoryx2-bb-elementary-traits 0.9.1",
+ "iceoryx2-bb-lock-free 0.9.1",
+ "iceoryx2-bb-loggers",
+ "iceoryx2-bb-memory 0.9.1",
+ "iceoryx2-bb-posix 0.9.1",
+ "iceoryx2-bb-print",
+ "iceoryx2-bb-system-types 0.9.1",
+ "iceoryx2-cal 0.9.1",
+ "iceoryx2-log 0.9.1",
+ "iceoryx2-pal-configuration 0.9.1",
  "serde",
  "tiny-fn",
  "toml 0.9.12+spec-1.1.0",
@@ -1334,8 +1359,18 @@ version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "843e04d61a3672277f2fa8798ecdbdcc0493396cc46e93d07fcaf685d21b1be2"
 dependencies = [
- "iceoryx2-bb-elementary-traits",
- "iceoryx2-pal-concurrency-sync",
+ "iceoryx2-bb-elementary-traits 0.8.1",
+ "iceoryx2-pal-concurrency-sync 0.8.1",
+]
+
+[[package]]
+name = "iceoryx2-bb-concurrency"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "232b2c9276d276974ced52f9470e73636524eecb07628b03b3f6b306cfc645d3"
+dependencies = [
+ "iceoryx2-bb-elementary-traits 0.9.1",
+ "iceoryx2-pal-concurrency-sync 0.9.1",
 ]
 
 [[package]]
@@ -1344,11 +1379,25 @@ version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1c5ef37b55baeb467b4446593728ce7a9cb4e46c2b758bc39fbc5246065abb26"
 dependencies = [
- "iceoryx2-bb-concurrency",
- "iceoryx2-bb-derive-macros",
- "iceoryx2-bb-elementary",
- "iceoryx2-bb-elementary-traits",
- "iceoryx2-log",
+ "iceoryx2-bb-concurrency 0.8.1",
+ "iceoryx2-bb-derive-macros 0.8.1",
+ "iceoryx2-bb-elementary 0.8.1",
+ "iceoryx2-bb-elementary-traits 0.8.1",
+ "iceoryx2-log 0.8.1",
+ "serde",
+]
+
+[[package]]
+name = "iceoryx2-bb-container"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "16f5dd1a9f404bd5789a98614363f7f5ad7fa757a2cf8b20a83b6b1580f5b8c0"
+dependencies = [
+ "iceoryx2-bb-concurrency 0.9.1",
+ "iceoryx2-bb-derive-macros 0.9.1",
+ "iceoryx2-bb-elementary 0.9.1",
+ "iceoryx2-bb-elementary-traits 0.9.1",
+ "iceoryx2-log 0.9.1",
  "serde",
 ]
 
@@ -1358,8 +1407,21 @@ version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "795556d27b6e7aa92589e08b35b6fdd142daaf228cc7f46a2d68f3bab7feedea"
 dependencies = [
- "iceoryx2-bb-elementary",
- "iceoryx2-bb-elementary-traits",
+ "iceoryx2-bb-elementary 0.8.1",
+ "iceoryx2-bb-elementary-traits 0.8.1",
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "iceoryx2-bb-derive-macros"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7a8f63bbb07a2a4092f154da74516d3238899b4d3498f6156bd4b7d9170368ef"
+dependencies = [
+ "iceoryx2-bb-elementary 0.9.1",
+ "iceoryx2-bb-elementary-traits 0.9.1",
  "proc-macro2",
  "quote",
  "syn",
@@ -1371,8 +1433,18 @@ version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f64584974d7341e8c1ec1ecab11d59d8ff20d9b4d02104943fbcd2b76c319d3"
 dependencies = [
- "iceoryx2-bb-concurrency",
- "iceoryx2-bb-elementary-traits",
+ "iceoryx2-bb-concurrency 0.8.1",
+ "iceoryx2-bb-elementary-traits 0.8.1",
+]
+
+[[package]]
+name = "iceoryx2-bb-elementary"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2a8655f486ccddb8cfaf8c3a4811ec7ca055f49186779f388928a6a741c99a6b"
+dependencies = [
+ "iceoryx2-bb-elementary-traits 0.9.1",
+ "iceoryx2-pal-concurrency-sync 0.9.1",
 ]
 
 [[package]]
@@ -1382,18 +1454,39 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cbb7bbe8a55d0df1b716c72e79d3a568d74f2e6a73d97025b7f9c9676e893aa4"
 
 [[package]]
+name = "iceoryx2-bb-elementary-traits"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "487b7bb44cb35688a037610e3d367ce8d9d31720ce1b0d3ad0619ec19b95b6f4"
+
+[[package]]
 name = "iceoryx2-bb-linux"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2dd3e2047b1977c6eba67f3ff9b92cbcf5b0c8560b2afc51341f37d549be17c9"
 dependencies = [
- "iceoryx2-bb-concurrency",
- "iceoryx2-bb-container",
- "iceoryx2-bb-posix",
- "iceoryx2-bb-system-types",
- "iceoryx2-log",
- "iceoryx2-pal-os-api",
- "iceoryx2-pal-posix",
+ "iceoryx2-bb-concurrency 0.8.1",
+ "iceoryx2-bb-container 0.8.1",
+ "iceoryx2-bb-posix 0.8.1",
+ "iceoryx2-bb-system-types 0.8.1",
+ "iceoryx2-log 0.8.1",
+ "iceoryx2-pal-os-api 0.8.1",
+ "iceoryx2-pal-posix 0.8.1",
+]
+
+[[package]]
+name = "iceoryx2-bb-linux"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0bcc939836845926763f027518c33a7fa03c36907d12330387bc72b7df8e686e"
+dependencies = [
+ "iceoryx2-bb-concurrency 0.9.1",
+ "iceoryx2-bb-container 0.9.1",
+ "iceoryx2-bb-posix 0.9.1",
+ "iceoryx2-bb-system-types 0.9.1",
+ "iceoryx2-log 0.9.1",
+ "iceoryx2-pal-os-api 0.9.1",
+ "iceoryx2-pal-posix 0.9.1",
 ]
 
 [[package]]
@@ -1402,10 +1495,34 @@ version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d03af3a743d2e9a2aab3f466d07e1643adba9c2f844acfdde7a5abaf85531ecf"
 dependencies = [
- "iceoryx2-bb-concurrency",
- "iceoryx2-bb-elementary",
- "iceoryx2-bb-elementary-traits",
- "iceoryx2-log",
+ "iceoryx2-bb-concurrency 0.8.1",
+ "iceoryx2-bb-elementary 0.8.1",
+ "iceoryx2-bb-elementary-traits 0.8.1",
+ "iceoryx2-log 0.8.1",
+]
+
+[[package]]
+name = "iceoryx2-bb-lock-free"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "908daf57ca2fad15af8df83e1a571aeeaffb0392432bcc588356b15b496f32c0"
+dependencies = [
+ "iceoryx2-bb-concurrency 0.9.1",
+ "iceoryx2-bb-elementary 0.9.1",
+ "iceoryx2-bb-elementary-traits 0.9.1",
+ "iceoryx2-log 0.9.1",
+]
+
+[[package]]
+name = "iceoryx2-bb-loggers"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e447da3f13cc7bcdfa208dea63a9cc24fd0dccea80943040b3e074fbf54dbc00"
+dependencies = [
+ "iceoryx2-bb-print",
+ "iceoryx2-log-types 0.9.1",
+ "iceoryx2-pal-concurrency-sync 0.9.1",
+ "iceoryx2-pal-posix 0.9.1",
 ]
 
 [[package]]
@@ -1414,12 +1531,26 @@ version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c93fc98adc0b9e4cdb2b3205fa7fba21222c5c399f20379df0a08592ea9abb16"
 dependencies = [
- "iceoryx2-bb-concurrency",
- "iceoryx2-bb-elementary",
- "iceoryx2-bb-elementary-traits",
- "iceoryx2-bb-lock-free",
- "iceoryx2-bb-posix",
- "iceoryx2-log",
+ "iceoryx2-bb-concurrency 0.8.1",
+ "iceoryx2-bb-elementary 0.8.1",
+ "iceoryx2-bb-elementary-traits 0.8.1",
+ "iceoryx2-bb-lock-free 0.8.1",
+ "iceoryx2-bb-posix 0.8.1",
+ "iceoryx2-log 0.8.1",
+]
+
+[[package]]
+name = "iceoryx2-bb-memory"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5cca425d22230f7e3ac4944002349cbce90ef76f2358a0961eb9c259c68b321b"
+dependencies = [
+ "iceoryx2-bb-concurrency 0.9.1",
+ "iceoryx2-bb-elementary 0.9.1",
+ "iceoryx2-bb-elementary-traits 0.9.1",
+ "iceoryx2-bb-lock-free 0.9.1",
+ "iceoryx2-bb-posix 0.9.1",
+ "iceoryx2-log 0.9.1",
 ]
 
 [[package]]
@@ -1429,18 +1560,48 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "50ce62d48ce40169d985a968b91bb3effa1db9be50993a023b725a3c3ac0eacf"
 dependencies = [
  "enum-iterator",
- "iceoryx2-bb-concurrency",
- "iceoryx2-bb-container",
- "iceoryx2-bb-derive-macros",
- "iceoryx2-bb-elementary",
- "iceoryx2-bb-elementary-traits",
- "iceoryx2-bb-system-types",
- "iceoryx2-log",
- "iceoryx2-pal-configuration",
- "iceoryx2-pal-posix",
+ "iceoryx2-bb-concurrency 0.8.1",
+ "iceoryx2-bb-container 0.8.1",
+ "iceoryx2-bb-derive-macros 0.8.1",
+ "iceoryx2-bb-elementary 0.8.1",
+ "iceoryx2-bb-elementary-traits 0.8.1",
+ "iceoryx2-bb-system-types 0.8.1",
+ "iceoryx2-log 0.8.1",
+ "iceoryx2-pal-configuration 0.8.1",
+ "iceoryx2-pal-posix 0.8.1",
  "lazy_static",
  "serde",
  "tiny-fn",
+]
+
+[[package]]
+name = "iceoryx2-bb-posix"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7e03397688249c464214f3534546f6c231a1368ac12a4fe89ea33b4a33a692c8"
+dependencies = [
+ "enum-iterator",
+ "iceoryx2-bb-concurrency 0.9.1",
+ "iceoryx2-bb-container 0.9.1",
+ "iceoryx2-bb-derive-macros 0.9.1",
+ "iceoryx2-bb-elementary 0.9.1",
+ "iceoryx2-bb-elementary-traits 0.9.1",
+ "iceoryx2-bb-print",
+ "iceoryx2-bb-system-types 0.9.1",
+ "iceoryx2-log 0.9.1",
+ "iceoryx2-pal-configuration 0.9.1",
+ "iceoryx2-pal-posix 0.9.1",
+ "serde",
+ "tiny-fn",
+]
+
+[[package]]
+name = "iceoryx2-bb-print"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "433a64f537be4df813ef00e71884a2062df90bf5c55447e4ffafb4827eafe173"
+dependencies = [
+ "iceoryx2-pal-print",
 ]
 
 [[package]]
@@ -1449,13 +1610,29 @@ version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4b192b5448d30d9a0957eff438e9e0358df3476ac9b210c158081c6cf7ae9145"
 dependencies = [
- "iceoryx2-bb-container",
- "iceoryx2-bb-derive-macros",
- "iceoryx2-bb-elementary",
- "iceoryx2-bb-elementary-traits",
- "iceoryx2-log",
- "iceoryx2-pal-configuration",
- "iceoryx2-pal-posix",
+ "iceoryx2-bb-container 0.8.1",
+ "iceoryx2-bb-derive-macros 0.8.1",
+ "iceoryx2-bb-elementary 0.8.1",
+ "iceoryx2-bb-elementary-traits 0.8.1",
+ "iceoryx2-log 0.8.1",
+ "iceoryx2-pal-configuration 0.8.1",
+ "iceoryx2-pal-posix 0.8.1",
+ "serde",
+]
+
+[[package]]
+name = "iceoryx2-bb-system-types"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dd6573fdf227176a90a97a8b49efe41216f971d099ac5797d902249dee7e6806"
+dependencies = [
+ "iceoryx2-bb-container 0.9.1",
+ "iceoryx2-bb-derive-macros 0.9.1",
+ "iceoryx2-bb-elementary 0.9.1",
+ "iceoryx2-bb-elementary-traits 0.9.1",
+ "iceoryx2-log 0.9.1",
+ "iceoryx2-pal-configuration 0.9.1",
+ "iceoryx2-pal-posix 0.9.1",
  "serde",
 ]
 
@@ -1465,18 +1642,42 @@ version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "81e142ae2fbb3c4bdcc17a23013dd17e58ac9a55fc2effc8cf757575fb8b5c57"
 dependencies = [
- "iceoryx2-bb-concurrency",
- "iceoryx2-bb-container",
- "iceoryx2-bb-derive-macros",
- "iceoryx2-bb-elementary",
- "iceoryx2-bb-elementary-traits",
- "iceoryx2-bb-linux",
- "iceoryx2-bb-lock-free",
- "iceoryx2-bb-memory",
- "iceoryx2-bb-posix",
- "iceoryx2-bb-system-types",
- "iceoryx2-log",
+ "iceoryx2-bb-concurrency 0.8.1",
+ "iceoryx2-bb-container 0.8.1",
+ "iceoryx2-bb-derive-macros 0.8.1",
+ "iceoryx2-bb-elementary 0.8.1",
+ "iceoryx2-bb-elementary-traits 0.8.1",
+ "iceoryx2-bb-linux 0.8.1",
+ "iceoryx2-bb-lock-free 0.8.1",
+ "iceoryx2-bb-memory 0.8.1",
+ "iceoryx2-bb-posix 0.8.1",
+ "iceoryx2-bb-system-types 0.8.1",
+ "iceoryx2-log 0.8.1",
  "lazy_static",
+ "postcard",
+ "serde",
+ "sha1_smol",
+ "tiny-fn",
+ "toml 0.9.12+spec-1.1.0",
+]
+
+[[package]]
+name = "iceoryx2-cal"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f527b34fc6ace4ea1a9a539c234ff07b51cdb281d677481e5f7f7e15c809214e"
+dependencies = [
+ "iceoryx2-bb-concurrency 0.9.1",
+ "iceoryx2-bb-container 0.9.1",
+ "iceoryx2-bb-derive-macros 0.9.1",
+ "iceoryx2-bb-elementary 0.9.1",
+ "iceoryx2-bb-elementary-traits 0.9.1",
+ "iceoryx2-bb-linux 0.9.1",
+ "iceoryx2-bb-lock-free 0.9.1",
+ "iceoryx2-bb-memory 0.9.1",
+ "iceoryx2-bb-posix 0.9.1",
+ "iceoryx2-bb-system-types 0.9.1",
+ "iceoryx2-log 0.9.1",
  "postcard",
  "serde",
  "sha1_smol",
@@ -1490,8 +1691,18 @@ version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7b6c959532c7e18463a3c68c6beaaa489a139907edf5b26f7c606e5c64361b3e"
 dependencies = [
- "iceoryx2-log-types",
- "iceoryx2-pal-concurrency-sync",
+ "iceoryx2-log-types 0.8.1",
+ "iceoryx2-pal-concurrency-sync 0.8.1",
+]
+
+[[package]]
+name = "iceoryx2-log"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f55e205c7d00876d8f8259cc5c259e150aad7eb93167def6aa2bfa6dc2c7537"
+dependencies = [
+ "iceoryx2-log-types 0.9.1",
+ "iceoryx2-pal-concurrency-sync 0.9.1",
 ]
 
 [[package]]
@@ -1501,13 +1712,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0f97fa5729b562d2317e35b1c2b32eb5d8e965eb63ad6c4a040cd6b1cbbb2394"
 
 [[package]]
+name = "iceoryx2-log-types"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "38f0fc0134ef60a5b7d8bfb700cf35af76fc40180f46aaee7fc0152145442ede"
+
+[[package]]
 name = "iceoryx2-loggers"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec234d4a279b9e849dab6b91b8189325205a9e6e77f0ab21f9bfcd7ff370621e"
 dependencies = [
- "iceoryx2-log-types",
- "iceoryx2-pal-concurrency-sync",
+ "iceoryx2-log-types 0.8.1",
+ "iceoryx2-pal-concurrency-sync 0.8.1",
 ]
 
 [[package]]
@@ -1517,10 +1734,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "90753053905f56465c28015d5699e413fad76a9c3ad3f2398c05fbcaeac4916e"
 
 [[package]]
+name = "iceoryx2-pal-concurrency-sync"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09a4e7f4a2e8ca8bb94892254bd59b811eecd6e6cc78b0fd27eea91ca4dd6aab"
+
+[[package]]
 name = "iceoryx2-pal-configuration"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "62156f568065d979cc9200ab160ecfbe99bcc3186e5947642472fa2fa9db3cba"
+
+[[package]]
+name = "iceoryx2-pal-configuration"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f9664fb2564d62f6af5babece4c8b2170f2c3605e93578eb38161d6c4bd6db5d"
 
 [[package]]
 name = "iceoryx2-pal-os-api"
@@ -1530,7 +1759,19 @@ checksum = "1db27a7ee0e2d5a3b873b16bb1edaa52d71ff0cf5f9c8f9d93d328b46d777472"
 dependencies = [
  "bindgen",
  "cc",
- "iceoryx2-pal-posix",
+ "iceoryx2-pal-posix 0.8.1",
+]
+
+[[package]]
+name = "iceoryx2-pal-os-api"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a4d7c695c8caf78a6ffd254733be993b0bece78e0b9330d80cf87cc905fff3d"
+dependencies = [
+ "bindgen",
+ "cc",
+ "iceoryx2-pal-posix 0.9.1",
+ "libc",
 ]
 
 [[package]]
@@ -1541,10 +1782,33 @@ checksum = "047637116257281d1102490689e2d0073d94b8d5f4cda20b00b65aed35c09e6e"
 dependencies = [
  "bindgen",
  "cc",
- "iceoryx2-pal-concurrency-sync",
- "iceoryx2-pal-configuration",
+ "iceoryx2-pal-concurrency-sync 0.8.1",
+ "iceoryx2-pal-configuration 0.8.1",
  "libc",
  "windows-sys 0.48.0",
+]
+
+[[package]]
+name = "iceoryx2-pal-posix"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "35c318f15cc0ec35f15b6f9767fa8af9c0a07f8f1a0a60d3adb40b7f03945343"
+dependencies = [
+ "bindgen",
+ "cc",
+ "iceoryx2-pal-concurrency-sync 0.9.1",
+ "iceoryx2-pal-configuration 0.9.1",
+ "libc",
+ "windows-sys 0.48.0",
+]
+
+[[package]]
+name = "iceoryx2-pal-print"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fe15e255ef982e229d5919959e02c7c80296e31a44a2d8f13fa5bc4654a8d9f4"
+dependencies = [
+ "iceoryx2-pal-posix 0.9.1",
 ]
 
 [[package]]

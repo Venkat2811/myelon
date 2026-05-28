@@ -31,7 +31,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 zmq = "0.10.0"
 
 [target.'cfg(unix)'.dependencies]
-iceoryx2 = "0.8.1"
+iceoryx2 = "0.9.1"
 
 [lib]
 name = "competitive_bench"
