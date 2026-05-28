@@ -80,7 +80,7 @@ core_affinity = { version = "0.8.3" }
 
 [dev-dependencies]
 # Benchmarking framework
-criterion = "0.5"
+criterion = "0.8"
 
 # Testing utilities
 crossbeam = "0.8"
