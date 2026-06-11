@@ -25,7 +25,7 @@ jobs:
       - name: cargo llvm-cov (workspace, lib only — fast)
         run: cargo llvm-cov --workspace --exclude competitive-bench --lib --lcov --output-path lcov.info
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v6
+        uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: lcov.info
